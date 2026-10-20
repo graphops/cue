@@ -16,6 +16,8 @@ package adt
 
 import (
 	"testing"
+
+	"cuelang.org/go/internal"
 )
 
 // TestEmptyNodeInert checks that getting a node for an empty struct does not
@@ -30,5 +32,28 @@ func TestEmptyNodeInert(t *testing.T) {
 	s := emptyNode.getBareState(ctx)
 	if s != nil {
 		t.Fatal("expected nil state for empty struct")
+	}
+}
+
+// TestAncestorFlagsAwaitParentTasks checks that a node is not considered to
+// have all its child conjuncts while a parent task, such as a pushed-down
+// comprehension, may still add to it, and that its children are not told that
+// all their ancestors were processed.
+func TestAncestorFlagsAwaitParentTasks(t *testing.T) {
+	ctx := &OpContext{Version: internal.EvalV3, taskContext: schedConfig}
+	parent := &Vertex{}
+	child := &Vertex{Parent: parent}
+	parent.Arcs = []*Vertex{child}
+
+	p := parent.getState(ctx)
+	p.parentTasks = append(p.parentTasks, &task{state: taskREADY})
+
+	n := child.getState(ctx)
+	n.processAncestors(attemptOnly)
+	if p.meets(childConjunctsDone) {
+		t.Error("childConjunctsDone set while a parent task is pending")
+	}
+	if n.meets(allAncestorsProcessed) {
+		t.Error("allAncestorsProcessed signaled while a parent's parent task is pending")
 	}
 }
