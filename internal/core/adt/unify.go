@@ -243,6 +243,13 @@ func (v *Vertex) unify(c *OpContext, flags Flags) bool {
 		return false
 	}
 
+	// A try clause that is running is pre-evaluating its body, and may still
+	// yield conjuncts into the arcs it pushed down. See
+	// [nodeContext.awaitsRunningTry].
+	if mode == finalize && v.state != nil && v.state.awaitsRunningTry() {
+		mode = attemptOnly
+	}
+
 	if n := v.state; n != nil && n.ctx.opID != c.opID {
 		// TODO: we could clear the closedness information.
 		// v.state = nil

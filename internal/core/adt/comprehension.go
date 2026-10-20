@@ -345,3 +345,42 @@ func pushDownDeps(n *nodeContext, t *task, x Node) condition {
 func (t *task) isPushedDownComp() bool {
 	return t.run == handleComprehension && t.completes == allTasksCompleted
 }
+
+// awaitsRunningTry reports whether a running comprehension with a try clause
+// may still add conjuncts to this node.
+//
+// Pushdown registers a comprehension as a parent task of each arc its body
+// declares. While a try clause runs, it pre-evaluates its body to decide
+// whether to yield it, and that pre-evaluation may reach the very arcs the body
+// contributes to, as in
+//
+//	x: a: 5
+//	try X = x? {x: a: <=2}
+//
+// where the inline vertex for x? shares x. Finalizing such an arc before the
+// try clause yields commits it without the body's conjuncts: they are then
+// dropped without an error, or reported as a cyclic reference when they add a
+// field. The arc is finalized later, once the try clause has completed.
+//
+// Other comprehensions are not affected: a guard that reads a value which its
+// own or another comprehension's body changes is a cycle that must be reported.
+func (n *nodeContext) awaitsRunningTry() bool {
+	for _, pt := range n.parentTasks {
+		if pt.state != taskRUNNING {
+			continue
+		}
+		if c, ok := pt.x.(*Comprehension); ok && hasTryClause(c) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasTryClause(c *Comprehension) bool {
+	for _, y := range c.Clauses {
+		if _, ok := y.(*TryClause); ok {
+			return true
+		}
+	}
+	return false
+}
