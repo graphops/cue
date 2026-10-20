@@ -16,6 +16,8 @@ package adt
 
 import (
 	"testing"
+
+	"cuelang.org/go/internal"
 )
 
 // TestEmptyNodeInert checks that getting a node for an empty struct does not
@@ -30,5 +32,26 @@ func TestEmptyNodeInert(t *testing.T) {
 	s := emptyNode.getBareState(ctx)
 	if s != nil {
 		t.Fatal("expected nil state for empty struct")
+	}
+}
+
+// TestProcessAncestorsUninitializedParent checks that processing the ancestors
+// of a node initializes a parent whose nodeContext exists but was never
+// initialized, rather than querying its scheduler. Such a bare nodeContext is
+// created, for instance, when a conjunct is inserted into a vertex whose
+// earlier nodeContext was reclaimed while it was still being evaluated.
+func TestProcessAncestorsUninitializedParent(t *testing.T) {
+	ctx := &OpContext{Version: internal.EvalV3, taskContext: schedConfig}
+	parent := &Vertex{status: evaluating}
+	child := &Vertex{Parent: parent}
+	parent.Arcs = []*Vertex{child}
+
+	if s := parent.getBareState(ctx); s == nil || s.isInitialized {
+		t.Fatal("expected a bare, uninitialized parent state")
+	}
+	n := child.getState(ctx)
+	n.processAncestors(attemptOnly)
+	if !parent.state.isInitialized {
+		t.Error("parent state was not initialized")
 	}
 }
