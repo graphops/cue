@@ -2128,7 +2128,8 @@ type funcCallRefKey struct {
 }
 
 // funcCallResultKey identifies the memo bucket of a call site: the AST call
-// node and the caller environment in which the call's arguments resolve. The
+// node and the shallowest environment its arguments read, an ancestor of the
+// caller environment in which they resolve (see [OpContext.callMemoEnv]). The
 // callee is a value resolved at each call rather than part of the key; the
 // entries within a bucket record the callee that produced them and are
 // matched on that identity. See [OpContext.funcCallResults].
@@ -2234,18 +2235,21 @@ func (x *FuncValue) call(c *OpContext, call *CallExpr, state Flags) Value {
 
 	callEnv := c.Env(0)
 
-	// A call's result is fully determined by its call site, the caller
-	// environment in which its arguments resolve, and the callee. If this
-	// combination has already produced a finalized, error-free result, reuse
-	// it: a parameter referenced N times, or a call nested as an argument and
-	// re-scheduled once per use of the enclosing parameter, would otherwise
+	// A call's result is fully determined by its call site, the
+	// environments its arguments read, and the callee. If this combination
+	// has already produced a finalized, error-free result, reuse it: a
+	// parameter referenced N times, a call nested as an argument and
+	// re-scheduled once per use of the enclosing parameter, or a call in a
+	// struct that is copied wherever it is referenced, would otherwise
 	// rebuild the activation and re-finalize the body every time, making
-	// deeply nested calls exponential in their nesting depth. Only completed
+	// deeply nested calls exponential in their nesting depth. The bucket is
+	// keyed by the shallowest environment the arguments read (see
+	// [OpContext.callMemoEnv]), so that such copies share it. Only completed
 	// error-free results are memoized (see the write below), so a call
 	// re-entered through recursion — which the structural cycle detector must
 	// observe on the shared anchor — has no entry and is never
 	// short-circuited here.
-	resultKey := funcCallResultKey{call: call, envKey: callEnv.key(c)}
+	resultKey := funcCallResultKey{call: call, envKey: c.callMemoEnv(call, callEnv).key(c)}
 	calleeEnv := x.Env.key(c)
 	results := c.funcCallResults[resultKey]
 	for i := range results {
