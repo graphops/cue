@@ -1,0 +1,82 @@
+# A call in a struct that is copied wherever it is referenced is evaluated
+# once, not once per copy: function results are not structure shared, so every
+# reference copies the struct and would repeat the call and the calls in its
+# body.
+#inlinetest:exclude skip — performance regression guarded by out/eval/stats
+-- in.cue --
+@experiment(functions)
+
+Inner: func(n: int) -> {...}: {a: n, b: n + 1, c: [n, n]}
+Mid: func(n: int) -> {...}: {x: Inner(n), y: Inner(n + 1)}
+Outer: func(n: int) -> {...}: {m: Mid(n), copy1: m, copy2: m.x}
+
+r: Outer(1)
+c1: r.m
+c2: r.copy1
+c3: [r, r.copy2]
+-- out/eval/stats --
+Leaks:  3
+Freed:  91
+Reused: 67
+Allocs: 27
+Retain: 0
+
+Unifications: 94
+Conjuncts:    386
+Disjuncts:    0
+
+NumCloseIDs: 87
+-- out/evalalpha --
+(struct){
+  Inner: (func){ func(n: int) -> {
+      ...
+    }: {
+      a: 〈1;n〉
+      b: (〈1;n〉 + 1)
+      c: [
+        〈2;n〉,
+        〈2;n〉,
+      ]
+    } }
+  Mid: (func){ func(n: int) -> {
+      ...
+    }: {
+      x: 〈2;Inner〉(〈1;n〉)
+      y: 〈2;Inner〉((〈1;n〉 + 1))
+    } }
+  Outer: (func){ func(n: int) -> {
+      ...
+    }: {
+      m: 〈2;Mid〉(〈1;n〉)
+      copy1: 〈0;m〉
+      copy2: 〈0;m〉.x
+    } }
+  r: (struct){
+    m: (struct){
+      x: (struct){
+        a: (int){ 1 }
+        b: (int){ 2 }
+        c: (#list){
+          0: (int){ 1 }
+          1: (int){ 1 }
+        }
+      }
+      y: (struct){
+        a: (int){ 2 }
+        b: (int){ 3 }
+        c: (#list){
+          0: (int){ 2 }
+          1: (int){ 2 }
+        }
+      }
+    }
+    copy1: ~(r.m)
+    copy2: ~(r.m.x)
+  }
+  c1: ~(r.m)
+  c2: ~(r.m)
+  c3: (#list){
+    0: ~(r)
+    1: ~(r.m.x)
+  }
+}
