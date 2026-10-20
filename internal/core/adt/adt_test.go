@@ -32,3 +32,21 @@ func TestEmptyNodeInert(t *testing.T) {
 		t.Fatal("expected nil state for empty struct")
 	}
 }
+
+// TestProcessAncestorsUninitializedParent checks that processing the ancestors
+// of a node does not drive a parent whose nodeContext exists but was never
+// initialized. Such a bare nodeContext is created, for instance, when a
+// conjunct is inserted into a vertex whose earlier nodeContext was freed while
+// it was still being evaluated.
+func TestProcessAncestorsUninitializedParent(t *testing.T) {
+	ctx := &OpContext{}
+	parent := &Vertex{status: evaluating}
+	child := &Vertex{Parent: parent}
+	parent.Arcs = []*Vertex{child}
+
+	if s := parent.getBareState(ctx); s == nil || s.isInitialized {
+		t.Fatal("expected a bare, uninitialized parent state")
+	}
+	n := child.getState(ctx)
+	n.processAncestors(attemptOnly)
+}

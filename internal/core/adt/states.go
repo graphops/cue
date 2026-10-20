@@ -289,7 +289,14 @@ func (n *nodeContext) processAncestors(mode runMode) (done bool) {
 		// parents were never unified. (Reproducer:
 		// TestScript/cmd_typocheck.) Without this guard the nil receiver
 		// panics at n.meets(...).
-		if n == nil {
+		//
+		// Likewise, p.state may be a bare nodeContext that was never
+		// initialized: insertConjunct and others create one with
+		// getBareState when a non-rooted vertex's nodeContext was freed
+		// while the vertex was still evaluating. Such a parent has no
+		// scheduled conjuncts to process, and its scheduler must not be
+		// queried.
+		if n == nil || !n.isInitialized {
 			break
 		}
 
