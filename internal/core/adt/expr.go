@@ -3939,6 +3939,16 @@ type tryBody struct {
 	// declare do not exist independently of the body. See
 	// [tryBody.declaresOnly].
 	comp *task
+
+	// awaiting holds the waits of the body's tasks for arc types that a
+	// running comprehension is still deciding, left in place by
+	// [scheduler.mustAwaitProducer]. The body cannot be decided while there
+	// are any; see [TryClause.yield].
+	awaiting []tryWait
+
+	// decideNow makes the pre-evaluation decide even so, as when there is no
+	// task to suspend.
+	decideNow bool
 }
 
 // declaresOnly reports whether the arc for f in v exists only as a
@@ -3995,24 +4005,49 @@ func (x *TryClause) yield(s *compState) {
 	// the try expression early.
 
 	var expr Expr
-	tb := &tryBody{comp: c.current()}
+	var target *Vertex
 	if x.Expr != nil {
 		expr = x.Expr
 	} else {
 		// Struct form: the body is inserted into the node the comprehension
 		// runs on, which [OpContext.yield] set as the current vertex.
 		expr = s.comp.Value
-		tb.target = c.vertex
+		target = c.vertex
 	}
 
-	v := c.newInlineVertex(env.DerefVertex(c), nil, Conjunct{env, expr, c.ci})
+	var tb *tryBody
+	for round := 0; ; round++ {
+		cur := c.current()
+		tb = &tryBody{comp: cur, target: target}
+		if cur == nil || round >= maxTryRounds {
+			tb.decideNow = true
+		}
 
-	// Mark this body so a failed ?-marked reference is attributed to this try
-	// rather than an enclosing or interleaving one (see markSkipTry), and so
-	// that finalizing it leaves tasks blocked on rooted vertices alone (see
-	// [scheduler.inTryBody]).
-	v.getState(c).tryBody = tb
-	v.Finalize(c)
+		v := c.newInlineVertex(env.DerefVertex(c), nil, Conjunct{env, expr, c.ci})
+
+		// Mark this body so a failed ?-marked reference is attributed to this
+		// try rather than an enclosing or interleaving one (see markSkipTry),
+		// and so that finalizing it leaves tasks blocked on rooted vertices
+		// alone (see [scheduler.inTryBody]).
+		v.getState(c).tryBody = tb
+		v.Finalize(c)
+
+		if len(tb.awaiting) == 0 {
+			break
+		}
+		// The body depends on the type of an arc that a running comprehension
+		// may still declare (see [scheduler.mustAwaitProducer]): a decision
+		// taken now could be contradicted as soon as that comprehension
+		// resumes. Wait for the arc type, as an if clause waits for its
+		// condition, and evaluate the body again once it is known.
+		for _, w := range tb.awaiting {
+			w.cancel()
+		}
+		if w := tb.awaiting[0]; !w.on.meets(w.needs) {
+			cur.waitFor(w.on, w.needs)
+			w.on.yield()
+		}
+	}
 
 	// If any ?-marked reference belonging to this body failed, don't yield -
 	// the else clause (if present) runs instead.
