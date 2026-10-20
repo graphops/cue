@@ -845,7 +845,7 @@ func root(v *Vertex) *Vertex {
 	return v
 }
 
-// arcSettledForLookup reports whether the arc for f is already a member
+// settleArcForLookup reports whether the arc for f is already a member
 // whose conjunct set cannot be affected by pushed-down comprehension
 // tasks, so that a lookup-driven process call may leave those tasks
 // unforced by dropping allTasksCompleted from its needs mask.
@@ -854,7 +854,11 @@ func root(v *Vertex) *Vertex {
 // pushdown: a pushed-down comprehension task (see [task.isPushedDownComp])
 // contributes conjuncts solely to the arcs it pre-created at scheduling
 // time, so one that may still contribute to f is found in the parentTasks
-// of this node or of the arc itself.
+// of this node or of the arc itself. Those registered on the arc are run
+// here, so that the arc can be settled without forcing every other pending
+// task of this node: such an unrelated task, like a guard that reads a
+// sibling being evaluated further up the stack, would otherwise block on
+// that sibling and be frozen by the next finalize.
 //
 // TODO(cycle): this guard removes one trigger of a deeper problem. When a
 // forced task resolves a disjunction, doDisjunct leaks finalize mode into
@@ -863,7 +867,7 @@ func root(v *Vertex) *Vertex {
 // in-flight on the evaluation stack, not semantically cyclic. A more
 // principled fix would distinguish stack re-entrancy from value cycles in
 // the freeze path, or keep finalize scoped to the disjunct overlay.
-func (n *nodeContext) arcSettledForLookup(f Feature) bool {
+func (n *nodeContext) settleArcForLookup(f Feature) bool {
 	// An ancestor comprehension may still add conjuncts to this node.
 	if n.hasActiveParentTask() {
 		return false
@@ -874,7 +878,11 @@ func (n *nodeContext) arcSettledForLookup(f Feature) bool {
 	}
 	// Pushed-down comprehensions that may contribute to f, whether from
 	// this node or an ancestor, are registered on the arc itself.
-	return arc.state == nil || !arc.state.hasActiveParentTask()
+	if arc.state == nil {
+		return true
+	}
+	arc.state.runReadyParentTasks(attemptOnly)
+	return !arc.state.hasActiveParentTask()
 }
 
 func (v *Vertex) lookup(c *OpContext, pos token.Pos, f Feature, flags Flags) *Vertex {
@@ -916,14 +924,14 @@ func (v *Vertex) lookup(c *OpContext, pos token.Pos, f Feature, flags Flags) *Ve
 
 		// Drive the lookup target forward when its scheduler has not yet
 		// started everything; the !allTasksStarted guard keeps us out of
-		// nodes that are already mid-execution. When the requested arc is
-		// already settled (see [nodeContext.arcSettledForLookup]), drop
+		// nodes that are already mid-execution. When the requested arc can
+		// be settled (see [nodeContext.settleArcForLookup]), drop
 		// allTasksCompleted from the needs mask: the selectTasks filter in
 		// process then skips pushed-down comprehensions, which cannot
 		// affect the arc, instead of forcing them.
 		if !allTasksStarted(state) {
 			needs := valueKnown | fieldConjunctsKnown | allTasksCompleted
-			if state.arcSettledForLookup(f) {
+			if state.settleArcForLookup(f) {
 				needs = valueKnown | fieldConjunctsKnown
 			}
 			state.process(needs, attemptOnly)

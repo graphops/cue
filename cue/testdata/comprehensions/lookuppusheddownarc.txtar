@@ -1,0 +1,43 @@
+# Tests that looking up a member arc that still awaits a pushed-down
+# comprehension runs only the comprehensions registered on that arc, not
+# every pending task of its parent.
+#
+# Looking up records from the list comprehension in names used to run all
+# tasks of routes, including the unrelated guards len(names) > 0. Such a
+# guard re-entered the in-flight names vertex, and finalizing records then
+# froze the guard's wait on names, recording "error in call to len:
+# incomplete argument" on routes for good although names resolved to []
+# right after. The test is sensitive to evaluation order; the flags field
+# and the guard on groups are needed to trigger the original failure.
+-- in.cue --
+@experiment(try)
+
+routes: {
+	records: [string]: string
+	try {records: cfg.rec?} else {records: {}}
+	names: [for k, _ in records {k}]
+	flags: {
+		a: "x"
+		if len(names) > 0 {g: "1"}
+	}
+	if len(names) > 0 {
+		url: "a"
+	} else {
+		url: "b"
+	}
+}
+cfg: {rec?: [string]: string}
+if len(routes.names) > 0 {
+	groups: raw: routes.flags
+}
+out: routes.url @test(eq, "b")
+-- out/eval/stats --
+Leaks:  3
+Freed:  12
+Reused: 2
+Allocs: 13
+Retain: 0
+
+Unifications: 15
+Conjuncts:    15
+Disjuncts:    0
