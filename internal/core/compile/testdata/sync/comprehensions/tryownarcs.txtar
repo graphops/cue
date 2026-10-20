@@ -1,0 +1,44 @@
+# Tests that the arcs a running try clause contributes to are not finalized
+# before it yields its body.
+#
+# The try clause pre-evaluates its body, here starting with x?, whose inline
+# vertex shares x. Finalizing that inline vertex also finalized x and x.a,
+# although the try clause, a pushed-down parent task of both, still had to
+# yield conjuncts into them. The constraint <=2 was then dropped without an
+# error, and the new field b was reported as a cyclic reference.
+-- in.cue --
+@experiment(try)
+
+constraint: {
+	x: a: 5
+	try X = x? {x: a: <=2}
+}
+
+newField: {
+	x: a: 5
+	try X = x? {x: b: 1}
+}
+-- out/compile --
+--- in.cue
+{
+  constraint: {
+    x: {
+      a: 5
+    }
+    try X = 〈0;x〉? {
+      x: {
+        a: <=2
+      }
+    }
+  }
+  newField: {
+    x: {
+      a: 5
+    }
+    try X = 〈0;x〉? {
+      x: {
+        b: 1
+      }
+    }
+  }
+}
