@@ -1,0 +1,52 @@
+# Tests the retry of a failed ?-marked reference against the struct that an
+# enclosing try clause body is inserted into (see lookupInTryTarget), when that
+# struct has the field only as a placeholder for the body itself.
+#
+# In placeholderOnly, the inner try in #P pre-evaluates source.options?, which
+# fails as options is absent. Its base, source, belongs to the body of the try
+# in c, so the failed lookup is retried along the path d.source in c. But c.d
+# exists only as the pending placeholder for the field that same try clause is
+# about to declare. Looking it up waited on its arc type, which was then forced
+# and frozen while the clause was still running, and declaring d afterwards
+# reported "cyclic reference to field d". Such a placeholder does not exist
+# independently of the body, so the retry fails and the else clause applies.
+#
+# In independentField, c.d.source.options exists on its own, and the retry
+# still finds it.
+-- in.cue --
+@experiment(try)
+
+placeholderOnly: {
+	cfg: d: {}
+	#P: {
+		source: {options?: _}
+		try {options: source.options?} else {options: {}}
+	}
+	c: {
+		try {d: #P & {source: cfg.d?}}
+	} @test(eq, {d: {options: {}, source: {options?: _}}})
+}
+
+independentField: {
+	cfg: d: {}
+	#P: {
+		source: {options?: _}
+		try {options: source.options?} else {options: {}}
+	}
+	c: {
+		d: source: options: 1
+		try {d: #P & {source: cfg.d?}}
+	} @test(eq, {d: {source: {options: 1}, options: 1}})
+}
+-- out/eval/stats --
+Leaks:  0
+Freed:  47
+Reused: 31
+Allocs: 16
+Retain: 0
+
+Unifications: 47
+Conjuncts:    78
+Disjuncts:    0
+
+NumCloseIDs: 11

@@ -709,10 +709,21 @@ func (c *OpContext) lookupInTryTarget(base *Vertex, pos token.Pos, l Feature, fl
 	// The lookups below must not see the failed lookup's pending error,
 	// nor, on recursion, those of the enclosing level.
 	c.errs = nil
+	// A field of target that only the body being pre-evaluated would declare
+	// does not exist independently of it, so the retry fails there. Looking it
+	// up would also wait on, and eventually freeze, the type of an arc that
+	// the still-running try clause is yet to declare.
+	tb := root.state.tryBody
 	for i := len(path) - 1; i >= 0; i-- {
+		if tb.declaresOnly(target, path[i]) {
+			return nil
+		}
 		if target = c.lookup(target, pos, path[i], flags); target == nil {
 			return nil
 		}
+	}
+	if tb.declaresOnly(target, l) {
+		return nil
 	}
 	if arc := c.lookup(target, pos, l, flags); arc != nil {
 		return arc
@@ -3922,6 +3933,44 @@ type tryBody struct {
 	// yields, and nil for the binding form, whose expression is not inserted
 	// anywhere. See [OpContext.lookupInTryTarget].
 	target *Vertex
+
+	// comp is the task of the comprehension the try clause belongs to. Arcs
+	// of target that exist only as placeholders for the fields comp may
+	// declare do not exist independently of the body. See
+	// [tryBody.declaresOnly].
+	comp *task
+}
+
+// declaresOnly reports whether the arc for f in v exists only as a
+// placeholder for a field that the try clause of tb may declare: it is pending
+// and has no conjuncts of its own, v has collected all its field conjuncts, so
+// none can still arrive, and the try clause's comprehension is the only parent
+// task that may still declare it. When this cannot be established, it reports
+// false and the caller looks the field up as usual.
+func (tb *tryBody) declaresOnly(v *Vertex, f Feature) bool {
+	if tb.comp == nil {
+		return false
+	}
+	arc := v.LookupRaw(f)
+	if arc == nil || arc.ArcType != ArcPending || arc.state == nil || len(arc.Conjuncts) > 0 {
+		return false
+	}
+	// The arc may still receive conjuncts of its own until its container has
+	// collected all of its field conjuncts.
+	if s := v.state; s == nil || !s.isInitialized || !s.meets(fieldConjunctsKnown) {
+		return false
+	}
+	declared := false
+	for _, pt := range arc.state.parentTasks {
+		switch {
+		case pt.state >= taskSUCCESS:
+		case pt == tb.comp:
+			declared = true
+		default:
+			return false
+		}
+	}
+	return declared
 }
 
 func (x *TryClause) Source() ast.Node {
@@ -3946,7 +3995,7 @@ func (x *TryClause) yield(s *compState) {
 	// the try expression early.
 
 	var expr Expr
-	tb := &tryBody{}
+	tb := &tryBody{comp: c.current()}
 	if x.Expr != nil {
 		expr = x.Expr
 	} else {
