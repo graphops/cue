@@ -1,0 +1,119 @@
+# A call in a struct that is copied wherever it is referenced shares one
+# memoized result when its arguments read only environments the copies have in
+# common, and keeps a result per copy when they read anything else.
+-- in.cue --
+@experiment(functions)
+
+import "strings"
+
+F: func(x: {a: string, ...}) -> {...}: {up: strings.ToUpper(x.a), twice: x.a + x.a}
+
+// The call reads only the activation of Make: every copy of Make's result
+// shares the same arguments.
+Make: func(name: string) -> {...}: {spec: v: F({a: name}), copy: spec}
+shared: {
+	m:     Make("x")
+	again: m.spec
+	more:  [m, m.copy]
+	check: again.v.up @test(eq, "X")
+	checkMore: more[1].v.twice @test(eq, "xx")
+}
+
+// The argument reads a field of the enclosing instance: each instance keeps
+// its own result.
+#T: {s: string, out: v: F({a: s})}
+perInstance: {
+	a: #T & {s: "a"}
+	b: #T & {s: "b"}
+	ac: a.out
+	bc: b.out
+	checkA: ac.v.up @test(eq, "A")
+	checkB: bc.v.up @test(eq, "B")
+}
+
+// The argument reads a sibling field: the innermost environment.
+sibling: {
+	#Base: {n: string, v: F({a: n})}
+	p: #Base & {n: "p"}
+	q: #Base & {n: "q"}
+	checkP: p.v.twice @test(eq, "pp")
+	checkQ: q.v.twice @test(eq, "qq")
+}
+
+// References are lexical: a copy of t.inner still reads t.n.
+lexical: {
+	t: {n: "t", inner: v: F({a: n})}
+	p: {n: "p", inner: t.inner}
+	check: p.inner.v.up @test(eq, "T")
+}
+
+// Each disjunct keeps its own result.
+disjunct: {
+	#D: {n: string, i: v: F({a: n})}
+	d: #D & (*{n: "one"} | {n: "two"})
+	e: [#D & {n: "one"}, #D & {n: "two"}]
+	checkD:  d.i.v.up @test(eq, "ONE")
+	checkE0: e[0].i.v.up @test(eq, "ONE")
+	checkE1: e[1].i.v.up @test(eq, "TWO")
+}
+
+// Arguments that open scopes of their own: struct and list literals,
+// comprehensions, lets and function literals bind their references inside.
+scopes: {
+	G: func(x: {...}) -> {...}: {r: x}
+	#Base: {
+		n: string
+		v: G({
+			lit: {m: n, k: [n, for c in [n] {c}]}
+			let L = n
+			l: L
+			f: (func(y: string) -> string: y + n)("-")
+			if n == "a" {cond: n}
+		})
+	}
+	a: #Base & {n: "a"}
+	b: #Base & {n: "b"}
+	ac: a.v
+	bc: b.v
+	checkA:  ac.r.f @test(eq, "-a")
+	checkB:  bc.r.f @test(eq, "-b")
+	checkK:  bc.r.lit.k @test(eq, ["b", "b"])
+	checkL:  ac.r.l @test(eq, "a")
+}
+-- out/errors.txt --
+[incomplete] #T.out.v.up: error in call to strings.ToUpper: non-concrete value string:
+    ./in.cue:5:45
+    ./in.cue:5:16
+[incomplete] #T.out.v.twice: non-concrete value string in operand to +:
+    ./in.cue:5:74
+    ./in.cue:5:16
+    ./in.cue:20:31
+[incomplete] sibling.#Base.v.up: error in call to strings.ToUpper: non-concrete value string:
+    ./in.cue:5:45
+    ./in.cue:5:16
+[incomplete] sibling.#Base.v.twice: non-concrete value string in operand to +:
+    ./in.cue:5:74
+    ./in.cue:5:16
+    ./in.cue:32:30
+[incomplete] disjunct.#D.i.v.up: error in call to strings.ToUpper: non-concrete value string:
+    ./in.cue:5:45
+    ./in.cue:5:16
+[incomplete] disjunct.#D.i.v.twice: non-concrete value string in operand to +:
+    ./in.cue:5:74
+    ./in.cue:5:16
+    ./in.cue:48:30
+[incomplete] x: non-concrete value string in operand to ==:
+    ./in.cue:67:7
+    ./in.cue:61:6
+-- out/eval/stats --
+Leaks:  6
+Freed:  334
+Reused: 299
+Allocs: 41
+Retain: 0
+
+Unifications: 332
+Conjuncts:    565
+Disjuncts:    2
+
+NumCloseIDs: 70
