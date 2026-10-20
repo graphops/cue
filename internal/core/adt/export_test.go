@@ -21,3 +21,9 @@ package adt
 func MatchPatternValue(ctx *OpContext, p Value, f Feature) bool {
 	return matchPatternValue(ctx, p, f)
 }
+
+// ArgLevel exports argLevel for testing.
+func ArgLevel(call *CallExpr) int32 { return argLevel(call) }
+
+// NoFreeRef exports noFreeRef for testing.
+const NoFreeRef = noFreeRef
