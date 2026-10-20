@@ -302,12 +302,14 @@ func pushDownDeps(n *nodeContext, t *task, x Node) condition {
 				kind &= StructKind | ListKind
 
 			case *LetField:
-				completes |= fieldConjunctsKnown
-
 				n.node.MultiLet = true
 				// A let within a comprehension can only be referred to within
 				// the comprehension. There is therefore no need to track its
 				// own dependencies. Intentionally no pushDownDeps call here.
+				// For the same reason it does not add field conjuncts that a
+				// lookup from outside the comprehension could observe: counting
+				// it would keep the comprehension from being pushed down, so
+				// that lookups of unrelated settled arcs force it.
 
 			case *DynamicField:
 				// Depending on arc type, may not contribute to concrete value.
