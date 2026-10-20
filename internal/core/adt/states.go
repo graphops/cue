@@ -332,7 +332,15 @@ func stateCompletions(s *scheduler) condition {
 	if s.node.ctx.LogEval > 0 {
 		s.node.Logf("=== stateCompletions: %v  %v", v.Label, s.completed)
 	}
-	if x.meets(allAncestorsProcessed) {
+	// A parent task is an ancestor's comprehension whose dependency
+	// pushDownDeps moved onto this arc: its container does not count it, so
+	// allAncestorsProcessed does not wait for it. As long as it has not
+	// started, it may still add conjuncts and tasks to this arc, and conditions
+	// derived from counters that are merely zero for now would be completed,
+	// and frozen, too early. A running parent task does not defer completion:
+	// it is on the evaluation stack, typically in a dependency cycle, where
+	// freezing is the deliberate cycle-breaker.
+	if x.meets(allAncestorsProcessed) && !s.hasReadyParentTask() {
 		x |= conditionsUsingCounters &^ s.provided
 		// If we have a pending or constraint arc, a sub arc may still cause the
 		// arc to become a member. For instance, if 'a' is pending in the
