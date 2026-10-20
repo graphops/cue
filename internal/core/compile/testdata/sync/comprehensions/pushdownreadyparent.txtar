@@ -1,0 +1,77 @@
+# Tests that an arc that a pushed-down comprehension declares does not
+# complete its value before that comprehension has run.
+#
+# Iterating over x.paths creates the arc u as a pending placeholder, whose
+# only parent task is the if comprehension that declares it. paths does not
+# count that comprehension (its dependency was pushed down onto u), so u was
+# signaled allAncestorsProcessed, and stateCompletions completed and froze
+# its value while u still had no conjuncts or tasks. The comprehension then
+# added cfg.p to u too late: the interpolation saw only the pattern string.
+-- in.cue --
+@experiment(try)
+
+forSource: {
+	out: [for k, p in x.paths {"s3://\(p)"}]
+	x: {
+		paths: [string]: string
+		paths: {if cfg.on {u: cfg.p}}
+	}
+	cfg: {on: true, p: "v"}
+}
+
+sibling: {
+	out: x.data
+	x: {
+		paths: [string]: string & !=""
+		paths: {if cfg.on {u: cfg.p}}
+		data: {for k, p in paths {(k): "s3://\(p)"}}
+	}
+	cfg: {on: true, p: "v"}
+}
+-- out/compile --
+--- in.cue
+{
+  forSource: {
+    out: [
+      for k, p in 〈1;x〉.paths {
+        "s3://\(〈1;p〉)"
+      },
+    ]
+    x: {
+      paths: {
+        [string]: string
+      }
+      paths: {
+        if 〈2;cfg〉.on {
+          u: 〈3;cfg〉.p
+        }
+      }
+    }
+    cfg: {
+      on: true
+      p: "v"
+    }
+  }
+  sibling: {
+    out: 〈0;x〉.data
+    x: {
+      paths: {
+        [string]: (string & !="")
+      }
+      paths: {
+        if 〈2;cfg〉.on {
+          u: 〈3;cfg〉.p
+        }
+      }
+      data: {
+        for k, p in 〈1;paths〉 {
+          〈1;k〉: "s3://\(〈1;p〉)"
+        }
+      }
+    }
+    cfg: {
+      on: true
+      p: "v"
+    }
+  }
+}
