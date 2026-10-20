@@ -237,6 +237,13 @@ func pushDownDeps(n *nodeContext, t *task, x Node) condition {
 	switch x := x.(type) {
 	case *Comprehension:
 		completes = pushDownDeps(n, t, x.Value)
+		// The else clause declares fields just like the body. Without
+		// pushing it down, an arc that only the else clause declares has no
+		// parent task, and counts as settled before the comprehension has
+		// chosen between the body and the else clause.
+		if x.Fallback != nil {
+			completes |= pushDownDeps(n, t, x.Fallback)
+		}
 
 	case *StructLit:
 		// StructLits are mostly handled when they are a value of a

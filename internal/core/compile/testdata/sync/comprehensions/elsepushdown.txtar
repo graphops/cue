@@ -1,0 +1,77 @@
+# Tests that a field that only the else clause of a comprehension declares is
+# not considered settled before the comprehension has run.
+#
+# pushDownDeps pushed down the body of a comprehension, but not its else
+# clause, so name had no parent task. Looking up x.name from out, evaluated
+# before x, found name settled and skipped the comprehension, whose empty body
+# counts as fully pushed down; name was then just string.
+-- in.cue --
+@experiment(try)
+
+assignment: {
+	out: x.name
+	x: {
+		name: string
+		try P = cfg.phys? {} else {name: "dflt"}
+	}
+	cfg: {}
+}
+
+structForm: {
+	out: "s3://\(x.name)"
+	x: {
+		name: string
+		try {_p: cfg.phys?} else {name: "dflt"}
+	}
+	cfg: {}
+}
+
+// The body yields, so the arc the else clause would have declared is absent.
+bodyYields: {
+	out: x
+	x: {
+		name: string
+		try P = cfg.phys? {name: P} else {other: "dflt"}
+	}
+	cfg: phys: "p"
+}
+-- out/compile --
+--- in.cue
+{
+  assignment: {
+    out: 〈0;x〉.name
+    x: {
+      name: string
+      try P = 〈1;cfg〉.phys? {} else {
+        name: "dflt"
+      }
+    }
+    cfg: {}
+  }
+  structForm: {
+    out: "s3://\(〈0;x〉.name)"
+    x: {
+      name: string
+      try {
+        _p: 〈2;cfg〉.phys?
+      } else {
+        name: "dflt"
+      }
+    }
+    cfg: {}
+  }
+  bodyYields: {
+    out: 〈0;x〉
+    x: {
+      name: string
+      try P = 〈1;cfg〉.phys? {
+        name: 〈1;P〉
+      } else {
+        other: "dflt"
+      }
+    }
+    cfg: {
+      phys: "p"
+    }
+  }
+}
