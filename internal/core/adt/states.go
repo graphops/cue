@@ -285,6 +285,20 @@ func (n *nodeContext) processAncestors(mode runMode) (done bool) {
 		if n == nil {
 			break
 		}
+		// p.state may also be a bare nodeContext, which getBareState
+		// creates without scheduling the vertex's conjuncts: for the arcs
+		// that pushDownDeps pre-creates, for conjuncts inserted with
+		// insertConjunct, or for a non-rooted vertex whose nodeContext was
+		// reclaimed while it was still evaluating and is now used again.
+		// Unlike a missing nodeContext, it belongs to a vertex that takes
+		// part in the evaluation, and its conjuncts are exactly the pending
+		// ones this walk is meant to process, so schedule them first. Its
+		// scheduler must not be queried before.
+		if !n.isInitialized {
+			if n = p.getState(n.ctx); n == nil {
+				break
+			}
+		}
 
 		if n.meets(childConjunctsDone) {
 			break
