@@ -310,7 +310,8 @@ func (n *nodeContext) processAncestors(mode runMode) (done bool) {
 			n.process(fieldConjunctsKnown, mode)
 		}
 
-		if parentsDone && n.counters[fieldConjunctsKnownIdx] == 0 {
+		if parentsDone && n.counters[fieldConjunctsKnownIdx] == 0 &&
+			!n.hasActiveParentTask() {
 			n.completed |= childConjunctsDone
 		}
 	}
@@ -403,7 +404,8 @@ func (v *Vertex) allChildConjunctsKnown(ctx *OpContext) bool {
 	if n == nil {
 		return true
 	}
-	return n.meets(fieldConjunctsKnown | allAncestorsProcessed)
+	return n.meets(fieldConjunctsKnown|allAncestorsProcessed) &&
+		!n.hasActiveParentTask()
 }
 
 func (n *nodeContext) scheduleTask(r *runner, env *Environment, x Node, ci CloseInfo) *task {
