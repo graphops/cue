@@ -1,0 +1,122 @@
+# Tests that a try clause, or a lookup, does not decide on the type of an arc
+# that a running comprehension may still declare.
+#
+# The guard of the comprehension that sets imp looks up x. That runs the try
+# comprehension, a parent task of x, whose body reads imp? while the first
+# comprehension, the producer of imp, is still evaluating its guard. The
+# freeze cycle-breaker then committed imp as an optional arc, the try body was
+# discarded, and imp: true arrived afterwards: its constraint enabled: true
+# was silently lost. With an if clause instead, the same freeze was reported
+# as a spurious "changed after evaluation" cycle.
+-- in.cue --
+@experiment(try)
+
+// imp becomes true, so the try body applies and conflicts with enabled.
+tryDiscarded: {
+	c: #B
+	c: {
+		if c.x != _|_ {imp: true}
+		enabled: false
+		x: {}
+	}
+	@test(err, code=eval, at=c.enabled, contains="conflicting values true and false")
+}
+
+// The same with a definition-free struct and an existence check in the body.
+tryInline: {
+	c: {
+		if c.x != _|_ {imp: true}
+		enabled?: _
+		imp?:     bool
+		x?:       _
+		try I = imp? {
+			if I {
+				enabled: true
+				x?:      _
+			}
+		}
+		enabled: false
+		x: {}
+	}
+	@test(err, code=eval, at=c.enabled, contains="conflicting values true and false")
+}
+
+// With an if clause, the same evaluation order was reported as a cycle.
+ifGuard: {
+	c: #B2
+	c: {
+		if c.x != _|_ {imp: true}
+		enabled: false
+		x: {}
+	}
+	@test(err, code=eval, at=c.enabled, contains="conflicting values true and false")
+}
+
+// imp becomes true and the body holds.
+tryApplies: {
+	c: #B
+	c: {
+		if c.x != _|_ {imp: true}
+		enabled: true
+		x: {}
+	}
+	@test(eq, {c: {enabled: true, imp: true, x: {}}})
+}
+
+// imp stays absent, so the try body is discarded.
+tryAbsent: {
+	c: #B
+	c: {
+		if c.x != _|_ {imp: true}
+		enabled: false
+	}
+	@test(eq, {c: {enabled: false, imp?: bool, x?: _}})
+}
+
+#B: {
+	enabled?: _
+	imp?:     bool
+	x?:       _
+	try I = imp? {
+		if I {
+			enabled: true
+			x!:      _
+		}
+	}
+}
+
+#B2: {
+	enabled?: _
+	imp?:     bool
+	x?:       _
+	if imp != _|_ {
+		if imp {
+			enabled: true
+			x!:      _
+		}
+	}
+}
+-- out/errors.txt --
+[eval] tryDiscarded.c.enabled: conflicting values true and false:
+    ./in.cue:5:5
+    ./in.cue:8:12
+    ./in.cue:71:13
+[eval] tryInline.c.enabled: conflicting values true and false:
+    ./in.cue:23:14
+    ./in.cue:27:12
+[eval] ifGuard.c.enabled: conflicting values true and false:
+    ./in.cue:35:5
+    ./in.cue:38:12
+    ./in.cue:83:13
+-- out/eval/stats --
+Leaks:  6
+Freed:  43
+Reused: 30
+Allocs: 19
+Retain: 0
+
+Unifications: 49
+Conjuncts:    83
+Disjuncts:    0
+
+NumCloseIDs: 4
