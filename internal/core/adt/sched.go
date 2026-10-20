@@ -959,6 +959,16 @@ func (s *scheduler) hasActiveParentTask() bool {
 	return false
 }
 
+// hasReadyParentTask reports whether a parent task has not started yet.
+func (s *scheduler) hasReadyParentTask() bool {
+	for _, pt := range s.parentTasks {
+		if pt.state == taskREADY {
+			return true
+		}
+	}
+	return false
+}
+
 // hasRunningSiblingParentTask reports whether a parent task other than the
 // currently running task is itself running. Such a task (e.g. a sibling
 // comprehension whose guard is still being evaluated) may yet add fields to
