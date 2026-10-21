@@ -15,6 +15,7 @@
 package adt_test
 
 import (
+	"slices"
 	"testing"
 
 	"cuelang.org/go/internal/core/adt"
@@ -62,30 +63,73 @@ func TestArgLevel(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			src := "@experiment(functions)\n@experiment(aliasv2,try)\nF: func(a: _, b?: _): a\n" + tc.src
-			r := runtime.New()
-			root, inst := r.Compile(nil, src)
-			if inst.Err != nil {
-				t.Fatal(inst.Err)
-			}
-			var call *adt.CallExpr
-			for _, c := range root.Conjuncts {
-				w := walk.Visitor{Before: func(n adt.Node) bool {
-					if x, ok := n.(*adt.CallExpr); ok && call == nil {
-						if f, ok := x.Fun.(*adt.FieldReference); ok && f.Label.SelectorString(r) == "F" {
-							call = x
-						}
-					}
-					return true
-				}}
-				w.Elem(c.Elem())
-			}
-			if call == nil {
-				t.Fatal("no call to F")
-			}
+			call := compileCallToF(t, tc.src)
 			if got := adt.ArgLevel(call); got != tc.want {
 				t.Errorf("got level %d, want %d", got, tc.want)
 			}
 		})
 	}
+}
+
+// TestArgReads checks every environment level that the arguments of the call
+// to F in a field x read, relative to the struct holding x. The memo of
+// function call results is keyed by the identity of each environment read, so
+// a missing level would share results between calls whose arguments differ.
+func TestArgReads(t *testing.T) {
+	testCases := []struct {
+		name    string
+		src     string // declares x: F(...) somewhere
+		want    []int32
+		unknown bool
+	}{
+		{"constant", `s: {x: F(1)}`, nil, false},
+		{"sibling", `s: {n: 1, x: F(n)}`, []int32{0}, false},
+		{"parentAndSibling", `n: 1, s: {m: 2, x: F(n, m)}`, []int32{0, 1}, false},
+		{"duplicates", `n: 1, s: {x: F(n, n + 1)}`, []int32{1}, false},
+		{"self", `s: {x: F(self)}`, []int32{0}, false},
+		{"forValue", `s: {x: [for v in [1] {F(v)}][0]}`, nil, false},
+		{"forAndOuter", `n: 1, s: {x: [for v in [1] {F(v, n)}][0]}`, nil, false},
+		{"structArg", `n: 1, s: {m: 2, x: F({a: n, b: m})}`, []int32{0, 1}, false},
+		{"pattern", `s: {[string]~(K,_): F(K)}`, []int32{0}, false},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			call := compileCallToF(t, tc.src)
+			levels, unknown := adt.ArgReads(call)
+			if unknown != tc.unknown {
+				t.Fatalf("got unknown %v, want %v", unknown, tc.unknown)
+			}
+			if !unknown && tc.want != nil && !slices.Equal(levels, tc.want) {
+				t.Errorf("got levels %v, want %v", levels, tc.want)
+			}
+		})
+	}
+}
+
+// compileCallToF compiles src after a declaration of F and returns the first
+// call to F in it.
+func compileCallToF(t *testing.T, src string) *adt.CallExpr {
+	t.Helper()
+	src = "@experiment(functions)\n@experiment(aliasv2,try)\nF: func(a: _, b?: _): a\n" + src
+	r := runtime.New()
+	root, inst := r.Compile(nil, src)
+	if inst.Err != nil {
+		t.Fatal(inst.Err)
+	}
+	var call *adt.CallExpr
+	for _, c := range root.Conjuncts {
+		w := walk.Visitor{Before: func(n adt.Node) bool {
+			if x, ok := n.(*adt.CallExpr); ok && call == nil {
+				if f, ok := x.Fun.(*adt.FieldReference); ok && f.Label.SelectorString(r) == "F" {
+					call = x
+				}
+			}
+			return true
+		}}
+		w.Elem(c.Elem())
+	}
+	if call == nil {
+		t.Fatal("no call to F")
+	}
+	return call
 }
