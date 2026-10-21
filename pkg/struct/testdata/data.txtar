@@ -1,0 +1,61 @@
+# struct.Data returns concrete data: regular fields with defaults resolved,
+# as fresh literals that carry none of the input's defaults or constraints.
+-- in.cue --
+import "struct"
+
+#Child: {
+	name: *"child" | string
+	n:    *2 | int
+	list: [...{a: *1 | int}]
+	...
+}
+src: {
+	name: *"src" | string
+	n:    *3 | int
+	b:    'bytes'
+	list: [{a: *5 | int}]
+	#def:    1
+	_hidden: 1
+	opt?:    string
+}
+// Defaults of the source win over the child's, instead of conflicting.
+child: #Child & struct.Data(src)
+// Closedness is dropped, as data is open.
+open: struct.Data(close({a: 1})) & {b: 2}
+// Bytes stay bytes.
+bytes: struct.Data(src).b
+incomplete: struct.Data({a: string})
+-- out/structs-v3 --
+Errors:
+incomplete: error in call to struct.Data: incomplete value string: struct.Data needs a concrete value:
+    ./in.cue:24:13
+
+Result:
+#Child: {
+	name: *"child" | string
+	n:    *2 | int
+	list: [...{a: *1 | int}]
+}
+src: {
+	name: *"src" | string
+	n:    *3 | int
+	b:    'bytes'
+	list: [{a: *5 | int}]
+	#def: 1
+	opt?: string
+}
+// Defaults of the source win over the child's, instead of conflicting.
+child: {
+	name: "src"
+	n:    3
+	b:    'bytes'
+	list: [{a: 5}]
+}
+// Closedness is dropped, as data is open.
+open: {
+	a: 1
+	b: 2
+}
+// Bytes stay bytes.
+bytes:      'bytes'
+incomplete: _|_ // incomplete: error in call to struct.Data: incomplete value string: struct.Data needs a concrete value
