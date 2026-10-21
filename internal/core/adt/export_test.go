@@ -56,3 +56,10 @@ func CallFreeRefs(call *CallExpr, idx StringIndexer) (refs []string) {
 	}
 	return refs
 }
+
+// ArgReads exports the environment levels that the arguments of call read,
+// and whether they contain a node the analysis does not model.
+func ArgReads(call *CallExpr) (levels []int32, unknown bool) {
+	r := argReads(call)
+	return r.levels, r.unknown
+}
