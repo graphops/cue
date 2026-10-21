@@ -30,6 +30,13 @@ func ArgLevel(call *CallExpr) int32 { return argLevel(call) }
 // NoFreeRef exports noFreeRef for testing.
 const NoFreeRef = noFreeRef
 
+// ArgReads exports the environment levels that the arguments of call read,
+// and whether they contain a node the analysis does not model.
+func ArgReads(call *CallExpr) (levels []int32, unknown bool) {
+	r := argReads(call)
+	return r.levels, r.unknown
+}
+
 // CallFreeRefs reports the free references that visitFreeRefs finds in the
 // arguments of call, as "path@level", or "?" for an expression that is not
 // modeled.
