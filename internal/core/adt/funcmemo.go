@@ -14,252 +14,379 @@
 
 package adt
 
-import "math"
+import (
+	"math"
+	"slices"
+)
 
 // noFreeRef is the level reported for an expression that reads no
 // environment of its evaluation context.
 const noFreeRef = math.MaxInt32
 
-// callMemoEnv returns the environment that identifies the memo bucket of a
-// call evaluated in callEnv: the shallowest ancestor of callEnv that any of
-// the call's arguments reads.
+// A clauseBinding is set on each environment that a for, let or binding try
+// clause creates. It records what references into the environment read: the
+// clause's bound names and, for a for clause, the arc of the iteration. See
+// [OpContext.callArgsKey].
+type clauseBinding struct {
+	clause Node    // *ForClause, *LetClause or *TryClause
+	src    *Vertex // the arc a for clause binds; nil otherwise
+}
+
+// envReads describes the environments an expression reads, as levels
+// relative to the environment in which it is evaluated.
+type envReads struct {
+	// levels are the distinct levels that free references read, ascending.
+	levels []int32
+	// unknown is set when the expression contains a node the analysis does
+	// not model; it may then read any environment.
+	unknown bool
+}
+
+// An argsKey identifies the values that the arguments of a call read: one
+// interned node per environment level read, chained from the nearest level
+// outward, so that equal keys are the same pointer. A nil key means the
+// arguments read no environment.
+type argsKey struct {
+	prev  *argsKey
+	level int32
+	ident envIdent
+	// caller is set only when the reads are unknown: the caller
+	// environment, which keys the call exactly.
+	caller envKey
+}
+
+// envIdent is the identity of what references into one environment read.
+type envIdent struct {
+	// vertex is the environment's dereferenced vertex or, for a for clause,
+	// the dereferenced arc it binds.
+	vertex *Vertex
+	// label is the environment's DynamicLabel, which label references read.
+	label Feature
+	// clause is the clause that created a binding environment.
+	clause Node
+	// bound is, for a let or binding try clause, the key of what its
+	// expression reads in the enclosing environment.
+	bound *argsKey
+}
+
+// callArgsKey returns the memo key for the arguments of call evaluated in
+// callEnv.
 //
 // A call's result depends on its callee, which the memoized entry records
-// and matches separately (see [funcCallResult.matches]), and on its
-// arguments. The arguments are expressions resolved in callEnv, and each
-// free reference in them reads one fixed ancestor of it. Keying the bucket
-// by callEnv itself is correct but too fine: when a struct containing a call
-// is referenced elsewhere, its conjuncts are evaluated again in a vertex of
-// the referencing location, so each such copy evaluates the call in an
-// environment of its own, even though the copy's environments differ from
-// the original only below the levels the arguments read. Function results
-// and activations are not structure shared (see [nodeContext.shareIfPossible]),
-// so this happens for every reference to a function result, and every
-// reference repeats the whole call, including the calls in its body.
+// and matches separately (see [funcCallResult.matches]), and on the values
+// its arguments read. Each free reference in the arguments reads one
+// environment at a fixed level above callEnv, and what it reads there is
+// determined by that environment's identity alone:
 //
-// Keying by the shallowest environment the arguments read lets these copies
-// share one result. When an argument reads the innermost environment, the
-// bucket is that of callEnv, as before.
-func (c *OpContext) callMemoEnv(call *CallExpr, callEnv *Environment) *Environment {
-	level := c.callArgLevel(call)
-	if level == 0 || callEnv == nil {
-		return callEnv
-	}
-	e := callEnv
-	for i := int32(0); i < level && e.Up != nil; i++ {
-		e = e.Up
-	}
-	return e
-}
-
-// callArgLevel returns the shallowest level, relative to the environment in
-// which call is evaluated, that a free reference in its arguments reads, or
-// [noFreeRef] if the arguments read no environment. It is computed once per
-// call site.
-func (c *OpContext) callArgLevel(call *CallExpr) int32 {
-	if l, ok := c.callArgLevels[call]; ok {
-		return l
-	}
-	l := argLevel(call)
-	if c.callArgLevels == nil {
-		c.callArgLevels = map[*CallExpr]int32{}
-	}
-	c.callArgLevels[call] = l
-	return l
-}
-
-// argLevel computes [OpContext.callArgLevel].
-func argLevel(call *CallExpr) int32 {
-	l := int32(noFreeRef)
-	for _, a := range call.Args {
-		l = min(l, freeLevel(a, 0))
-	}
-	return l
-}
-
-// freeLevel returns the shallowest environment level that a free reference
-// in n reads, where level 0 is the environment in which n is evaluated when
-// depth is 0, and depth counts the scopes that n's enclosing expression has
-// opened so far. The scopes mirror the ones the compiler counts in UpCount:
-// struct and list literals, for, let and binding try clauses, and function
-// bodies each open one; an else clause is evaluated outside the clauses of
-// its comprehension.
+//   - a struct, list or function activation environment by its vertex (and
+//     the label of a pattern instance);
+//   - a for clause's iteration environment by the clause and the arc it
+//     binds: each evaluation of a comprehension creates new iteration
+//     environments, but they bind the same arcs;
+//   - a let or binding try clause's environment by the clause and,
+//     recursively, what its expression reads.
 //
-// Nodes the analysis does not model report level 0, which keys the memo by
-// the evaluation environment itself.
-func freeLevel(n Node, depth int32) int32 {
-	ref := func(up int32) int32 {
-		if up < depth {
-			return noFreeRef // bound within n
+// Keying by these identities, rather than by the caller environment and its
+// chain of ancestors, lets calls share a result wherever the values their
+// arguments read are the same: in the copies made when a struct holding a
+// call is referenced elsewhere (function results and activations are not
+// structure shared, see [nodeContext.shareIfPossible]), and in each
+// evaluation of a comprehension whose body passes a loop variable to a
+// function. Otherwise each such copy or evaluation rebuilds the activation
+// and re-finalizes the body, including every call in it.
+//
+// When the arguments contain a node the analysis does not model, the key is
+// the caller environment itself.
+func (c *OpContext) callArgsKey(call *CallExpr, callEnv *Environment) *argsKey {
+	return c.readsKey(c.callReads(call), callEnv)
+}
+
+// readsKey returns the key of the values that an expression with reads r
+// reads when it is evaluated in env.
+func (c *OpContext) readsKey(r *envReads, env *Environment) *argsKey {
+	if env == nil {
+		return nil
+	}
+	if r.unknown {
+		return c.internArgsKey(argsKey{caller: env.key(c)})
+	}
+	var k *argsKey
+	e, at := env, int32(0)
+	for _, l := range r.levels {
+		for ; at < l && e.Up != nil; at++ {
+			e = e.Up
 		}
-		return up - depth
+		if at < l {
+			break // beyond the root environment
+		}
+		k = c.internArgsKey(argsKey{prev: k, level: l, ident: c.envIdent(e)})
 	}
-	all := func(depth int32, xs ...Node) int32 {
-		l := int32(noFreeRef)
+	return k
+}
+
+// envIdent returns the identity of what references into e read.
+func (c *OpContext) envIdent(e *Environment) envIdent {
+	if b := e.binding; b != nil {
+		switch x := b.clause.(type) {
+		case *ForClause:
+			return envIdent{vertex: c.derefRoot(b.src), clause: x}
+		case *LetClause:
+			return envIdent{clause: x, bound: c.readsKey(c.clauseReads(x, x.Expr), e.Up)}
+		case *TryClause:
+			return envIdent{clause: x, bound: c.readsKey(c.clauseReads(x, x.Expr), e.Up)}
+		}
+	}
+	return envIdent{vertex: e.DerefVertex(c), label: e.DynamicLabel}
+}
+
+// internArgsKey returns the canonical node equal to k.
+func (c *OpContext) internArgsKey(k argsKey) *argsKey {
+	if p, ok := c.argsKeys[k]; ok {
+		return p
+	}
+	if c.argsKeys == nil {
+		c.argsKeys = map[argsKey]*argsKey{}
+	}
+	p := &k
+	c.argsKeys[k] = p
+	return p
+}
+
+// callReads returns, once per call site, the environments its arguments
+// read.
+func (c *OpContext) callReads(call *CallExpr) *envReads {
+	if r, ok := c.envReads[call]; ok {
+		return r
+	}
+	r := argReads(call)
+	c.setEnvReads(call, r)
+	return r
+}
+
+// clauseReads returns, once per clause, the environments that the
+// expression bound by a let or binding try clause reads, relative to the
+// environment in which the clause is evaluated.
+func (c *OpContext) clauseReads(clause Node, x Expr) *envReads {
+	if r, ok := c.envReads[clause]; ok {
+		return r
+	}
+	r := &envReads{}
+	freeLevels(x, 0, r)
+	r.finish()
+	c.setEnvReads(clause, r)
+	return r
+}
+
+func (c *OpContext) setEnvReads(n Node, r *envReads) {
+	if c.envReads == nil {
+		c.envReads = map[Node]*envReads{}
+	}
+	c.envReads[n] = r
+}
+
+// argReads computes [OpContext.callReads].
+func argReads(call *CallExpr) *envReads {
+	r := &envReads{}
+	for _, a := range call.Args {
+		freeLevels(a, 0, r)
+	}
+	r.finish()
+	return r
+}
+
+func (r *envReads) add(l int32) {
+	r.levels = append(r.levels, l)
+}
+
+func (r *envReads) finish() {
+	slices.Sort(r.levels)
+	r.levels = slices.Compact(r.levels)
+}
+
+// argLevel returns the nearest level that the arguments of call read: 0
+// when they contain a node the analysis does not model, and [noFreeRef] when
+// they read no environment.
+func argLevel(call *CallExpr) int32 {
+	r := argReads(call)
+	switch {
+	case r.unknown:
+		return 0
+	case len(r.levels) == 0:
+		return noFreeRef
+	}
+	return r.levels[0]
+}
+
+// freeLevels adds to r each environment level that a free reference in n
+// reads, where level 0 is the environment in which n is evaluated when depth
+// is 0, and depth counts the scopes that n's enclosing expression has opened
+// so far. The scopes mirror the ones the compiler counts in UpCount: struct
+// and list literals, for, let and binding try clauses, and function bodies
+// each open one; an else clause is evaluated outside the clauses of its
+// comprehension.
+//
+// A node the analysis does not model sets r.unknown.
+func freeLevels(n Node, depth int32, r *envReads) {
+	ref := func(up int32) {
+		if up >= depth { // otherwise bound within n
+			r.add(up - depth)
+		}
+	}
+	all := func(depth int32, xs ...Node) {
 		for _, x := range xs {
 			if x != nil {
-				l = min(l, freeLevel(x, depth))
+				freeLevels(x, depth, r)
 			}
 		}
-		return l
 	}
 
 	switch x := n.(type) {
 	case nil:
-		return noFreeRef
 
 	case *FieldReference:
-		return ref(x.UpCount)
+		ref(x.UpCount)
 	case *LabelReference:
-		return ref(x.UpCount)
+		ref(x.UpCount)
 	case *LetReference:
-		// The let expression is evaluated in the let's own scope, which is
-		// this level or a shallower one.
-		return ref(x.UpCount)
+		// The let is an arc of the vertex at this level, which determines
+		// its value.
+		ref(x.UpCount)
 	case *DynamicReference:
-		return min(ref(x.UpCount), freeLevel(x.Label, depth))
+		ref(x.UpCount)
+		freeLevels(x.Label, depth, r)
 	case *ValueReference:
 		if x.UpCount == 0 {
-			// The vertex being evaluated.
+			// The vertex being evaluated, rather than an environment.
 			if depth == 0 {
-				return 0
+				r.unknown = true
 			}
-			return noFreeRef
+			return
 		}
-		return ref(x.UpCount - 1)
+		ref(x.UpCount - 1)
 
 	case *ImportReference:
-		return noFreeRef
 
 	case *SelectorExpr:
-		return freeLevel(x.X, depth)
+		freeLevels(x.X, depth, r)
 	case *IndexExpr:
-		return all(depth, x.X, x.Index)
+		all(depth, x.X, x.Index)
 	case *SliceExpr:
-		return all(depth, x.X, x.Lo, x.Hi, x.Stride)
+		all(depth, x.X, x.Lo, x.Hi, x.Stride)
 	case *Interpolation:
-		l := int32(noFreeRef)
 		for _, p := range x.Parts {
-			l = min(l, freeLevel(p, depth))
+			freeLevels(p, depth, r)
 		}
-		return l
 	case *UnaryExpr:
-		return freeLevel(x.X, depth)
+		freeLevels(x.X, depth, r)
 	case *BinaryExpr:
-		return all(depth, x.X, x.Y)
+		all(depth, x.X, x.Y)
 	case *BoundExpr:
-		return freeLevel(x.Expr, depth)
+		freeLevels(x.Expr, depth, r)
 	case *OpenExpr:
-		return freeLevel(x.X, depth)
+		freeLevels(x.X, depth, r)
 	case *CallExpr:
-		l := freeLevel(x.Fun, depth)
+		freeLevels(x.Fun, depth, r)
 		for _, a := range x.Args {
-			l = min(l, freeLevel(a, depth))
+			freeLevels(a, depth, r)
 		}
-		return l
 	case *DisjunctionExpr:
-		l := int32(noFreeRef)
 		for _, d := range x.Values {
-			l = min(l, freeLevel(d.Val, depth))
+			freeLevels(d.Val, depth, r)
 		}
-		return l
 
 	case *StructLit:
-		l := int32(noFreeRef)
 		for _, d := range x.Decls {
-			l = min(l, freeLevelDecl(d, depth+1))
+			freeLevelsDecl(d, depth+1, r)
 		}
-		return l
 	case *ListLit:
-		l := int32(noFreeRef)
 		for _, e := range x.Elems {
-			l = min(l, freeLevelDecl(e, depth+1))
+			freeLevelsDecl(e, depth+1, r)
 		}
-		return l
 
 	case *Function:
 		// Parameter constraints, defaults and the return type are compiled
 		// in the closure scope; only the body opens a scope.
-		l := all(depth, x.Ret)
+		all(depth, x.Ret)
 		for _, p := range x.Params {
-			l = min(l, all(depth, p.Value, p.Default))
+			all(depth, p.Value, p.Default)
 		}
-		return min(l, freeLevel(x.Body, depth+1))
+		freeLevels(x.Body, depth+1, r)
 
 	case *Null, *Bool, *Num, *String, *Bytes, *Top, *BasicType, *Bottom,
 		*BoundValue, *Builtin, *ExternalValidator,
 		*BuiltinValidator, *FuncValue, *Vertex, *Conjunction, *Disjunction,
 		*NodeLink:
 		// Values, and nodes bound to an absolute environment or vertex.
-		return noFreeRef
+
+	default:
+		r.unknown = true
 	}
-	return 0
 }
 
-// freeLevelDecl is [freeLevel] for the elements of a struct or list literal,
-// evaluated at depth.
-func freeLevelDecl(d Decl, depth int32) int32 {
-	min2 := func(a, b Node) int32 {
-		return min(freeLevelNode(a, depth), freeLevelNode(b, depth))
-	}
+// freeLevelsDecl is [freeLevels] for the elements of a struct or list
+// literal, evaluated at depth.
+func freeLevelsDecl(d Decl, depth int32, r *envReads) {
 	switch x := d.(type) {
 	case *Field:
-		return freeLevelNode(x.Value, depth)
+		freeLevelsNode(x.Value, depth, r)
 	case *LetField:
-		return freeLevelNode(x.Value, depth)
+		freeLevelsNode(x.Value, depth, r)
 	case *BulkOptionalField:
-		return min2(x.Filter, x.Value)
+		freeLevelsNode(x.Filter, depth, r)
+		freeLevelsNode(x.Value, depth, r)
 	case *DynamicField:
-		return min2(x.Key, x.Value)
+		freeLevelsNode(x.Key, depth, r)
+		freeLevelsNode(x.Value, depth, r)
 	case *Ellipsis:
-		return freeLevelNode(x.Value, depth)
+		freeLevelsNode(x.Value, depth, r)
 	case *Comprehension:
-		return freeLevelComprehension(x, depth)
+		freeLevelsComprehension(x, depth, r)
 	case Expr:
-		return freeLevel(x, depth)
+		freeLevels(x, depth, r)
+	default:
+		r.unknown = true
 	}
-	return 0
 }
 
-// freeLevelNode is [freeLevel] for an optional expression.
-func freeLevelNode(n Node, depth int32) int32 {
+// freeLevelsNode is [freeLevels] for an optional expression.
+func freeLevelsNode(n Node, depth int32, r *envReads) {
 	if n == nil {
-		return noFreeRef
+		return
 	}
 	if e, ok := n.(Expr); ok {
-		return freeLevel(e, depth)
+		freeLevels(e, depth, r)
+		return
 	}
-	return 0
+	r.unknown = true
 }
 
-// freeLevelComprehension follows the scopes a comprehension's clauses open.
-func freeLevelComprehension(x *Comprehension, depth int32) int32 {
-	l := int32(noFreeRef)
+// freeLevelsComprehension follows the scopes a comprehension's clauses open.
+func freeLevelsComprehension(x *Comprehension, depth int32, r *envReads) {
 	d := depth
 	for _, y := range x.Clauses {
 		switch c := y.(type) {
 		case *ForClause:
-			l = min(l, freeLevelNode(c.Src, d))
+			freeLevelsNode(c.Src, d, r)
 			d++
 		case *IfClause:
-			l = min(l, freeLevelNode(c.Condition, d))
+			freeLevelsNode(c.Condition, d, r)
 		case *LetClause:
-			l = min(l, freeLevelNode(c.Expr, d))
+			freeLevelsNode(c.Expr, d, r)
 			d++
 		case *TryClause:
 			if c.Expr != nil {
-				l = min(l, freeLevelNode(c.Expr, d))
+				freeLevelsNode(c.Expr, d, r)
 				d++
 			}
 		default:
-			return 0
+			r.unknown = true
+			return
 		}
 	}
 	if x.Value != nil {
-		l = min(l, freeLevel(x.Value, d))
+		freeLevels(x.Value, d, r)
 	}
 	if x.Fallback != nil {
-		l = min(l, freeLevel(x.Fallback, depth))
+		freeLevels(x.Fallback, depth, r)
 	}
-	return l
 }
