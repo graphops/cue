@@ -36,3 +36,11 @@ MinFields: (func(n: int) -> validator({...})) | (func(object: {...}, n: int) -> 
 // Only fields that are part of the data model count. This excludes hidden
 // fields, optional fields, and definitions.
 MaxFields: (func(n: int) -> validator({...})) | (func(object: {...}, n: int) -> bool)
+
+// Data returns v as data: its regular fields only, with every default
+// resolved, and without closedness, definitions, hidden or optional fields.
+// It fails when v is not concrete. It is the in-CUE equivalent of
+// json.Unmarshal(json.Marshal(v)), without the conversion: CUE kinds such as
+// bytes keep their type, and the result carries none of v's defaults or
+// constraints when unified elsewhere.
+Data: func(v: _) -> _
