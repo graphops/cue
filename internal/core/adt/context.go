@@ -205,9 +205,11 @@ type OpContext struct {
 	// [funcCallResultKey], [funcCallResult] and [FuncValue.call].
 	funcCallResults map[funcCallResultKey][]funcCallResult
 
-	// callArgLevels caches, per call site, the shallowest environment level
-	// its arguments read. See [OpContext.callMemoEnv].
-	callArgLevels map[*CallExpr]int32
+	// envReads caches, per call site and per let or binding try clause, the
+	// environments its arguments or bound expression read, and argsKeys
+	// interns the memo keys built from them. See [OpContext.callArgsKey].
+	envReads map[Node]*envReads
+	argsKeys map[argsKey]*argsKey
 
 	// anonParamLabels caches the labels of the synthetic activation arcs
 	// that bind the arguments of anonymous positional function parameters,

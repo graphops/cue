@@ -2117,14 +2117,14 @@ type funcCallRefKey struct {
 }
 
 // funcCallResultKey identifies the memo bucket of a call site: the AST call
-// node and the shallowest environment its arguments read, an ancestor of the
-// caller environment in which they resolve (see [OpContext.callMemoEnv]). The
-// callee is a value resolved at each call rather than part of the key; the
-// entries within a bucket record the callee that produced them and are
-// matched on that identity. See [OpContext.funcCallResults].
+// node and the identity of the values its arguments read (see
+// [OpContext.callArgsKey]). The callee is a value resolved at each call
+// rather than part of the key; the entries within a bucket record the callee
+// that produced them and are matched on that identity. See
+// [OpContext.funcCallResults].
 type funcCallResultKey struct {
 	call *CallExpr
-	envKey
+	args *argsKey
 }
 
 // A funcCallResult memoizes the finalized result of a completed function
@@ -2232,13 +2232,13 @@ func (x *FuncValue) call(c *OpContext, call *CallExpr, state Flags) Value {
 	// struct that is copied wherever it is referenced, would otherwise
 	// rebuild the activation and re-finalize the body every time, making
 	// deeply nested calls exponential in their nesting depth. The bucket is
-	// keyed by the shallowest environment the arguments read (see
-	// [OpContext.callMemoEnv]), so that such copies share it. Only completed
+	// keyed by the identity of the values the arguments read (see
+	// [OpContext.callArgsKey]), so that such copies share it. Only completed
 	// error-free results are memoized (see the write below), so a call
 	// re-entered through recursion — which the structural cycle detector must
 	// observe on the shared anchor — has no entry and is never
 	// short-circuited here.
-	resultKey := funcCallResultKey{call: call, envKey: c.callMemoEnv(call, callEnv).key(c)}
+	resultKey := funcCallResultKey{call: call, args: c.callArgsKey(call, callEnv)}
 	calleeEnv := x.Env.key(c)
 	results := c.funcCallResults[resultKey]
 	for i := range results {
@@ -3775,6 +3775,7 @@ func (x *ForClause) yield(s *compState) {
 			v0, v1, v2 Vertex
 			arcs       [2]*Vertex
 			env        Environment
+			binding    clauseBinding
 		}{}
 
 		n := &alloc.v0
@@ -3824,11 +3825,13 @@ func (x *ForClause) yield(s *compState) {
 			n.Arcs = append(n.Arcs, v)
 		}
 
+		alloc.binding = clauseBinding{clause: x, src: a}
 		sub := &alloc.env
 		*sub = Environment{
-			Up:     env,
-			Vertex: n,
-			CompID: s.compID,
+			Up:      env,
+			Vertex:  n,
+			CompID:  s.compID,
+			binding: &alloc.binding,
 		}
 		if !s.yield(sub) {
 			break
@@ -3890,7 +3893,9 @@ func (x *LetClause) yield(s *compState) {
 		},
 	}}
 
-	s.yield(s.spawn(n))
+	e := s.spawn(n)
+	e.binding = &clauseBinding{clause: x}
+	s.yield(e)
 }
 
 // A TryClause represents a try clause in a comprehension.
@@ -3983,7 +3988,9 @@ func (x *TryClause) yield(s *compState) {
 			anonymous: true,
 			Conjuncts: []Conjunct{{c.Env(0), x.Expr, c.ci}},
 		}}}
-		s.yield(s.spawn(n))
+		e := s.spawn(n)
+		e.binding = &clauseBinding{clause: x}
+		s.yield(e)
 	} else {
 		s.yield(env)
 	}
