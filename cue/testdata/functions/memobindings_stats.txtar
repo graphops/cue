@@ -18,8 +18,8 @@ c1: r.out
 c2: r.copy1
 c3: [r, r.copy2]
 -- out/eval/stats --
-Leaks:  3
-Freed:  117
+Leaks:  4
+Freed:  116
 Reused: 93
 Allocs: 27
 Retain: 0

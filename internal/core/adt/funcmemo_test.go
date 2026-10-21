@@ -81,16 +81,19 @@ func TestArgReads(t *testing.T) {
 		src     string // declares x: F(...) somewhere
 		want    []int32
 		unknown bool
+		exact   []int32 // levels that must match the environment exactly
 	}{
-		{"constant", `s: {x: F(1)}`, nil, false},
-		{"sibling", `s: {n: 1, x: F(n)}`, []int32{0}, false},
-		{"parentAndSibling", `n: 1, s: {m: 2, x: F(n, m)}`, []int32{0, 1}, false},
-		{"duplicates", `n: 1, s: {x: F(n, n + 1)}`, []int32{1}, false},
-		{"self", `s: {x: F(self)}`, []int32{0}, false},
-		{"forValue", `s: {x: [for v in [1] {F(v)}][0]}`, nil, false},
-		{"forAndOuter", `n: 1, s: {x: [for v in [1] {F(v, n)}][0]}`, nil, false},
-		{"structArg", `n: 1, s: {m: 2, x: F({a: n, b: m})}`, []int32{0, 1}, false},
-		{"pattern", `s: {[string]~(K,_): F(K)}`, []int32{0}, false},
+		{name: "constant", src: `s: {x: F(1)}`, want: nil, unknown: false},
+		{name: "sibling", src: `s: {n: 1, x: F(n)}`, want: []int32{0}, unknown: false},
+		{name: "parentAndSibling", src: `n: 1, s: {m: 2, x: F(n, m)}`, want: []int32{0, 1}, unknown: false},
+		{name: "duplicates", src: `n: 1, s: {x: F(n, n + 1)}`, want: []int32{1}, unknown: false},
+		{name: "self", src: `s: {x: F(self)}`, want: []int32{0}, unknown: false},
+		{name: "forValue", src: `s: {x: [for v in [1] {F(v)}][0]}`, want: nil, unknown: false},
+		{name: "forAndOuter", src: `n: 1, s: {x: [for v in [1] {F(v, n)}][0]}`, want: nil, unknown: false},
+		{name: "structArg", src: `n: 1, s: {m: 2, x: F({a: n, b: m})}`, want: []int32{0, 1}, unknown: false},
+		{name: "pattern", src: `s: {[string]~(K,_): F(K)}`, want: []int32{0}, unknown: false},
+		{name: "let", src: `s: {let L = 1, x: F(L)}`, want: []int32{0}, unknown: false, exact: []int32{0}},
+		{name: "letParent", src: `let L = 1, s: {m: 2, x: F(L, m)}`, want: []int32{0, 1}, unknown: false, exact: []int32{1}},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -101,6 +104,9 @@ func TestArgReads(t *testing.T) {
 			}
 			if !unknown && tc.want != nil && !slices.Equal(levels, tc.want) {
 				t.Errorf("got levels %v, want %v", levels, tc.want)
+			}
+			if got, want := adt.ArgReadsExact(call), tc.exact; !slices.Equal(got, want) {
+				t.Errorf("got exact levels %v, want %v", got, want)
 			}
 		})
 	}
