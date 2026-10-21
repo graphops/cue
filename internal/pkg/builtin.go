@@ -176,6 +176,9 @@ func ToBuiltin(b *Builtin) *adt.Builtin {
 			return nil
 		case adt.Value:
 			return v
+		case adt.Expr:
+			// A literal expression built by the builtin, such as struct.Data.
+			return v
 		case Bottomer:
 			// deal with API limitation: catch nil interface issue.
 			if b := v.Bottom(); b != nil {
