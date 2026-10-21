@@ -14,10 +14,44 @@
 
 package adt
 
+import "strconv"
+
 // The functions and types in this file are use to construct test cases for
 // fields_test.go and constraints_test.
 
 // MatchPatternValue exports matchPatternValue for testing.
 func MatchPatternValue(ctx *OpContext, p Value, f Feature) bool {
 	return matchPatternValue(ctx, p, f)
+}
+
+// CallFreeRefs reports the free references that visitFreeRefs finds in the
+// arguments of call, as "path@level", or "?" for an expression that is not
+// modeled.
+func CallFreeRefs(call *CallExpr, idx StringIndexer) (refs []string) {
+	for _, a := range call.Args {
+		visitFreeRefs(a, 0, func(path Expr, level int32) bool {
+			if path == nil {
+				refs = append(refs, "?")
+				return true
+			}
+			head, labels := splitPath(path)
+			var s string
+			switch x := head.(type) {
+			case *FieldReference:
+				s = x.Label.SelectorString(idx)
+			case *LetReference:
+				s = "let " + x.Label.SelectorString(idx)
+			case *ValueReference:
+				s = "self"
+			case *ImportReference:
+				s = "import " + x.ImportPath.StringValue(idx)
+			}
+			for _, l := range labels {
+				s += "." + l.SelectorString(idx)
+			}
+			refs = append(refs, s+"@"+strconv.Itoa(int(level)))
+			return true
+		})
+	}
+	return refs
 }
