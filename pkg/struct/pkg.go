@@ -40,10 +40,24 @@ var p = &pkg.Package{
 				c.Ret, c.Err = MaxFields(object, n)
 			}
 		},
+	}, {
+		Name: "Data",
+		Params: []pkg.Param{
+			{Kind: adt.TopKind},
+		},
+		Result:      adt.TopKind,
+		NonConcrete: true,
+		Func: func(c *pkg.CallCtxt) {
+			v := c.Value(0)
+			if c.Do() {
+				c.Ret, c.Err = Data(c.OpContext(), v)
+			}
+		},
 	}},
 	CUE: `
 @experiment(functions)
 @pure()
 MinFields: func(object: {...}, n: int) -> bool
-MaxFields: func(object: {...}, n: int) -> bool`,
+MaxFields: func(object: {...}, n: int) -> bool
+Data: func(v: _) -> _`,
 }
