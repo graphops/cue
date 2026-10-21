@@ -1,0 +1,172 @@
+# Calls whose arguments read comprehension bindings share a memoized result
+# only when the bindings are the same: the same for clause over the same arc,
+# or the same let or try clause whose expression reads the same values. Each
+# result below must reflect its own binding.
+#inlinetest:exclude skip — results checked by the golden output
+-- in.cue --
+@experiment(functions)
+@experiment(aliasv2,try)
+
+F: func(n: _) -> _: {v: n}
+
+list: [1, 2, 3]
+forValues: [for v in list {F(v)}]
+forKeys: [for k, _ in {a: 1, b: 2} {F(k)}]
+nested: [for a in [1, 2] for b in [10, 20] {F(a + b)}]
+letClause: [for v in list let w = v * 10 {F(w)}]
+letOuter: {
+	m: 100
+	out: [for v in [1, 2] let w = v + m {F(w)}]
+}
+tryClause: [for v in [{x: 1}, {x: 2}, {}] try X = v.x? {F(X)}]
+
+// The same clause over different sources.
+G: func(xs: [...int]) -> [...]: [for v in xs {F(v)}]
+g1: G([1, 2])
+g2: G([3, 4])
+
+// Pattern instances: the label differs per field.
+byLabel: [string]~(K,_): F(K)
+byLabel: {a: _, b: _}
+
+// A copy of a struct with a comprehension still sees its own values.
+S: func(xs: [...int]) -> {...}: {out: [for v in xs {F(v)}], copy: out}
+s1: S([5])
+s2: S([6])
+s3: s1.copy
+-- out/evalalpha --
+(struct){
+  F: (func){ func(n: _) -> _: {
+      v: 〈1;n〉
+    } }
+  list: (#list){
+    0: (int){ 1 }
+    1: (int){ 2 }
+    2: (int){ 3 }
+  }
+  forValues: (#list){
+    0: (struct){
+      v: (int){ 1 }
+    }
+    1: (struct){
+      v: (int){ 2 }
+    }
+    2: (struct){
+      v: (int){ 3 }
+    }
+  }
+  forKeys: (#list){
+    0: (struct){
+      v: (string){ "a" }
+    }
+    1: (struct){
+      v: (string){ "b" }
+    }
+  }
+  nested: (#list){
+    0: (struct){
+      v: (int){ 11 }
+    }
+    1: (struct){
+      v: (int){ 21 }
+    }
+    2: (struct){
+      v: (int){ 12 }
+    }
+    3: (struct){
+      v: (int){ 22 }
+    }
+  }
+  letClause: (#list){
+    0: (struct){
+      v: (int){ 10 }
+    }
+    1: (struct){
+      v: (int){ 20 }
+    }
+    2: (struct){
+      v: (int){ 30 }
+    }
+  }
+  letOuter: (struct){
+    m: (int){ 100 }
+    out: (#list){
+      0: (struct){
+        v: (int){ 101 }
+      }
+      1: (struct){
+        v: (int){ 102 }
+      }
+    }
+  }
+  tryClause: (#list){
+    0: (struct){
+      v: (int){ 1 }
+    }
+    1: (struct){
+      v: (int){ 2 }
+    }
+  }
+  G: (func){ func(xs: [
+      ...int,
+    ]) -> [
+      ...,
+    ]: [
+      for _, v in 〈1;xs〉 {
+        〈4;F〉(〈1;v〉)
+      },
+    ] }
+  g1: (#list){
+    0: (struct){
+      v: (int){ 1 }
+    }
+    1: (struct){
+      v: (int){ 2 }
+    }
+  }
+  g2: (#list){
+    0: (struct){
+      v: (int){ 3 }
+    }
+    1: (struct){
+      v: (int){ 4 }
+    }
+  }
+  byLabel: (struct){
+    a: (struct){
+      v: (string){ "a" }
+    }
+    b: (struct){
+      v: (string){ "b" }
+    }
+  }
+  S: (func){ func(xs: [
+      ...int,
+    ]) -> {
+      ...
+    }: {
+      out: [
+        for _, v in 〈2;xs〉 {
+          〈5;F〉(〈1;v〉)
+        },
+      ]
+      copy: 〈0;out〉
+    } }
+  s1: (struct){
+    out: (#list){
+      0: (struct){
+        v: (int){ 5 }
+      }
+    }
+    copy: ~(s1.out)
+  }
+  s2: (struct){
+    out: (#list){
+      0: (struct){
+        v: (int){ 6 }
+      }
+    }
+    copy: ~(s2.out)
+  }
+  s3: ~(s1.out)
+}

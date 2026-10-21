@@ -105,6 +105,11 @@ type Environment struct {
 	// DynamicLabel so the two uint32 fields share an 8-byte slot.
 	CompID uint32
 
+	// binding is set on the environments that for, let and binding try
+	// clauses create. It identifies what references into the environment
+	// read, for the function call memo. See [OpContext.callArgsKey].
+	binding *clauseBinding
+
 	// TODO(perf): make the following public fields a shareable struct as it
 	// mostly is going to be the same for child nodes.
 
