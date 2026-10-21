@@ -37,6 +37,10 @@ type clauseBinding struct {
 type envReads struct {
 	// levels are the distinct levels that free references read, ascending.
 	levels []int32
+	// exact are the levels whose environment must be matched exactly rather
+	// than by identity, because a reference reads a value cached per
+	// environment there.
+	exact []int32
 	// unknown is set when the expression contains a node the analysis does
 	// not model; it may then read any environment.
 	unknown bool
@@ -67,6 +71,9 @@ type envIdent struct {
 	// bound is, for a let or binding try clause, the key of what its
 	// expression reads in the enclosing environment.
 	bound *argsKey
+	// exact is the environment's own key, set when a reference reads a value
+	// cached per environment at this level.
+	exact envKey
 }
 
 // callArgsKey returns the memo key for the arguments of call evaluated in
@@ -84,7 +91,9 @@ type envIdent struct {
 //     binds: each evaluation of a comprehension creates new iteration
 //     environments, but they bind the same arcs;
 //   - a let or binding try clause's environment by the clause and,
-//     recursively, what its expression reads.
+//     recursively, what its expression reads;
+//   - any environment from which a let field is read, exactly: a let a
+//     vertex receives from several environments has a value per environment.
 //
 // Keying by these identities, rather than by the caller environment and its
 // chain of ancestors, lets calls share a result wherever the values their
@@ -95,8 +104,8 @@ type envIdent struct {
 // function. Otherwise each such copy or evaluation rebuilds the activation
 // and re-finalizes the body, including every call in it.
 //
-// When the arguments contain a node the analysis does not model, the key is
-// the caller environment itself.
+// When the arguments contain a node the analysis does not model, or read
+// beyond the root environment, the key is the caller environment itself.
 func (c *OpContext) callArgsKey(call *CallExpr, callEnv *Environment) *argsKey {
 	return c.readsKey(c.callReads(call), callEnv)
 }
@@ -117,9 +126,14 @@ func (c *OpContext) readsKey(r *envReads, env *Environment) *argsKey {
 			e = e.Up
 		}
 		if at < l {
-			break // beyond the root environment
+			// Beyond the root environment: not modeled.
+			return c.internArgsKey(argsKey{caller: env.key(c)})
 		}
-		k = c.internArgsKey(argsKey{prev: k, level: l, ident: c.envIdent(e)})
+		id := c.envIdent(e)
+		if slices.Contains(r.exact, l) {
+			id.exact = e.key(c)
+		}
+		k = c.internArgsKey(argsKey{prev: k, level: l, ident: id})
 	}
 	return k
 }
@@ -201,6 +215,8 @@ func (r *envReads) add(l int32) {
 func (r *envReads) finish() {
 	slices.Sort(r.levels)
 	r.levels = slices.Compact(r.levels)
+	slices.Sort(r.exact)
+	r.exact = slices.Compact(r.exact)
 }
 
 // argLevel returns the nearest level that the arguments of call read: 0
@@ -248,9 +264,15 @@ func freeLevels(n Node, depth int32, r *envReads) {
 	case *LabelReference:
 		ref(x.UpCount)
 	case *LetReference:
-		// The let is an arc of the vertex at this level, which determines
-		// its value.
+		// A let arc is not determined by its vertex alone: a let that the
+		// vertex receives from several environments, such as one in the body
+		// of a comprehension that several calls embed into the same struct,
+		// is evaluated and cached per environment (see [Vertex.MultiLet] and
+		// [LetReference.resolve]). Key this level by the exact environment.
 		ref(x.UpCount)
+		if x.UpCount >= depth {
+			r.exact = append(r.exact, x.UpCount-depth)
+		}
 	case *DynamicReference:
 		ref(x.UpCount)
 		freeLevels(x.Label, depth, r)

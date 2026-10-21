@@ -34,3 +34,7 @@ func ArgReads(call *CallExpr) (levels []int32, unknown bool) {
 	r := argReads(call)
 	return r.levels, r.unknown
 }
+
+// ArgReadsExact exports the levels at which the arguments of call read a
+// value cached per environment.
+func ArgReadsExact(call *CallExpr) []int32 { return argReads(call).exact }
