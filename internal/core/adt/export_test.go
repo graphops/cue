@@ -37,6 +37,10 @@ func ArgReads(call *CallExpr) (levels []int32, unknown bool) {
 	return r.levels, r.unknown
 }
 
+// ArgReadsExact exports the levels at which the arguments of call read a
+// value cached per environment.
+func ArgReadsExact(call *CallExpr) []int32 { return argReads(call).exact }
+
 // CallFreeRefs reports the free references that visitFreeRefs finds in the
 // arguments of call, as "path@level", or "?" for an expression that is not
 // modeled.
