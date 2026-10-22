@@ -14,8 +14,6 @@
 
 package adt
 
-import "slices"
-
 // This file contains logic regarding structure sharing.
 
 // Notes
@@ -81,23 +79,50 @@ func (n *nodeContext) scheduleSkippedShared() {
 // redundancy of a repeated definition conjunct relies on.
 func plainApplication(c Conjunct, id CloseInfo) bool {
 	return !c.CloseInfo.Opened && !c.CloseInfo.ConjunctOpened &&
-		!id.Opened && !id.ConjunctOpened && !id.FromEmbed && id.enclosingEmbed == 0
+		!id.Opened && !id.ConjunctOpened && notEmbedded(id)
+}
+
+// notEmbedded reports whether a conjunct with close info id is applied to
+// the node directly rather than through an embedding. A definition the
+// shared value applied plainly (closed) makes such a conjunct redundant
+// whether it is plain or opened (D...): an opened definition adds the same
+// constraints and no closedness.
+func notEmbedded(id CloseInfo) bool {
+	return !id.FromEmbed && id.enclosingEmbed == 0
+}
+
+// appliedDef is a definition whose conjuncts were unified directly into a
+// vertex, and whether that application closed the vertex (a plain reference)
+// or only constrained it (an opened one, D...).
+type appliedDef struct {
+	def    *Vertex
+	closed bool
 }
 
 // recordAppliedDef records that the conjuncts of definition arc are unified
-// directly into n.
-func (v *Vertex) recordAppliedDef(arc *Vertex) {
-	if !slices.Contains(v.appliedDefs, arc) {
-		v.appliedDefs = append(v.appliedDefs, arc)
+// directly into v, closing it or not.
+func (v *Vertex) recordAppliedDef(arc *Vertex, closed bool) {
+	for i, a := range v.appliedDefs {
+		if a.def == arc {
+			v.appliedDefs[i].closed = a.closed || closed
+			return
+		}
 	}
+	v.appliedDefs = append(v.appliedDefs, appliedDef{arc, closed})
 }
 
 // appliesDef reports whether v, or a value it shares, already unified the
-// conjuncts of definition def, so that unifying def again adds nothing.
-func (v *Vertex) appliesDef(def *Vertex) bool {
+// conjuncts of definition def, closing it if needClosed, so that unifying def
+// again in that mode adds nothing.
+func (v *Vertex) appliesDef(def *Vertex, needClosed bool) bool {
 	for {
-		if v == def || slices.Contains(v.appliedDefs, def) {
+		if v == def {
 			return true
+		}
+		for _, a := range v.appliedDefs {
+			if a.def == def && (a.closed || !needClosed) {
+				return true
+			}
 		}
 		w, ok := v.BaseValue.(*Vertex)
 		if !ok {
@@ -113,7 +138,7 @@ func (v *Vertex) appliesDef(def *Vertex) bool {
 // value is itself the definition and arc is a value that applied it, the
 // node shares arc instead. It reports whether arc was handled.
 func (n *nodeContext) skipRedundantDef(c Conjunct, arc *Vertex, id CloseInfo) bool {
-	if !n.isShared || !plainApplication(c, id) {
+	if !n.isShared || !notEmbedded(id) {
 		return false
 	}
 	cur, ok := n.node.BaseValue.(*Vertex)
@@ -121,12 +146,12 @@ func (n *nodeContext) skipRedundantDef(c Conjunct, arc *Vertex, id CloseInfo) bo
 		return false
 	}
 	switch {
-	case arc.Label.IsDef() && cur.appliesDef(arc):
+	case arc.Label.IsDef() && cur.appliesDef(arc, plainApplication(c, id)):
 		n.skippedShared = append(n.skippedShared, sharedSkip{c, arc, id})
 		return true
 
-	case cur.Label.IsDef() && arc.appliesDef(cur) && len(n.sharedIDs) == 1 &&
-		plainApplication(n.shared, n.sharedIDs[0]):
+	case cur.Label.IsDef() && len(n.sharedIDs) == 1 && notEmbedded(n.sharedIDs[0]) &&
+		arc.appliesDef(cur, plainApplication(n.shared, n.sharedIDs[0])):
 		// Share arc, which includes the definition, rather than the
 		// definition itself.
 		prev := sharedSkip{n.shared, cur, n.sharedIDs[0]}
