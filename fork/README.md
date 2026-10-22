@@ -26,6 +26,7 @@ Each fix also exists on its own branch, isolated on the `v0.18.0-rc.1` tag.
 | `fix/rc1-call-memo-copies` | Performance: every copy of a function result re-ran its nested calls | Medium-high |
 | `fix/rc1-call-arg-cycle` | Spurious structural cycle: a call inherited from a cycle its arguments do not reach was postponed until it became a structural cycle | Medium-high |
 | `fix/rc1-call-memo-bindings` | Performance: calls on comprehension variables re-ran in every copy; also a wrong result when a pattern passes its label alias to a function. Based on `fix/rc1-call-memo-copies` | Medium |
+| `fix/rc1-pushdown-notify` | Silent value loss: a reference copied a struct while a pushed-down comprehension targeting it was still running, so the fields the comprehension added afterwards never reached the referring node | Medium-high |
 
 ## Additions
 
