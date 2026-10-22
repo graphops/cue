@@ -530,7 +530,8 @@ func (n *nodeContext) scheduleVertexConjuncts(c Conjunct, arc *Vertex, closeInfo
 		pState := arc.Parent.getState(n.ctx)
 		state := arc.getBareState(n.ctx)
 		if pState != nil && state != nil &&
-			!pState.meets(allAncestorsProcessed|fieldConjunctsKnown) {
+			(!pState.meets(allAncestorsProcessed|fieldConjunctsKnown) ||
+				state.hasActiveParentTask()) {
 			state.addNotify2(n.node, closeInfo)
 		}
 	}
@@ -552,7 +553,7 @@ func (n *nodeContext) addNotify2(v *Vertex, c CloseInfo) {
 	case n.node.isFinal():
 		return
 	case !n.node.isInProgress():
-	case n.meets(allAncestorsProcessed):
+	case n.meets(allAncestorsProcessed) && !n.hasActiveParentTask():
 		return
 	}
 
