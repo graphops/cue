@@ -1,0 +1,71 @@
+# A reference to a struct schedules the struct's conjuncts once, and registers
+# for later conjuncts only while the struct's parent has not reached
+# fieldConjunctsKnown. With dependency-tracking pushdown, a comprehension that
+# declares a field of that struct no longer holds up its parent: the
+# comprehension is a parent task of the field's arc instead. A reference
+# resolved while such a task is still active, typically because the task's
+# own guard caused the lookup, must therefore register for notifications on
+# the arc itself, or the conjuncts the comprehension adds afterwards never
+# reach the referring node and are lost without an error.
+#
+# Below, x: deploy.config and deploy.config: x refer to each other, and both
+# the deploy guard (on x) and the stack guard (on stack.config) read the
+# struct they add to. Evaluating the guard of the root comprehension forces
+# x, which copies deploy.config, which copies x while that comprehension is
+# running. Without the notification, deploy.config lacks extra.
+-- in.cue --
+stack: {
+	config: _
+	if config.on {
+		config: name: "stack"
+	}
+}
+
+deploy: stack & {config: x}
+
+x: deploy.config
+x: on: true
+
+if x.on {
+	x: extra: 1
+}
+
+result: deploy.config.extra @test(eq, 1)
+-- out/errors.txt --
+[incomplete] stack: undefined field: on:
+    ./in.cue:3:12
+    ./in.cue:2:2
+-- out/evalalpha --
+(struct){
+  stack: (_|_){
+    // [incomplete] stack: undefined field: on:
+    //     ./in.cue:3:12
+    //     ./in.cue:2:2
+    config: (_){ _ }
+  }
+  deploy: (struct){
+    config: (struct){
+      name: (string){ "stack" }
+      on: (bool){ true }
+      extra: (int){ 1 }
+    }
+  }
+  x: (struct){
+    extra: (int){ 1 }
+    on: (bool){ true }
+    name: (string){ "stack" }
+  }
+}
+-- out/eval/stats --
+Leaks:  1
+Freed:  13
+Reused: 0
+Allocs: 14
+Retain: 0
+
+Unifications: 14
+Conjuncts:    27
+Disjuncts:    0
+Notifications: 1
+
+NumCloseIDs: 3
