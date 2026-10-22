@@ -291,6 +291,12 @@ type nodeContext struct {
 	// closedness information is correctly computed in such cases.
 	sharedIDs []CloseInfo
 
+	// skippedShared holds definition conjuncts not scheduled because the
+	// value this node shares already applied them. They are scheduled if the
+	// node is unshared, so its value and closedness are exactly as without
+	// the shortcut.
+	skippedShared []sharedSkip
+
 	cyclicConjuncts []cyclicConjunct
 
 	// These fields are used to track type checking.
@@ -508,6 +514,7 @@ func (c *OpContext) newNodeContext(node *Vertex) *nodeContext {
 			cyclicConjuncts:   n.cyclicConjuncts[:0],
 			notify:            n.notify[:0],
 			sharedIDs:         n.sharedIDs[:0],
+			skippedShared:     n.skippedShared[:0],
 			checks:            n.checks[:0],
 			postChecks:        n.postChecks[:0],
 			funcDefaultChecks: n.funcDefaultChecks[:0],

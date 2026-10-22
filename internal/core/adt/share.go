@@ -14,6 +14,8 @@
 
 package adt
 
+import "slices"
+
 // This file contains logic regarding structure sharing.
 
 // Notes
@@ -51,6 +53,97 @@ func (n *nodeContext) unshare() {
 	}
 
 	n.decSharedIDs()
+
+	n.scheduleSkippedShared()
+}
+
+// sharedSkip is a definition conjunct a structure-shared node did not
+// schedule, because the shared value already applied that definition.
+type sharedSkip struct {
+	c   Conjunct
+	arc *Vertex
+	id  CloseInfo
+}
+
+// scheduleSkippedShared schedules the conjuncts skipped while sharing, once
+// the node no longer shares.
+func (n *nodeContext) scheduleSkippedShared() {
+	skipped := n.skippedShared
+	n.skippedShared = n.skippedShared[:0]
+	for _, s := range skipped {
+		n.scheduleVertexConjuncts(s.c, s.arc, s.id)
+	}
+}
+
+// plainApplication reports whether conjunct c, with close info id, applies
+// its value directly: not embedded and not opened. Only then does applying a
+// definition close the node exactly as the definition does, which the
+// redundancy of a repeated definition conjunct relies on.
+func plainApplication(c Conjunct, id CloseInfo) bool {
+	return !c.CloseInfo.Opened && !c.CloseInfo.ConjunctOpened &&
+		!id.Opened && !id.ConjunctOpened && !id.FromEmbed && id.enclosingEmbed == 0
+}
+
+// recordAppliedDef records that the conjuncts of definition arc are unified
+// directly into n.
+func (v *Vertex) recordAppliedDef(arc *Vertex) {
+	if !slices.Contains(v.appliedDefs, arc) {
+		v.appliedDefs = append(v.appliedDefs, arc)
+	}
+}
+
+// appliesDef reports whether v, or a value it shares, already unified the
+// conjuncts of definition def, so that unifying def again adds nothing.
+func (v *Vertex) appliesDef(def *Vertex) bool {
+	for {
+		if v == def || slices.Contains(v.appliedDefs, def) {
+			return true
+		}
+		w, ok := v.BaseValue.(*Vertex)
+		if !ok {
+			return false
+		}
+		v = w
+	}
+}
+
+// skipRedundantDef handles a definition conjunct arriving at a node that
+// structure shares a value which already applied it: the conjunct is
+// remembered instead of scheduled, so the node keeps sharing. If the shared
+// value is itself the definition and arc is a value that applied it, the
+// node shares arc instead. It reports whether arc was handled.
+func (n *nodeContext) skipRedundantDef(c Conjunct, arc *Vertex, id CloseInfo) bool {
+	if !n.isShared || !plainApplication(c, id) {
+		return false
+	}
+	cur, ok := n.node.BaseValue.(*Vertex)
+	if !ok {
+		return false
+	}
+	switch {
+	case arc.Label.IsDef() && cur.appliesDef(arc):
+		n.skippedShared = append(n.skippedShared, sharedSkip{c, arc, id})
+		return true
+
+	case cur.Label.IsDef() && arc.appliesDef(cur) && len(n.sharedIDs) == 1 &&
+		plainApplication(n.shared, n.sharedIDs[0]):
+		// Share arc, which includes the definition, rather than the
+		// definition itself.
+		prev := sharedSkip{n.shared, cur, n.sharedIDs[0]}
+		n.isShared = false
+		n.node.IsShared = false
+		n.node.OpenedShared = false
+		n.node.BaseValue = n.origBaseValue
+		n.sharedIDs = n.sharedIDs[:0]
+		if !n.shareIfPossible(c, arc, id) {
+			n.scheduleVertexConjuncts(prev.c, prev.arc, prev.id)
+			return false
+		}
+		arc.getState(n.ctx)
+		n.skippedShared = append(n.skippedShared, prev)
+		return true
+	}
+	return false
 }
 
 // finalizeSharing should be called when it is known for sure a node can be
@@ -107,6 +200,13 @@ func (n *nodeContext) decSharedIDs() {
 	n.shareDecremented = true
 	for _, id := range n.sharedIDs {
 		n.updateConjunctInfo(n.node.Kind(), id, 0)
+	}
+	// Conjuncts skipped while sharing contribute like the shared one. If the
+	// node was unshared instead, they are scheduled, and counted, as usual.
+	if n.isShared {
+		for _, s := range n.skippedShared {
+			n.updateConjunctInfo(n.node.Kind(), s.id, 0)
+		}
 	}
 }
 
