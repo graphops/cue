@@ -37,6 +37,22 @@ only on this branch.
 | `struct.Data(v)` | `v` as concrete data (regular fields, defaults resolved, no closedness, definitions, hidden or optional fields), built as fresh CUE literals. An in-CUE replacement for `json.Unmarshal(json.Marshal(v))`, about 2.7× cheaper, which keeps CUE kinds such as bytes. | `pkg/struct/testdata/data.txtar` |
 | Sharing past a repeated definition | Structure sharing is kept when a conjunct refers to a definition the shared value already applied (plainly, or opened for an opened repeat); the repeated conjunct is remembered and applied as usual if the node is unshared. A schema-checked value can then be passed to many places that also declare the schema. | `cue/testdata/eval/sharedefs.txtar` |
 
+## Releases
+
+Pushing a tag `v0.18.0-rc.1-graphops.<n>` on this branch runs
+`.github/workflows/release.yml`: it tests the fork and publishes a GitHub
+release with `cue` binaries for Linux, macOS and Windows (amd64 and arm64),
+named like upstream's (`cue_<tag>_<os>_<arch>.tar.gz`), plus `sha256sums.txt`.
+`cue version` reports the tag. Increment `<n>` for each release from this
+branch; a manual run of the workflow builds a snapshot without publishing.
+
+Go programs that embed CUE use a release with a replace directive:
+
+```
+require cuelang.org/go v0.18.0-rc.1
+replace cuelang.org/go => github.com/graphops/cue v0.18.0-rc.1-graphops.1
+```
+
 ## Build and test
 
 ```sh

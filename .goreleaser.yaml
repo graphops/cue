@@ -1,0 +1,48 @@
+# Release configuration for the GraphOps fork, used by
+# .github/workflows/release.yml. Asset names follow upstream CUE's releases
+# (cue_<tag>_<os>_<arch>.tar.gz), so tools that install upstream CUE can
+# install the fork by changing only the repository and version.
+version: 2
+project_name: cue
+
+builds:
+  - id: cue
+    main: ./cmd/cue
+    binary: cue
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+
+archives:
+  - name_template: "{{ .ProjectName }}_{{ .Tag }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - README.md
+      - fork/README.md
+
+checksum:
+  name_template: sha256sums.txt
+  algorithm: sha256
+
+release:
+  github:
+    owner: graphops
+    name: cue
+  prerelease: auto
+  draft: false
+
+changelog:
+  disable: true
+
+snapshot:
+  version_template: "{{ .Tag }}-next"
