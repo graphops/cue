@@ -428,8 +428,8 @@ func (n *nodeContext) scheduleVertexConjuncts(c Conjunct, arc *Vertex, closeInfo
 	if n.skipRedundantDef(c, arc, closeInfo) {
 		return
 	}
-	if arc.Label.IsDef() && plainApplication(c, closeInfo) {
-		n.node.recordAppliedDef(arc)
+	if arc.Label.IsDef() && notEmbedded(closeInfo) {
+		n.node.recordAppliedDef(arc, plainApplication(c, closeInfo))
 	}
 
 	if n.shareIfPossible(c, arc, closeInfo) {

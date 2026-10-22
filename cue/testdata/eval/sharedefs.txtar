@@ -37,8 +37,19 @@ defaults: f & #F
 
 // An opened reference is not skipped.
 opened: {s...} & #D
+
+// A kind that brings the definition in through a spread, as blueprint kinds
+// do: a child sharing a parent's checked field keeps sharing, and closedness
+// still holds.
+#K: {ctx!: #D}
+B: {#K..., x?: _}
+parent: B & {ctx: {a: 1}}
+child:  B & {ctx: parent.ctx}
+childErr: B & {ctx: parent.ctx} & {ctx: b: 2}
 -- out/evalalpha --
 Errors:
+childErr.ctx.b: field not allowed:
+    ./in.cue:42:41
 closedErr.b: field not allowed:
     ./in.cue:15:25
 closedErrRev.b: field not allowed:
@@ -118,5 +129,34 @@ Result:
   defaults: ~(#F)
   opened: (#struct){
     a: (int){ 1 }
+  }
+  #K: (#struct){
+    ctx!: ~(#D)
+  }
+  B: (#struct){
+    x?: (_){ _ }
+    ctx!: ~(#D)
+  }
+  parent: (#struct){
+    ctx: (#struct){
+      a: (int){ 1 }
+    }
+    x?: (_){ _ }
+  }
+  child: (#struct){
+    ctx: ~(parent.ctx)
+    x?: (_){ _ }
+  }
+  childErr: (_|_){
+    // [eval]
+    ctx: (_|_){
+      // [eval]
+      b: (_|_){
+        // [eval] childErr.ctx.b: field not allowed:
+        //     ./in.cue:42:41
+      }
+      a: (int){ 1 }
+    }
+    x?: (_){ _ }
   }
 }
