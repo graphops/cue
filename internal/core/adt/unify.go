@@ -349,6 +349,18 @@ func (v *Vertex) unify(c *OpContext, flags Flags) bool {
 		n.signal(arcTypeKnown)
 	}
 
+	// A request for only the arc type, as made by evalArcTypes, is answered
+	// once the arc is a member, as a member cannot change type anymore. Do not
+	// validate the value of such an arc while tasks remain: running the
+	// pushed-down comprehension that declares the arc may add a resolver to
+	// it, which cannot change the type and so was not run. Validating now
+	// would fix BaseValue to the validators collected so far, such as _, and
+	// the struct the resolver adds later would no longer be marked: lookups
+	// into the arc would fail as incomplete and its fields would be lost.
+	if nodeOnlyNeeds == arcTypeKnown && v.ArcType == ArcMember && !allTasksFinished(n) {
+		return true
+	}
+
 	defer c.PopArc(c.PushArc(v))
 
 	w := v.DerefDisjunct()
