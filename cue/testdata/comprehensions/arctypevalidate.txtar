@@ -1,0 +1,57 @@
+# Evaluating the arc types of a struct runs a pushed-down comprehension to
+# learn whether the arcs it declares exist. That may add a reference to such
+# an arc, which cannot change the arc's type and so is not resolved by that
+# request. The value of the arc must not be validated before the reference
+# is resolved, or it is fixed to _: the struct the reference adds later is
+# not marked, so lookups into the arc fail as incomplete and its value is
+# reported as the type struct, losing its fields.
+#
+# Below, out refers to #R.data before #R is evaluated. Iterating over values
+# evaluates its arc types, which runs the comprehension that declares T.
+-- in.cue --
+byList: {
+	out: #R.data @test(eq, ["v"])
+	c: t: k: "v"
+	#R: {
+		values: {if true {T: c.t}}
+		data: [for k, v in values {v.k}]
+	}
+}
+
+byStruct: {
+	out: #R.data @test(eq, {T: "v"})
+	c: t: k: "v"
+	#R: {
+		values: {if true {T: c.t}}
+		data: {for k, v in values {(k): v.k}}
+	}
+}
+
+// The real-world shape: a conditional entry in a map of secret references,
+// read through a per-key let into a guard.
+guarded: {
+	out: #Resources.runtime.names @test(eq, ["TOKEN"])
+	config: {
+		audience: *"platform" | "public"
+		if config.audience == "platform" {token: kind: "vault"}
+	}
+	#Resources: runtime: #Set & {
+		values: {if config.audience == "platform" {TOKEN: config.token}}
+	}
+	#Set: {
+		values: {...}
+		names: [for name, _ in values let Source = values[name] if Source.kind == "vault" {name}]
+	}
+}
+-- out/eval/stats --
+Leaks:  4
+Freed:  39
+Reused: 22
+Allocs: 21
+Retain: 0
+
+Unifications: 41
+Conjuncts:    57
+Disjuncts:    2
+
+NumCloseIDs: 6
