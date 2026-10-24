@@ -1702,7 +1702,8 @@ The alias is specified using a postfix `~` operator after a label. The single
 form `~V` or `~(V)` creates an alias referring to the field, while the
 dual form `~(K,V)` creates two aliases: one for the label and one for the field.
 The parenthesized single form `~(V)` is the canonical form;
-`cue fmt` normalizes `~V` to `~(V)`.
+`cue fmt` normalizes `~V` to `~(V)` in files written for language version
+v0.17.0 or later, as earlier versions do not accept `~(V)`.
 The first position in the dual form can use `_` (blank identifier) to skip
 binding the label alias.
 
