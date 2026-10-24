@@ -208,16 +208,16 @@ language: version: "v0.15.0"
 package foo
 
 // Simple field alias
-a~(X): {
+a~X: {
 	foo: 1
 	bar: X.foo + 2 @test(eq, 3)
 }
 
 // Multiple aliases
-b~(Y): {
+b~Y: {
 	data: 42
 }
-c~(Z): {
+c~Z: {
 	val: Y.data @test(eq, 42)
 }
 zref: Z.val @test(eq, 42)
@@ -228,8 +228,8 @@ package foo
 
 // Nested aliases
 outer: {
-	middle~(Inner): {
-		deep~(Leaf): {
+	middle~Inner: {
+		deep~Leaf: {
 			value: 1
 		}
 		ref: Leaf.value @test(eq, 1)
@@ -242,12 +242,12 @@ outer: {
 package foo
 
 // With constraints
-a~(OptField)?: {
+a~OptField?: {
 	value: 1
 }
 optRef: OptField.value
 
-b~(ReqField)!: {
+b~ReqField!: {
 	value: 2
 }
 reqRef: ReqField.value
@@ -257,7 +257,7 @@ reqRef: ReqField.value
 
 package foo
 
-a~(X): {
+a~X: {
 	foo: 1
 }
 ref: X.foo
@@ -287,25 +287,25 @@ x:    "key"
 name: "dyn"
 
 // Dynamic fields with old alias syntax
-(x)~(DynAlias): {
+(x)~DynAlias: {
 	field: 1
 	ref:   DynAlias.field
 }
 
 // Dynamic field with string literal
-("foo")~(StrAlias): {
+("foo")~StrAlias: {
 	data: 2
 	ref:  StrAlias.data
 }
 
 // Dynamic field with interpolation
-("\(name)")~(DynInterpAlias): {
+("\(name)")~DynInterpAlias: {
 	val: 3
 	ref: InterpAlias.val
 }
 dynRef: DynInterpAlias.val
 // Just the interpolation
-"\(name)"~(InterpAlias): {
+"\(name)"~InterpAlias: {
 	val: 3
 	ref: InterpAlias.val
 }
@@ -392,7 +392,7 @@ enclosinglet: {
 
 // Field alias named self at same scope
 aliassamescope: {
-	bar~(self): {
+	bar~self: {
 		data: 1
 	}
 	baz: self.data @test(eq, 1)
@@ -405,7 +405,7 @@ aliassamescope: {
 
 // Field alias named self in enclosing struct
 aliasenclosing: {
-	bar~(self): {
+	bar~self: {
 		data: 1
 	}
 	baz: self.data @test(eq, 1)
