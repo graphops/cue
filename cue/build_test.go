@@ -165,6 +165,41 @@ func TestBuildExprCloseList(t *testing.T) {
 	}
 }
 
+// TestBuildExprClosedness checks that a value built by
+// [cue.Context.BuildExpr] is checked for closedness, as the same expression
+// is when it is part of a file.
+func TestBuildExprClosedness(t *testing.T) {
+	ctx := cuecontext.New()
+	scope := ctx.CompileString(`
+#S: {a?: int}
+d: {b: 1}
+`)
+	testCases := []struct {
+		expr string
+		err  string // empty for no error
+	}{
+		{expr: "#S & d", err: "b: field not allowed"},
+		{expr: "#S & {b: 1}", err: "b: field not allowed"},
+		{expr: "{y: #S & d}", err: "y.b: field not allowed"},
+		{expr: "[#S & d][0]", err: "0.b: field not allowed"},
+		{expr: "{#T: {a?: int}, out: #T & {b: 1}}.out", err: "out.b: field not allowed"},
+		{expr: "#S & {a: 1}"},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.expr, func(t *testing.T) {
+			expr, err := parser.ParseExpr("test", tc.expr)
+			qt.Assert(t, qt.IsNil(err))
+			v := ctx.BuildExpr(expr, cue.Scope(scope))
+			if tc.err == "" {
+				qt.Assert(t, qt.IsNil(v.Validate()))
+				return
+			}
+			qt.Assert(t, qt.ErrorMatches(v.Err(), tc.err))
+			qt.Assert(t, qt.ErrorMatches(v.Validate(), tc.err))
+		})
+	}
+}
+
 func TestBuild(t *testing.T) {
 	files := func(s ...string) []string { return s }
 	insts := func(i ...*bimport) []*bimport { return i }
