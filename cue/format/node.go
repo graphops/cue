@@ -41,6 +41,7 @@ func printNode(node interface{}, f *printer) error {
 		if f.cfg.simplify {
 			ls.markReferences(x)
 		}
+		s.srcFile = x
 		s.file(x)
 	case ast.Expr:
 		if f.cfg.simplify {
@@ -383,6 +384,7 @@ func (f *formatter) postfixAlias(a *ast.PostfixAlias) {
 	}
 	f.print(a.Tilde, token.TILDE, noblank)
 	if a.Label != nil {
+		// Dual form: ~(K,V)
 		f.print(a.Lparen, token.LPAREN, noblank)
 		f.expr(a.Label)
 		f.print(a.Comma, token.COMMA, noblank)
@@ -390,6 +392,12 @@ func (f *formatter) postfixAlias(a *ast.PostfixAlias) {
 		f.print(a.Rparen, token.RPAREN, noblank)
 		return
 	}
+	if !internal.ParenPostfixAlias(f.srcFile, a) {
+		// Simple form before ~(X) parses: ~X
+		f.expr(a.Field)
+		return
+	}
+	// Simple form: the canonical ~(X)
 	f.print(a.Lparen, token.LPAREN, noblank)
 	f.expr(a.Field)
 	f.print(a.Rparen, token.RPAREN, noblank)
@@ -450,23 +458,7 @@ func (f *formatter) decl(decl ast.Decl) {
 		f.label(n.Label, token.ILLEGAL)
 
 		// Format postfix alias if present
-		if a := n.Alias; a != nil {
-			f.print(a.Tilde, token.TILDE, noblank)
-			if a.Label != nil {
-				// Dual form: ~(K,V)
-				// Assumes that ILLEGAL tokens are no-ops.
-				f.print(a.Lparen, token.LPAREN, noblank)
-				f.expr(a.Label)
-				f.print(a.Comma, token.COMMA, noblank)
-				f.expr(a.Field)
-				f.print(a.Rparen, token.RPAREN, noblank)
-			} else {
-				// Simple form: always output with parens ~(X)
-				f.print(a.Lparen, token.LPAREN, noblank)
-				f.expr(a.Field)
-				f.print(a.Rparen, token.RPAREN, noblank)
-			}
-		}
+		f.postfixAlias(n.Alias)
 
 		// Format constraint marker (?, !) if present
 		if n.Constraint != token.ILLEGAL {

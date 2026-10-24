@@ -121,6 +121,74 @@ func TestPostfixSpread(t *testing.T) {
 	}
 }
 
+// TestPostfixAliasVersion checks that both formatters write a simple
+// postfix alias in its canonical parenthesized form a~(X) only for a file
+// whose language version accepts it, which is from v0.17.0 on. A file
+// written for an older version keeps a~X, as its own parser would reject
+// a~(X), and the dual form a~(K,V) is unaffected either way.
+func TestPostfixAliasVersion(t *testing.T) {
+	const head = "@experiment(aliasv2)\n\n"
+	sources := []struct{ version, src, want string }{
+		{"v0.16.0", "a~X: int\n", "a~X: int\n"},
+		{"v0.16.0", "a~(X): int\n", "a~X: int\n"},
+		{"v0.16.0", "a~X?: int\n", "a~X?: int\n"},
+		{"v0.16.0", "[string]~(K,V): int\n", "[string]~(K,V): int\n"},
+		{"v0.17.0", "a~X: int\n", "a~(X): int\n"},
+		{"v0.17.0", "a~(X)?: int\n", "a~(X)?: int\n"},
+		{"", "a~X: int\n", "a~(X): int\n"},
+	}
+
+	// built assembles a file with a field aliased as a~X, whose nodes carry
+	// no positions to read a language version from.
+	built := func(version string) *ast.File {
+		f := &ast.File{Decls: []ast.Decl{&ast.Field{
+			Label: ast.NewIdent("a"),
+			Alias: &ast.PostfixAlias{Field: ast.NewIdent("X")},
+			Value: ast.NewIdent("int"),
+		}}}
+		if version != "" {
+			exp, err := cueexperiment.NewFile(version, "aliasv2")
+			qt.Assert(t, qt.IsNil(err))
+			f.SetExperiments(exp)
+		}
+		return f
+	}
+
+	qt.Assert(t, qt.IsNil(cueexperiment.Init()))
+	// Init is guarded by sync.Once, so overriding Flags directly here is not
+	// undone by the format functions calling cueexperiment.Init again.
+	defer func(orig bool) { cueexperiment.Flags.FormatV2 = orig }(cueexperiment.Flags.FormatV2)
+
+	for _, v2 := range []bool{false, true} {
+		t.Run(fmt.Sprintf("formatv2=%v", v2), func(t *testing.T) {
+			cueexperiment.Flags.FormatV2 = v2
+			for _, tc := range sources {
+				t.Run(tc.version+"/"+strings.TrimSuffix(tc.src, "\n"), func(t *testing.T) {
+					opt := format.Version(tc.version)
+					got, err := format.Source([]byte(head+tc.src), opt)
+					qt.Assert(t, qt.IsNil(err))
+					qt.Check(t, qt.Equals(string(got), head+tc.want))
+
+					again, err := format.Source(got, opt)
+					qt.Assert(t, qt.IsNil(err))
+					qt.Check(t, qt.Equals(string(again), string(got)))
+				})
+			}
+			for _, tc := range []struct{ version, want string }{
+				{"v0.16.0", "a~X: int\n"},
+				{"v0.17.0", "a~(X): int\n"},
+				{"", "a~(X): int\n"},
+			} {
+				t.Run("built/"+tc.version, func(t *testing.T) {
+					got, err := format.Node(built(tc.version))
+					qt.Assert(t, qt.IsNil(err))
+					qt.Check(t, qt.Equals(string(got), tc.want))
+				})
+			}
+		})
+	}
+}
+
 // TestFuncParamComments checks that both formatters keep a comment placed
 // after a parameter's "=" or ":", or on its own line before the default or
 // the constraint, and that the result parses back and is stable. The
