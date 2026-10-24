@@ -201,6 +201,11 @@ func (c *Context) BuildExpr(x ast.Expr, options ...BuildOption) Value {
 		return c.makeError(err)
 	}
 	v := adt.Resolve(ctx, conjunct)
+	// Finalize v with the OpContext that evaluated it: evaluating an
+	// expression such as a conjunction may leave v only partially finalized,
+	// and Finalize in another OpContext, as by c.make, skips the closedness
+	// checks on a vertex whose evaluation started in a different context.
+	v.Finalize(ctx)
 
 	return c.make(v)
 }
