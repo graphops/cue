@@ -441,6 +441,25 @@ a: [1]`,
 		out: `{
 	a: _|_ // a: 2 errors in empty disjunction: (and 2 more errors)
 }`,
+	}, {
+		// A let bound to self denotes the struct declaring it, which is not
+		// being exported here. Its name is kept, which does not resolve,
+		// rather than being bound to another value.
+		name: "let bound to self outside of its struct",
+		in: `
+		@experiment(aliasv2)
+		#S: {
+			in!: [string]: int
+			let X = self
+			out: a: [for k, _ in X.in {k}]
+		}
+		#T: #S & {}
+		`,
+		path:    "#T.out.a",
+		options: o(cue.Raw()),
+		out: `[for k, _ in X.in {
+	k
+}]`,
 	}}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
