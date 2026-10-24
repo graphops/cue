@@ -366,6 +366,9 @@ func (cfg *config) fprint(node any) (out []byte, err error) {
 type formatter struct {
 	*printer
 
+	// srcFile is the file being printed, if the node printed is one.
+	srcFile *ast.File
+
 	stack    []frame
 	current  frame
 	nestExpr int
