@@ -1,0 +1,59 @@
+# cue fmt writes a simple postfix alias as a~(X) only in a module whose
+# language version accepts that form, which is from v0.17.0 on. In a module
+# written for an older version, a~(X) would not parse with that version's
+# own cue, so a~X is kept, and a~(X) is written back as a~X.
+
+cd old
+exec cue fmt ./...
+cmp x.cue x.cue.golden
+
+cd ../new
+exec cue fmt ./...
+cmp x.cue x.cue.golden
+
+-- old/cue.mod/module.cue --
+module: "test.example/old"
+language: version: "v0.16.0"
+-- old/x.cue --
+@experiment(aliasv2)
+
+package x
+
+a~X: {b: int}
+
+c~(Y)?: {d: Y.e, e: int}
+
+[string]~(K,V): {k: K, v: V.v}
+-- old/x.cue.golden --
+@experiment(aliasv2)
+
+package x
+
+a~X: {b: int}
+
+c~Y?: {d: Y.e, e: int}
+
+[string]~(K,V): {k: K, v: V.v}
+-- new/cue.mod/module.cue --
+module: "test.example/new"
+language: version: "v0.17.0"
+-- new/x.cue --
+@experiment(aliasv2)
+
+package x
+
+a~X: {b: int}
+
+c~(Y)?: {d: Y.e, e: int}
+
+[string]~(K,V): {k: K, v: V.v}
+-- new/x.cue.golden --
+@experiment(aliasv2)
+
+package x
+
+a~(X): {b: int}
+
+c~(Y)?: {d: Y.e, e: int}
+
+[string]~(K,V): {k: K, v: V.v}

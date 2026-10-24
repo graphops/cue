@@ -30,6 +30,7 @@ import (
 
 	"cuelang.org/go/cue/ast"
 	"cuelang.org/go/cue/token"
+	"cuelang.org/go/internal/mod/semver"
 )
 
 // A Decimal is an arbitrary-precision binary-coded decimal number.
@@ -340,6 +341,31 @@ func IsRegularField(f *ast.Field) bool {
 		return false
 	}
 	return true
+}
+
+// ParenPostfixAlias reports whether a simple postfix alias, as in a~X, is to
+// be printed in its canonical parenthesized form a~(X).
+//
+// The parenthesized form only parses from language version v0.17.0 on, so a
+// file written for an older version keeps a~X: formatting a file must not
+// produce syntax that its own language version rejects. The version is that
+// of file, the file being printed, when it records one, as a file assembled
+// rather than parsed may hold positions of whatever its declarations were
+// read from. Otherwise it is that of the alias's own position, and an alias
+// recording none at all is taken to be written for the current version.
+func ParenPostfixAlias(file *ast.File, a *ast.PostfixAlias) bool {
+	v := ""
+	if file != nil {
+		exp := file.Experiment()
+		v = exp.LanguageVersion()
+	}
+	if v == "" {
+		v = a.Tilde.LanguageVersion()
+	}
+	if v == "" && a.Field != nil {
+		v = a.Field.Pos().LanguageVersion()
+	}
+	return v == "" || semver.Compare(v, "v0.17.0") >= 0
 }
 
 // BindSelfAlias binds ident to value through a let clause naming the
