@@ -186,6 +186,10 @@ type converter struct {
 	// is a layout property independent of RelPos, so it lives here
 	// rather than in the style pre-pass.
 	subscript int
+
+	// srcFile is the file being converted, if the node converted is
+	// one. [converter.postfixAlias] reads its language version.
+	srcFile *ast.File
 }
 
 // errf records a formatting error at pos.
@@ -198,6 +202,7 @@ func (c *converter) node(n ast.Node) doc {
 	c.analyse(n)
 	switch n := n.(type) {
 	case *ast.File:
+		c.srcFile = n
 		return cat(c.maybeGroup(n, c.file(n)), lineBreakHard)
 	case ast.Expr:
 		return c.expr(n)
@@ -4150,10 +4155,14 @@ func (c *converter) fieldValExpr(v ast.Expr) doc {
 
 // postfixAlias converts a PostfixAlias.
 func (c *converter) postfixAlias(a *ast.PostfixAlias) doc {
-	// The single-alias form is always parenthesised (`~(X)`, never
-	// `~X`), consistent with the parser which accepts both but
-	// normalises to the parens form.
+	// The single-alias form is parenthesised (`~(X)`, not `~X`),
+	// consistent with the parser which accepts both but normalises to
+	// the parens form, except in a file written for a language version
+	// whose parser does not accept the parens yet.
 	if a.Label == nil {
+		if !internal.ParenPostfixAlias(c.srcFile, a) {
+			return cats(stringLit("~"), stringLit(a.Field.Name))
+		}
 		return cats(stringLit("~("), stringLit(a.Field.Name), rParenLit)
 	}
 	return cats(stringLit("~("), stringLit(a.Label.Name), commaLit, stringLit(a.Field.Name), rParenLit)
