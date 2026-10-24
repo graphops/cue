@@ -89,6 +89,16 @@ generatedFields: {
 nestedFields: {
 	x: {a: {p: 1 & 2, q: 3 & 4}, b: 5 & 6} | {a: {p: 7 & 8}} // The errors of fields a.q and b are missing.
 }
+
+// Disjuncts which all fail with the errors of one failed nested
+// disjunction, here that of a field each of them reads, report those
+// errors rather than an empty disjunction without any cause.
+nestedOnly: {
+	size: *"1Gi" | _
+	size: =~"^[1-9]"
+	size: "0Gi"
+	x: {a: size} | {b: size} | {c: size}
+}
 -- issue3581.cue --
 // evalv3: tools/flow unexpected error when a flow task result field is used as
 // a list item; string interpolation in a list element caused a spurious error.
@@ -318,6 +328,18 @@ issue4022: full: {
       a: {
         p: (7 & 8)
       }
+    })
+  }
+  nestedOnly: {
+    size: (*"1Gi"|_)
+    size: =~"^[1-9]"
+    size: "0Gi"
+    x: ({
+      a: 〈1;size〉
+    }|{
+      b: 〈1;size〉
+    }|{
+      c: 〈1;size〉
     })
   }
 }
