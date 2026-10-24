@@ -735,9 +735,12 @@ func (e *exporter) comprehension(env *adt.Environment, comp *adt.Comprehension) 
 	for _, y := range comp.Clauses {
 		switch x := y.(type) {
 		case *adt.ForClause:
-			env = &adt.Environment{Up: env, Vertex: empty}
+			// As in the evaluator, the source of a clause is evaluated in the
+			// environment enclosing the clause, and only what follows it
+			// sees the variables it binds.
 			value := e.ident(x.Value)
 			src := e.innerExpr(env, x.Src)
+			env = &adt.Environment{Up: env, Vertex: empty}
 			clause := &ast.ForClause{Value: value, Source: src}
 			e.copyMeta(clause, x.Syntax)
 			c.Clauses = append(c.Clauses, clause)
@@ -760,8 +763,8 @@ func (e *exporter) comprehension(env *adt.Environment, comp *adt.Comprehension) 
 			c.Clauses = append(c.Clauses, clause)
 
 		case *adt.LetClause:
-			env = &adt.Environment{Up: env, Vertex: empty}
 			expr := e.innerExpr(env, x.Expr)
+			env = &adt.Environment{Up: env, Vertex: empty}
 			clause := &ast.LetClause{
 				Ident: e.ident(x.Label),
 				Expr:  expr,
@@ -778,9 +781,9 @@ func (e *exporter) comprehension(env *adt.Environment, comp *adt.Comprehension) 
 			clause := &ast.TryClause{}
 			if x.Label != adt.InvalidLabel {
 				// Assignment form: try x = expr
-				env = &adt.Environment{Up: env, Vertex: empty}
 				clause.Ident = e.ident(x.Label)
 				clause.Expr = e.innerExpr(env, x.Expr)
+				env = &adt.Environment{Up: env, Vertex: empty}
 
 				_, saved := e.pushFrame(empty, nil)
 				defer e.popFrame(saved)
