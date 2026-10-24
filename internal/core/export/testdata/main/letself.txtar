@@ -1,0 +1,399 @@
+# A let bound to a bare value reference, like `let X = self`, denotes the
+# vertex of the struct declaring it. Where that struct literal is unified into
+# another value through a reference, the let clause is not in scope, and it
+# cannot be expanded in place either: it is declared again in the struct
+# exported for the vertex it denotes.
+
+-- in.cue --
+@experiment(aliasv2,try)
+
+// The let is referenced from the source of a for clause.
+source: {
+	#S: {
+		in!: [string]: int
+		let X = self
+		out: [for k, _ in X.in {k}]
+	}
+	#T: #S & {}
+}
+
+// The let is referenced from a nested struct, a comprehension body and the
+// expressions of let and try clauses.
+nested: {
+	#S: {
+		in!: [string]: int
+		let X = self
+		out: a: {for k, _ in X.in {(k): X.in[k]}}
+		lst: [for k, _ in in let v = X.in[k] {v}]
+		tr: {for k, _ in in try y = X.in[k]? {(k): y}}
+	}
+	#T: #S & {}
+}
+
+// The value the let denotes has more than one conjunct.
+conjuncts: {
+	#S: {
+		in!: [string]: int
+		let X = self
+		out: [for k, _ in in {X.in[k]}]
+	}
+	#T: #S
+	#T: in?: [string]: <10
+}
+-- out/value-v3 --
+== Simplified
+{
+
+	// The let is referenced from the source of a for clause.
+	source: {}
+
+	// The let is referenced from a nested struct, a comprehension body and the
+	// expressions of let and try clauses.
+	nested: {}
+
+	// The value the let denotes has more than one conjunct.
+	conjuncts: {}
+}
+== Raw
+{
+
+	// The let is referenced from the source of a for clause.
+	source: {
+		#S: {
+			let X = self
+			in!: {}
+			out: [for k, _ in X.in {
+				k
+			}]
+		}
+		#T: {
+			let X_1 = self
+			in!: {}
+			out: [for k, _ in X_1.in {
+				k
+			}]
+		}
+	}
+
+	// The let is referenced from a nested struct, a comprehension body and the
+	// expressions of let and try clauses.
+	nested: {
+		#S: {
+			let X_2 = self
+			in!: {}
+			out: a: {for k, _ in X_2.in {
+				(k): X_2.in[k]
+			}}
+			lst: [for k, _ in in let v = X_2.in[k] {
+				v
+			}]
+			tr: {for k, _ in in try y = X_2.in[k]? {
+				(k): y
+			}}
+		}
+		#T: {
+			let X_3 = self
+			in!: {}
+			out: a: {for k, _ in X_3.in {
+				(k): X_3.in[k]
+			}}
+			lst: [for k, _ in in let v = X_3.in[k] {
+				v
+			}]
+			tr: {for k, _ in in try y = X_3.in[k]? {
+				(k): y
+			}}
+		}
+	}
+
+	// The value the let denotes has more than one conjunct.
+	conjuncts: {
+		#S: {
+			let X_4 = self
+			in!: {}
+			out: [for k, _ in in {
+				X_4.in[k]
+			}]
+		}
+		#T: {
+			let X_A = self
+			in!: {}
+			out: [for k, _ in in {
+				X_A.in[k]
+			}]
+		}
+	}
+}
+== Final
+{
+	source:    {}
+	nested:    {}
+	conjuncts: {}
+}
+== All
+{
+	@experiment(aliasv2,try)
+
+	// The let is referenced from the source of a for clause.
+	source: {
+		#S: {
+			let X = self
+			in!: {}
+			out: [for k, _ in X.in {
+				k
+			}]
+		}
+		#T: {
+			let X_1 = self
+			in!: {}
+			out: [for k, _ in X_1.in {
+				k
+			}]
+		}
+	}
+
+	// The let is referenced from a nested struct, a comprehension body and the
+	// expressions of let and try clauses.
+	nested: {
+		#S: {
+			let X_2 = self
+			in!: {}
+			out: a: {for k, _ in X_2.in {
+				(k): X_2.in[k]
+			}}
+			lst: [for k, _ in in let v = X_2.in[k] {
+				v
+			}]
+			tr: {for k, _ in in try y = X_2.in[k]? {
+				(k): y
+			}}
+		}
+		#T: {
+			let X_3 = self
+			in!: {}
+			out: a: {for k, _ in X_3.in {
+				(k): X_3.in[k]
+			}}
+			lst: [for k, _ in in let v = X_3.in[k] {
+				v
+			}]
+			tr: {for k, _ in in try y = X_3.in[k]? {
+				(k): y
+			}}
+		}
+	}
+
+	// The value the let denotes has more than one conjunct.
+	conjuncts: {
+		#S: {
+			let X_4 = self
+			in!: {}
+			out: [for k, _ in in {
+				X_4.in[k]
+			}]
+		}
+		#T: {
+			let X_A = self
+			in!: {}
+			out: [for k, _ in in {
+				X_A.in[k]
+			}]
+		}
+	}
+}
+== Eval
+{
+	@experiment(aliasv2,try)
+	source: {
+		#S: {
+			let X = self
+			in!: {}
+			out: [for k, _ in X.in {
+				k
+			}]
+		}
+		#T: {
+			let X_1 = self
+			in!: {}
+			out: [for k, _ in X_1.in {
+				k
+			}]
+		}
+	}
+	nested: {
+		#S: {
+			let X_2 = self
+			in!: {}
+			out: a: {for k, _ in X_2.in {
+				(k): X_2.in[k]
+			}}
+			lst: [for k, _ in in let v = X_2.in[k] {
+				v
+			}]
+			tr: {for k, _ in in try y = X_2.in[k]? {
+				(k): y
+			}}
+		}
+		#T: {
+			let X_3 = self
+			in!: {}
+			out: a: {for k, _ in X_3.in {
+				(k): X_3.in[k]
+			}}
+			lst: [for k, _ in in let v = X_3.in[k] {
+				v
+			}]
+			tr: {for k, _ in in try y = X_3.in[k]? {
+				(k): y
+			}}
+		}
+	}
+	conjuncts: {
+		#S: {
+			let X_4 = self
+			in!: {}
+			out: [for k, _ in in {
+				X_4.in[k]
+			}]
+		}
+		#T: {
+			let X_A = self
+			in!: {}
+			out: [for k, _ in in {
+				X_A.in[k]
+			}]
+		}
+	}
+}
+-- out/definition-v3-noshare --
+@experiment(aliasv2,try)
+
+// The let is referenced from the source of a for clause.
+source: {
+	#S: {
+		let X = self
+		in!: [string]: int
+		out: [for k, _ in X.in {
+			k
+		}]
+	}
+	#T: #S
+}
+
+// The let is referenced from a nested struct, a comprehension body and the
+// expressions of let and try clauses.
+nested: {
+	#S: {
+		let X_1 = self
+		in!: [string]: int
+		out: a: {for k, _ in X_1.in {
+			(k): X_1.in[k]
+		}}
+		lst: [for k, _ in in let v = X_1.in[k] {
+			v
+		}]
+		tr: {for k, _ in in try y = X_1.in[k]? {
+			(k): y
+		}}
+	}
+	#T: #S
+}
+
+// The value the let denotes has more than one conjunct.
+conjuncts: {
+	#S: {
+		let X_2 = self
+		in!: [string]: int
+		out: [for k, _ in in {
+			X_2.in[k]
+		}]
+	}
+	#T: #S & {in!: [string]: <10}
+}
+-- out/doc-v3 --
+[]
+[source]
+- The let is referenced from the source of a for clause.
+
+[source #S]
+[source #S in]
+[source #S X]
+[source #S out]
+[source #T]
+[source #T in]
+[source #T X]
+[source #T out]
+[nested]
+- The let is referenced from a nested struct, a comprehension body and the
+expressions of let and try clauses.
+
+[nested #S]
+[nested #S in]
+[nested #S X]
+[nested #S out]
+[nested #S out a]
+[nested #S lst]
+[nested #S tr]
+[nested #T]
+[nested #T in]
+[nested #T X]
+[nested #T out]
+[nested #T out a]
+[nested #T lst]
+[nested #T tr]
+[conjuncts]
+- The value the let denotes has more than one conjunct.
+
+[conjuncts #S]
+[conjuncts #S in]
+[conjuncts #S X]
+[conjuncts #S out]
+[conjuncts #T]
+[conjuncts #T in]
+[conjuncts #T X]
+[conjuncts #T out]
+-- out/definition-v3 --
+@experiment(aliasv2,try)
+
+// The let is referenced from the source of a for clause.
+source: {
+	#S: {
+		let X = self
+		in!: [string]: int
+		out: [for k, _ in X.in {
+			k
+		}]
+	}
+	#T: #S
+}
+
+// The let is referenced from a nested struct, a comprehension body and the
+// expressions of let and try clauses.
+nested: {
+	#S: {
+		let X_1 = self
+		in!: [string]: int
+		out: a: {for k, _ in X_1.in {
+			(k): X_1.in[k]
+		}}
+		lst: [for k, _ in in let v = X_1.in[k] {
+			v
+		}]
+		tr: {for k, _ in in try y = X_1.in[k]? {
+			(k): y
+		}}
+	}
+	#T: #S
+}
+
+// The value the let denotes has more than one conjunct.
+conjuncts: {
+	#S: {
+		let X_2 = self
+		in!: [string]: int
+		out: [for k, _ in in {
+			X_2.in[k]
+		}]
+	}
+	#T: #S & {in!: [string]: <10}
+}

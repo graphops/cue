@@ -376,6 +376,8 @@ type exporter struct {
 	experimentsErr error
 	postfixAliases bool
 	references     map[*adt.Vertex]*referenceInfo
+	// selfLets holds the let clauses added by [exporter.declareSelfLet].
+	selfLets map[selfLetKey]*ast.LetClause
 
 	pivotter *pivotter
 }
@@ -861,6 +863,14 @@ func (e *exporter) lookupLetAlias(x *ast.LetClause) (*ast.LetClause, int) {
 func (e *exporter) resolveLet(env *adt.Environment, x *adt.LetReference) ast.Expr {
 	letClause, _ := x.Src.Node.(*ast.LetClause)
 	let, depth := e.lookupLetAlias(letClause)
+	if let == nil && letClause != nil && isSelfLet(x) {
+		let, depth = e.declareSelfLet(env, x, letClause)
+		if let == nil {
+			// Keep the name, which fails to resolve rather than silently
+			// binding to another value.
+			return ast.NewIdent(x.Label.IdentString(e.ctx))
+		}
+	}
 
 	switch {
 	case let == nil:
@@ -899,6 +909,81 @@ func (e *exporter) resolveLet(env *adt.Environment, x *adt.LetReference) ast.Exp
 	ident.Node = let
 	// TODO: set scope?
 	return ident
+}
+
+// isSelfLet reports whether x refers to a let bound to a bare value
+// reference, like `let X = self`. As in [adt.LetReference], such a let denotes
+// an enclosing vertex rather than the value of an expression, so it cannot be
+// expanded in place: the expression would refer to the struct enclosing the
+// reference instead.
+func isSelfLet(x *adt.LetReference) bool {
+	vr, ok := x.X.(*adt.ValueReference)
+	return ok && vr.UpCount > 0
+}
+
+// declareSelfLet declares the let clause referred to by x, which is bound to a
+// bare value reference, in the struct being exported for the vertex it
+// denotes, and returns that let clause and the index of its frame. This is
+// the case when the struct literal declaring the let clause is unified into
+// that vertex through a reference, as in
+//
+//	#A: {
+//		let X = self
+//		a: [for k, _ in X.b {k}]
+//	}
+//	#B: #A & {}
+//
+// where the let clause is exported only within #A, but the comprehension is
+// also exported as part of #B. The vertex is found by walking up the
+// environments as [adt.LetReference] does. It returns nil if no struct being
+// exported is for that vertex.
+func (e *exporter) declareSelfLet(env *adt.Environment, x *adt.LetReference, src *ast.LetClause) (*ast.LetClause, int) {
+	vr := x.X.(*adt.ValueReference)
+	for range x.UpCount + vr.UpCount - 1 {
+		if env == nil {
+			return nil, -1
+		}
+		env = env.Up
+	}
+	if env == nil || env.Vertex == nil || env.Vertex == empty {
+		return nil, -1
+	}
+	v := env.Vertex.DerefValue()
+	for i := len(e.stack) - 1; i >= 0; i-- {
+		f := &e.stack[i]
+		if f.node == nil || f.node.DerefValue() != v || f.scope == nil {
+			continue
+		}
+		// The frame may be a copy of the one which outlives this reference,
+		// so the let clause is recorded by the struct it is added to.
+		key := selfLetKey{f.scope, src}
+		if let, ok := e.selfLets[key]; ok {
+			return let, i
+		}
+		let := &ast.LetClause{}
+		if e.selfLets == nil {
+			e.selfLets = make(map[selfLetKey]*ast.LetClause)
+		}
+		e.selfLets[key] = let
+		// Keep the let clauses before the fields, as markLetAlias does.
+		n := 0
+		for n < len(f.scope.Elts) {
+			if _, ok := f.scope.Elts[n].(*ast.LetClause); !ok {
+				break
+			}
+			n++
+		}
+		f.scope.Elts = slices.Insert(f.scope.Elts, n, ast.Decl(let))
+		return let, i
+	}
+	return nil, -1
+}
+
+// selfLetKey identifies a let clause added by [exporter.declareSelfLet]: the
+// struct it is added to and the source let clause it stands for.
+type selfLetKey struct {
+	scope *ast.StructLit
+	src   *ast.LetClause
 }
 
 func (e *exporter) uniqueLetIdent(f adt.Feature, x adt.Expr) adt.Feature {
