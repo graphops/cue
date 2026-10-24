@@ -251,8 +251,9 @@ func selectErrors(a []*Bottom) (errs errors.Error) {
 	// sharing every position, are all reported. A list of errors, as a
 	// failed nested disjunction reports, has no message of its own and is
 	// selected by position alone; built without a position of its own,
-	// such a list is not kept, so the errors of a disjunction are reported
-	// without the cascade of nested failures behind one of its disjuncts.
+	// such a list is not kept here, so the errors of a disjunction are
+	// reported without the cascade of nested failures behind one of its
+	// disjuncts.
 	// Messages are rendered only where positions collide, as rendering is
 	// costly and the result is often discarded.
 	type kept struct {
@@ -299,6 +300,15 @@ func selectErrors(a []*Bottom) (errs errors.Error) {
 				break
 			}
 		}
+	}
+
+	// Lists of errors are left out above so that the cascade behind one
+	// disjunct does not crowd out the errors of the others. When every
+	// disjunct failed with such a list, as when each reads a field whose
+	// own disjunction failed, there are no others: keep the first list
+	// rather than report an empty disjunction without any cause.
+	if errs == nil {
+		errs = a[0].Err
 	}
 
 	return errs
