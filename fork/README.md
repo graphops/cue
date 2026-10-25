@@ -32,6 +32,8 @@ Each fix also exists on its own branch, isolated on the `v0.18.0-rc.1` tag.
 | `fix/rc1-buildexpr-closedness` | Silent constraint loss: a conjunction built with `Context.BuildExpr`, as by `cue eval -e '#S & d'`, skipped definition closedness, because its value was finalized in a second evaluation context that suppresses typo checks | High |
 | `fix/rc1-nested-disjunction-errors` | Lost diagnostics: when every disjunct failed only through a nested disjunction (e.g. each reads a field whose own disjunction failed), the error was a bare "empty disjunction" without any cause | High |
 | `fix/rc1-fmt-alias-form` | `cue fmt` wrote the single postfix alias as `~(X)` for files whose language version predates it (below v0.17.0, which cannot parse it); it now keeps `~X` there | High |
+| `fix/rc1-struct-data-incomplete` | `struct.Data` (an addition below) turned an argument that was only incomplete, such as one reading an optional field, into a permanent error, failing evaluation of a field nobody asked to be concrete; it now keeps the argument's error code, as `json.Unmarshal(json.Marshal(v))` does. Based on the `struct.Data` addition | High |
+| `fix/rc1-share-funcarg-cycle` | Spurious structural cycle: with the sharing addition below, a function applied to the result of an earlier call of the same call site, with a definition on its argument, reported a structural cycle. The addition no longer keeps a node shared that shares a function argument. Based on the sharing addition; the same cycle without a definition is an upstream issue this does not fix | Medium-high |
 
 ## Additions
 
@@ -40,8 +42,8 @@ only on this branch.
 
 | Addition | What it adds | Test |
 |---|---|---|
-| `struct.Data(v)` | `v` as concrete data (regular fields, defaults resolved, no closedness, definitions, hidden or optional fields), built as fresh CUE literals. An in-CUE replacement for `json.Unmarshal(json.Marshal(v))`, about 2.7× cheaper, which keeps CUE kinds such as bytes. | `pkg/struct/testdata/data.txtar` |
-| Sharing past a repeated definition | Structure sharing is kept when a conjunct refers to a definition the shared value already applied (plainly, or opened for an opened repeat); the repeated conjunct is remembered and applied as usual if the node is unshared. A schema-checked value can then be passed to many places that also declare the schema. | `cue/testdata/eval/sharedefs.txtar` |
+| `struct.Data(v)` | `v` as concrete data (regular fields, defaults resolved, no closedness, definitions, hidden or optional fields), built as fresh CUE literals. An in-CUE replacement for `json.Unmarshal(json.Marshal(v))`, about 2.7× cheaper, which keeps CUE kinds such as bytes. An incomplete argument makes the call incomplete, as with the JSON round trip. | `pkg/struct/testdata/data.txtar`, `cmd/cue/cmd/testdata/script/struct_data_incomplete.txtar` |
+| Sharing past a repeated definition | Structure sharing is kept when a conjunct refers to a definition the shared value already applied (plainly, or opened for an opened repeat); the repeated conjunct is remembered and applied as usual if the node is unshared. A schema-checked value can then be passed to many places that also declare the schema. Not applied to a node sharing a function argument. | `cue/testdata/eval/sharedefs.txtar`, `cue/testdata/functions/sharedefs_reapply.txtar` |
 
 ## Releases
 
