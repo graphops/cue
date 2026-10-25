@@ -1,7 +1,10 @@
 # struct.Data returns concrete data: regular fields with defaults resolved,
 # as fresh literals that carry none of the input's defaults or constraints.
 -- in.cue --
-import "struct"
+import (
+	"encoding/json"
+	"struct"
+)
 
 #Child: {
 	name: *"child" | string
@@ -25,12 +28,32 @@ open: struct.Data(close({a: 1})) & {b: 2}
 // Bytes stay bytes.
 bytes: struct.Data(src).b
 incomplete: struct.Data({a: string})
+
+// An error keeps its code, as with json.Unmarshal(json.Marshal(v)): a value
+// that is only incomplete, such as one that reads an optional field, makes the
+// call incomplete instead of failing it, so that a field nobody asks to be
+// concrete does not fail evaluation, and a later value can still complete it.
+opt: {c?: int}
+optional:     struct.Data({a: opt.c})
+optionalJSON: json.Unmarshal(json.Marshal({a: opt.c}))
+nested:       struct.Data({a: [{b: opt.c}]})
+later: {c?: int}
+later: c:      4
+completed:     struct.Data({a: later.c})
+conflict:      struct.Data({a: 1 & 2})
 -- out/structs-v3 --
 Errors:
-incomplete: error in call to struct.Data: incomplete value string: struct.Data needs a concrete value:
-    ./in.cue:24:13
+conflict: error in call to struct.Data: conflicting values 2 and 1:
+    ./in.cue:40:16
+    ./in.cue:40:32
+    ./in.cue:40:36
 
 Result:
+import (
+	"struct"
+	"encoding/json"
+)
+
 #Child: {
 	name: *"child" | string
 	n:    *2 | int
@@ -58,4 +81,16 @@ open: {
 }
 // Bytes stay bytes.
 bytes:      'bytes'
-incomplete: _|_ // incomplete: error in call to struct.Data: incomplete value string: struct.Data needs a concrete value
+incomplete: struct.Data({a: string})
+
+// An error keeps its code, as with json.Unmarshal(json.Marshal(v)): a value
+// that is only incomplete, such as one that reads an optional field, makes the
+// call incomplete instead of failing it, so that a field nobody asks to be
+// concrete does not fail evaluation, and a later value can still complete it.
+opt: c?: int
+optional:     struct.Data({a: opt.c})
+optionalJSON: json.Unmarshal(json.Marshal({a: opt.c}))
+nested:       struct.Data({a: [{b: opt.c}]})
+later: c:     4
+completed: a: 4
+conflict: _|_ // conflict: error in call to struct.Data: a: conflicting values 2 and 1
