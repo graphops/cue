@@ -71,26 +71,36 @@ func MaxFields(object pkg.Struct, n int) (pkg.Validator, error) {
 // the conversion: CUE kinds such as bytes and integers keep their types, and
 // the result is built from the evaluated value as fresh literals, so unifying
 // it elsewhere carries none of v's defaults or constraints.
+//
+// An error keeps its code: a value that is only incomplete makes the call
+// incomplete, not an error, so that it can still be resolved later and does
+// not fail a field nobody asks to be concrete.
 func Data(ctx *adt.OpContext, v cue.Value) (adt.Expr, error) {
 	_, x := value.ToInternal(v)
-	return dataLiteral(ctx, x)
+	e, b := dataLiteral(ctx, x)
+	if b != nil {
+		return b, nil
+	}
+	return e, nil
 }
 
-func dataLiteral(ctx *adt.OpContext, v *adt.Vertex) (adt.Expr, error) {
+// dataLiteral returns v as a literal expression, or the error, as a Bottom
+// with its original code, that keeps v from being data.
+func dataLiteral(ctx *adt.OpContext, v *adt.Vertex) (adt.Expr, *adt.Bottom) {
 	v = v.Default()
 	v.Finalize(ctx)
 	switch x := v.BaseValue.(type) {
 	case *adt.Bottom:
-		return nil, x.Err
+		return nil, x
 	case *adt.ListMarker:
 		list := &adt.ListLit{}
 		for _, a := range v.Arcs {
 			if !a.Label.IsInt() || !a.IsDefined(ctx) {
 				continue
 			}
-			e, err := dataLiteral(ctx, a)
-			if err != nil {
-				return nil, err
+			e, b := dataLiteral(ctx, a)
+			if b != nil {
+				return nil, b
 			}
 			list.Elems = append(list.Elems, e)
 		}
@@ -101,9 +111,9 @@ func dataLiteral(ctx *adt.OpContext, v *adt.Vertex) (adt.Expr, error) {
 			if !a.Label.IsRegular() || a.ArcType != adt.ArcMember || !a.IsDefined(ctx) {
 				continue
 			}
-			e, err := dataLiteral(ctx, a)
-			if err != nil {
-				return nil, err
+			e, b := dataLiteral(ctx, a)
+			if b != nil {
+				return nil, b
 			}
 			st.Decls = append(st.Decls, &adt.Field{Label: a.Label, Value: e})
 		}
@@ -111,5 +121,8 @@ func dataLiteral(ctx *adt.OpContext, v *adt.Vertex) (adt.Expr, error) {
 	case *adt.String, *adt.Bytes, *adt.Num, *adt.Bool, *adt.Null:
 		return x.(adt.Value), nil
 	}
-	return nil, errors.Newf(token.NoPos, "incomplete value %v: struct.Data needs a concrete value", ctx.Str(v))
+	return nil, &adt.Bottom{
+		Code: adt.IncompleteError,
+		Err:  errors.Newf(token.NoPos, "incomplete value %v: struct.Data needs a concrete value", ctx.Str(v)),
+	}
 }
