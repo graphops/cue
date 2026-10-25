@@ -1,0 +1,38 @@
+# struct.Data of a value that is only incomplete is incomplete, as
+# json.Unmarshal(json.Marshal(v)) is: evaluating without -c succeeds, and so
+# does exporting another field. Only -c reports it.
+exec cue eval data.cue
+cmp stdout expect/eval/stdout
+exec cue export -e y data.cue
+cmp stdout expect/export/stdout
+! exec cue eval -c data.cue
+cmp stderr expect/concrete/stderr
+
+exec cue eval json.cue
+exec cue export -e y json.cue
+cmp stdout expect/export/stdout
+
+-- data.cue --
+import "struct"
+
+b: {c?: int}
+x: struct.Data({a: b.c})
+y: 1
+-- json.cue --
+import "encoding/json"
+
+b: {c?: int}
+x: json.Unmarshal(json.Marshal({a: b.c}))
+y: 1
+-- expect/eval/stdout --
+import "struct"
+
+b: {}
+x: struct.Data({a: b.c})
+y: 1
+-- expect/export/stdout --
+1
+-- expect/concrete/stderr --
+x: error in call to struct.Data: cannot reference optional field: c:
+    ./data.cue:4:4
+    ./data.cue:4:22
