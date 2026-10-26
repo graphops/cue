@@ -138,8 +138,14 @@ func (v *Vertex) appliesDef(def *Vertex, needClosed bool) bool {
 // A plain definition closes a node that shares an opened reference
 // (x... & #D), so it is not redundant then, and the node stops sharing as
 // usual.
+//
+// A node that shares, or would share, a function argument is left as
+// before: see [nodeContext.sharesFuncArg].
 func (n *nodeContext) skipRedundantDef(c Conjunct, arc *Vertex, id CloseInfo) bool {
 	if !n.isShared || !notEmbedded(id) {
+		return false
+	}
+	if c.CloseInfo.IsFuncArg || id.IsFuncArg || n.sharesFuncArg() {
 		return false
 	}
 	cur, ok := n.node.BaseValue.(*Vertex)
@@ -173,6 +179,30 @@ func (n *nodeContext) skipRedundantDef(c Conjunct, arc *Vertex, id CloseInfo) bo
 		arc.getState(n.ctx)
 		n.addShared(prev.c, prev.arc, prev.id)
 		return true
+	}
+	return false
+}
+
+// sharesFuncArg reports whether the value n shares came from a function
+// argument.
+//
+// The shortcut must not keep such a node shared. A function argument pins
+// the cycle-reference chain of the caller (see [CycleInfo.IsFuncArg]), but
+// only when its conjunct is scheduled: a reference into the callee's
+// parameter that resolves to a shared node is dereferenced to the shared
+// value, whose conjuncts are then scheduled with the callee body's chain.
+// When that value was itself computed by the same call site, as when a
+// function is applied to its own earlier result, the call is falsely seen
+// again in the chain and the result is reported as a structural cycle.
+// Without the shortcut, the definition conjunct unshares the node, so
+// references schedule the node's own conjuncts and the argument's pinned
+// chain applies. Upstream has the same problem when no definition is involved;
+// the shortcut only must not extend it to more nodes.
+func (n *nodeContext) sharesFuncArg() bool {
+	for _, s := range n.shared {
+		if s.c.CloseInfo.IsFuncArg || s.id.IsFuncArg {
+			return true
+		}
 	}
 	return false
 }
