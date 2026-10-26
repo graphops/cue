@@ -14,7 +14,10 @@
 
 package adt
 
-import "iter"
+import (
+	"iter"
+	"slices"
+)
 
 // This file contains logic regarding structure sharing.
 
@@ -52,6 +55,126 @@ func (n *nodeContext) unshare() {
 	for _, s := range n.shared {
 		n.scheduleVertexConjuncts(s.c, s.arc, s.id)
 	}
+}
+
+// plainApplication reports whether conjunct c, with close info id, applies
+// its value directly: not embedded and not opened. Only then does applying a
+// definition close the node exactly as the definition does, which the
+// redundancy of a repeated definition conjunct relies on.
+func plainApplication(c Conjunct, id CloseInfo) bool {
+	return !c.CloseInfo.Opened && !c.CloseInfo.ConjunctOpened &&
+		!id.Opened && !id.ConjunctOpened && notEmbedded(id)
+}
+
+// notEmbedded reports whether a conjunct with close info id is applied to
+// the node directly rather than through an embedding. A definition the
+// shared value applied plainly (closed) makes such a conjunct redundant
+// whether it is plain or opened (D...): an opened definition adds the same
+// constraints and no closedness.
+func notEmbedded(id CloseInfo) bool {
+	return !id.FromEmbed && id.enclosingEmbed == 0
+}
+
+// appliedDef is a definition whose conjuncts were unified directly into a
+// vertex, and whether that application closed the vertex (a plain reference)
+// or only constrained it (an opened one, D...).
+type appliedDef struct {
+	def    *Vertex
+	closed bool
+}
+
+// recordAppliedDef records that the conjuncts of definition arc are unified
+// directly into v, closing it or not.
+//
+// The list is never modified in place, as a clone of v made for a disjunct
+// starts out sharing it.
+func (v *Vertex) recordAppliedDef(arc *Vertex, closed bool) {
+	for i, a := range v.appliedDefs {
+		if a.def == arc {
+			if closed && !a.closed {
+				v.appliedDefs = slices.Clone(v.appliedDefs)
+				v.appliedDefs[i].closed = true
+			}
+			return
+		}
+	}
+	v.appliedDefs = append(slices.Clip(v.appliedDefs), appliedDef{arc, closed})
+}
+
+// appliesDef reports whether v, or a value it shares, already unified the
+// conjuncts of definition def, closing it if needClosed, so that unifying def
+// again in that mode adds nothing.
+func (v *Vertex) appliesDef(def *Vertex, needClosed bool) bool {
+	for {
+		if v == def {
+			return true
+		}
+		for _, a := range v.appliedDefs {
+			if a.def == def && (a.closed || !needClosed) {
+				return true
+			}
+		}
+		w, ok := v.BaseValue.(*Vertex)
+		if !ok {
+			return false
+		}
+		v = w
+	}
+}
+
+// skipRedundantDef handles a definition conjunct arriving at a node that
+// structure shares a value which already applied it: the conjunct is held
+// as shared instead of scheduled, so the node keeps sharing, and it is
+// scheduled as usual if the node is unshared. If the shared value is itself
+// the definition and arc is a value that applied it, the node shares arc
+// instead. It reports whether arc was handled.
+//
+// This extends [nodeContext.sharedClosedBy], which finds the definition
+// among the conjuncts of the shared value, to definitions that value
+// applied in any other way, for instance through a field of an opened
+// definition, to a definition arriving before the value, and to opened
+// definitions.
+//
+// A plain definition closes a node that shares an opened reference
+// (x... & #D), so it is not redundant then, and the node stops sharing as
+// usual.
+func (n *nodeContext) skipRedundantDef(c Conjunct, arc *Vertex, id CloseInfo) bool {
+	if !n.isShared || !notEmbedded(id) {
+		return false
+	}
+	cur, ok := n.node.BaseValue.(*Vertex)
+	if !ok {
+		return false
+	}
+	closes := plainApplication(c, id)
+	switch {
+	case arc.Label.IsDef() && !(closes && n.node.OpenedShared) &&
+		cur.appliesDef(arc, closes):
+		n.addShared(c, arc, id)
+		return true
+
+	case cur.Label.IsDef() && len(n.shared) == 1 && notEmbedded(n.shared[0].id):
+		prev := n.shared[0]
+		prevCloses := plainApplication(prev.c, prev.id)
+		if (prevCloses && !closes) || !arc.appliesDef(cur, prevCloses) {
+			return false
+		}
+		// Share arc, which includes the definition, rather than the
+		// definition itself.
+		n.isShared = false
+		n.node.IsShared = false
+		n.node.OpenedShared = false
+		n.node.BaseValue = n.origBaseValue
+		n.shared = n.shared[:0]
+		if !n.shareIfPossible(c, arc, id) {
+			n.scheduleVertexConjuncts(prev.c, prev.arc, prev.id)
+			return false
+		}
+		arc.getState(n.ctx)
+		n.addShared(prev.c, prev.arc, prev.id)
+		return true
+	}
+	return false
 }
 
 // sharesSingleValue reports whether the vertex n shares holds a value that
