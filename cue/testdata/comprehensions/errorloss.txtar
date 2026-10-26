@@ -1,0 +1,365 @@
+# Tests that an error in the clauses of a comprehension is an error of the
+# fields the comprehension declares, not a reason to complete those fields
+# without the comprehension's contribution.
+#
+# A comprehension is pushed down to the arcs its body (and else clause)
+# declares: it is a parent task of those arcs rather than a task of the
+# struct. When its clauses failed, the error was recorded on the struct only.
+# An arc with other conjuncts, such as list: [...], then completed as if the
+# condition were false, and a reference to it, evaluated before the struct,
+# yielded that value without an error: list: [] where list must be an error.
+-- in.cue --
+@experiment(try)
+
+ifErr: {
+	out: p.list @test(err, code=eval, contains="conflicting values", pos=[7:7, 7:11])
+	p: {
+		list: [...]
+		if bad != 1 {
+			list: ["a"]
+		}
+	}
+	bad: 1 & 2 @test(err, code=eval, contains="conflicting values", pos=[0:7, 0:11])
+}
+
+twoIfs: {
+	out: p.list @test(err, code=eval, contains="conflicting values", pos=[10:7, 10:11])
+	p: {
+		list: [...]
+		if bad != 1 {
+			list: ["a"]
+		}
+		if bad == 1 {
+			list: ["b"]
+		}
+	}
+	bad: 1 & 2 @test(err, code=eval, contains="conflicting values", pos=[0:7, 0:11])
+}
+
+ifElse: {
+	out: p.list @test(err, code=eval, contains="conflicting values", pos=[9:7, 9:11])
+	p: {
+		list: [...]
+		if bad != 1 {
+			list: ["a"]
+		} else {
+			list: ["b"]
+		}
+	}
+	bad: 1 & 2 @test(err, code=eval, contains="conflicting values", pos=[0:7, 0:11])
+}
+
+// The condition selects a valid field of a struct that is invalid elsewhere.
+selectInvalid: {
+	cfg: #S
+	cfg: mode: "a" @test(eq, "a")
+	#S: {
+		mode: string
+		items: [...(string & !="")]
+	}
+	out: p.list @test(err, code=eval, contains="out of bound", pos=[-2:24, -2:15, 9:15])
+	p: {
+		list: [...]
+		if cfg.mode != "a" {
+			list: ["a"]
+		} else {
+			list: ["b"]
+		}
+	}
+	cfg: items: [""] @test(err, code=eval, contains="out of bound", pos=[-11:24, -11:15, 0:15])
+}
+
+// A struct default rather than a list.
+structDefault: {
+	out: p.opts @test(err, code=eval, contains="conflicting values", pos=[7:7, 7:11])
+	p: {
+		opts: {...}
+		if bad != 1 {
+			opts: a: 1
+		}
+	}
+	bad: 1 & 2 @test(err, code=eval, contains="conflicting values", pos=[0:7, 0:11])
+}
+
+// A field nested in the comprehension body.
+nested: {
+	out: p.a.list @test(err, code=eval, contains="conflicting values", pos=[7:7, 7:11])
+	p: {
+		a: list: [...]
+		if bad != 1 {
+			a: list: ["a"]
+		}
+	}
+	bad: 1 & 2 @test(err, code=eval, contains="conflicting values", pos=[0:7, 0:11])
+}
+
+inDefinition: {
+	out: #D.list @test(err, code=eval, contains="conflicting values", pos=[9:7, 9:11])
+	#D: {
+		list: [...]
+		if bad != 1 {
+			list: ["a"]
+		} else {
+			list: ["b"]
+		}
+	}
+	bad: 1 & 2   @test(err, code=eval, contains="conflicting values", pos=[0:7, 0:11])
+}
+
+throughReference: {
+	out: q.list @test(err, code=eval, contains="conflicting values", pos=[8:7, 8:11])
+	q: p
+	p: {
+		list: [...]
+		if bad != 1 {
+			list: ["a"]
+		}
+	}
+	bad: 1 & 2 @test(err, code=eval, contains="conflicting values", pos=[0:7, 0:11])
+}
+
+throughDefinition: {
+	out: x.list @test(err, code=eval, contains="conflicting values", pos=[8:7, 8:11])
+	x: #D
+	#D: {
+		list: [...]
+		if bad != 1 {
+			list: ["a"]
+		}
+	}
+	bad: 1 & 2 @test(err, code=eval, contains="conflicting values", pos=[0:7, 0:11])
+}
+
+// A condition that never becomes concrete leaves the field incomplete.
+incomplete: {
+	out: p.list @test(err, code=incomplete, contains="non-concrete value", pos=[3:6, 7:13])
+	p: {
+		list: [...]
+		if cfg.mode == "a" {
+			list: ["a"]
+		}
+	}
+	cfg: mode: string
+}
+
+requiredMissing: {
+	out: p.list @test(err, code=incomplete, contains="required field missing", pos=[3:10])
+	p: {
+		list: [...]
+		if cfg.mode == "a" {
+			list: ["a"]
+		}
+	}
+	cfg: mode!: string
+}
+
+// The following cases must keep their value.
+
+// The condition is incomplete until a later conjunct makes it concrete.
+resolvedLater: {
+	out: p.list @test(eq, ["a"])
+	p: {
+		list: [...]
+		if cfg.mode == "a" {
+			list: ["a"]
+		}
+	}
+	cfg: mode: string
+	cfg: mode: "a"
+}
+
+// The condition reads a field another comprehension declares.
+resolvedByComprehension: {
+	out: p.list @test(eq, ["a"])
+	p: {
+		list: [...]
+		if q.mode == "a" {
+			list: ["a"]
+		}
+	}
+	q: {
+		mode: string
+		if r {
+			mode: "a"
+		}
+	}
+	r: true
+}
+
+resolvedByDefault: {
+	out: p.list @test(eq, ["b"])
+	p: {
+		list: [...]
+		if cfg.mode == "a" {
+			list: ["a"]
+		} else {
+			list: ["b"]
+		}
+	}
+	cfg: mode: *"b" | "a"
+}
+
+// The conditions are false: the field keeps its declared value.
+conditionFalse: {
+	out: p.list @test(eq, [])
+	p: {
+		list: [...]
+		if cfg.mode != "a" {
+			list: ["a"]
+		}
+		if cfg.mode == "c" {
+			list: ["c"]
+		}
+	}
+	cfg: mode: "a"
+}
+
+// No comprehension contributes, so the default applies.
+defaultApplies: {
+	out: p.n @test(eq, *1 | int)
+	p: {
+		n: *1 | int
+		if cfg.mode == "b" {
+			n: 2
+		}
+	}
+	cfg: mode: "a"
+}
+
+// A condition that tests for an error does not fail.
+errorTest: {
+	out: p.list @test(eq, ["missing"])
+	p: {
+		list: [...]
+		if cfg.x == _|_ {
+			list: ["missing"]
+		}
+	}
+	cfg: {}
+}
+
+tryAbsent: {
+	out: p.list @test(eq, ["b"])
+	p: {
+		list: [...]
+		try X = cfg.x? {
+			list: [X]
+		} else {
+			list: ["b"]
+		}
+	}
+	cfg: {}
+}
+-- out/errors.txt --
+[eval] ifErr.bad: conflicting values 2 and 1:
+    ./in.cue:11:7
+    ./in.cue:11:11
+[eval] ifErr.bad: conflicting values 2 and 1:
+    ./in.cue:11:7
+    ./in.cue:11:11
+[eval] ifErr.bad: conflicting values 2 and 1:
+    ./in.cue:11:7
+    ./in.cue:11:11
+[eval] twoIfs.bad: conflicting values 2 and 1:
+    ./in.cue:25:7
+    ./in.cue:25:11
+[eval] twoIfs.bad: conflicting values 2 and 1:
+    ./in.cue:25:7
+    ./in.cue:25:11
+[eval] twoIfs.bad: conflicting values 2 and 1:
+    ./in.cue:25:7
+    ./in.cue:25:11
+[eval] ifElse.bad: conflicting values 2 and 1:
+    ./in.cue:38:7
+    ./in.cue:38:11
+[eval] ifElse.bad: conflicting values 2 and 1:
+    ./in.cue:38:7
+    ./in.cue:38:11
+[eval] ifElse.bad: conflicting values 2 and 1:
+    ./in.cue:38:7
+    ./in.cue:38:11
+[eval] selectInvalid.cfg.items.0: invalid value "" (out of bound !=""):
+    ./in.cue:47:24
+    ./in.cue:47:15
+    ./in.cue:58:15
+[eval] selectInvalid.cfg.items.0: invalid value "" (out of bound !=""):
+    ./in.cue:47:24
+    ./in.cue:47:15
+    ./in.cue:58:15
+[eval] selectInvalid.cfg.items.0: invalid value "" (out of bound !=""):
+    ./in.cue:47:24
+    ./in.cue:47:15
+    ./in.cue:58:15
+[eval] structDefault.bad: conflicting values 2 and 1:
+    ./in.cue:70:7
+    ./in.cue:70:11
+[eval] structDefault.bad: conflicting values 2 and 1:
+    ./in.cue:70:7
+    ./in.cue:70:11
+[eval] structDefault.bad: conflicting values 2 and 1:
+    ./in.cue:70:7
+    ./in.cue:70:11
+[eval] nested.bad: conflicting values 2 and 1:
+    ./in.cue:82:7
+    ./in.cue:82:11
+[eval] nested.bad: conflicting values 2 and 1:
+    ./in.cue:82:7
+    ./in.cue:82:11
+[eval] nested.bad: conflicting values 2 and 1:
+    ./in.cue:82:7
+    ./in.cue:82:11
+[eval] inDefinition.bad: conflicting values 2 and 1:
+    ./in.cue:95:7
+    ./in.cue:95:11
+[eval] inDefinition.bad: conflicting values 2 and 1:
+    ./in.cue:95:7
+    ./in.cue:95:11
+[eval] inDefinition.bad: conflicting values 2 and 1:
+    ./in.cue:95:7
+    ./in.cue:95:11
+[eval] throughReference.bad: conflicting values 2 and 1:
+    ./in.cue:107:7
+    ./in.cue:107:11
+[eval] throughReference.bad: conflicting values 2 and 1:
+    ./in.cue:107:7
+    ./in.cue:107:11
+[eval] throughReference.bad: conflicting values 2 and 1:
+    ./in.cue:107:7
+    ./in.cue:107:11
+[eval] throughReference.bad: conflicting values 2 and 1:
+    ./in.cue:107:7
+    ./in.cue:107:11
+[eval] throughDefinition.bad: conflicting values 2 and 1:
+    ./in.cue:119:7
+    ./in.cue:119:11
+[eval] throughDefinition.bad: conflicting values 2 and 1:
+    ./in.cue:119:7
+    ./in.cue:119:11
+[eval] throughDefinition.bad: conflicting values 2 and 1:
+    ./in.cue:119:7
+    ./in.cue:119:11
+[eval] throughDefinition.bad: conflicting values 2 and 1:
+    ./in.cue:119:7
+    ./in.cue:119:11
+[incomplete] incomplete.p: non-concrete value string in operand to ==:
+    ./in.cue:127:6
+    ./in.cue:131:13
+[incomplete] incomplete.p: non-concrete value string in operand to ==:
+    ./in.cue:127:6
+    ./in.cue:131:13
+[incomplete] requiredMissing.p: required field missing: mode:
+    ./in.cue:138:10
+[incomplete] requiredMissing.p: required field missing: mode:
+    ./in.cue:138:10
+-- out/eval/stats --
+Leaks:  3
+Freed:  116
+Reused: 90
+Allocs: 29
+Retain: 0
+
+Unifications: 115
+Conjuncts:    152
+Disjuncts:    4
+
+NumCloseIDs: 1

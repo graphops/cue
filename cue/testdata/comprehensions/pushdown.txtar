@@ -1477,12 +1477,8 @@ issue4422: {
 [eval] provideIncompleteSuccess.t2.a.c.d: field not allowed:
     ./in.cue:235:8
 [incomplete] cyclicError.a: incomplete bool: bool:
-    ./in.cue:288:6
-cyclicError.a: incomplete bool: bool:
     ./in.cue:289:6
 [incomplete] cyclicError.a: incomplete bool: bool:
-    ./in.cue:288:6
-cyclicError.a: incomplete bool: bool:
     ./in.cue:289:6
 [incomplete] closedCheck.success1.#D: non-concrete value string in operand to !=:
     ./in.cue:337:6

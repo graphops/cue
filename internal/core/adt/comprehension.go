@@ -190,6 +190,13 @@ func (n *nodeContext) processComprehension(d *envYield, state vertexStatus) *Bot
 		condition: allKnown,
 		mode:      ignore,
 	}, d.addEnv); err != nil {
+		// The comprehension cannot decide what it contributes, so the error
+		// is also an error of each field it declares. Cycles are left to the
+		// cycle handling of those fields.
+		if err.Code != CycleError {
+			n.addCompErr(d.comp, err)
+		}
+
 		if err.IsIncomplete() {
 			return err
 		}
@@ -371,4 +378,47 @@ func hasTryClause(c *Comprehension) bool {
 		}
 	}
 	return false
+}
+
+// addCompErr records err, the error from evaluating the clauses of a
+// comprehension, on the arcs of n for the fields the comprehension's body or
+// else clause declares, recursively for nested struct literals.
+//
+// [pushDownDeps] makes a comprehension a parent task of these arcs rather
+// than a task of n, so that an arc only waits for the comprehension, not for
+// all of n. The error must reach them the same way. The task of the
+// comprehension records it on n, but an arc that has other conjuncts, such as
+// a list or struct declared next to the comprehension, would otherwise
+// complete without the comprehension's contribution, as if its condition were
+// false. A reference to the arc, evaluated before n, then observes that value
+// and not the error of n.
+func (n *nodeContext) addCompErr(x Node, err *Bottom) {
+	switch x := x.(type) {
+	case *Comprehension:
+		n.addCompErr(x.Value, err)
+		if x.Fallback != nil {
+			n.addCompErr(x.Fallback, err)
+		}
+
+	case *StructLit:
+		for _, d := range x.Decls {
+			switch d := d.(type) {
+			case *Field:
+				arc := n.node.lookupArc(d.Label)
+				if arc == nil {
+					continue
+				}
+				// The arc may not have scheduled its conjuncts yet. Its
+				// state keeps the error when it does.
+				if s := arc.getBareState(n.ctx); s != nil {
+					s.errs = CombineErrors(nil, s.errs, err)
+					s.addCompErr(d.Value, err)
+				}
+
+			default:
+				// Embedded struct literals and nested comprehensions.
+				n.addCompErr(d, err)
+			}
+		}
+	}
 }
