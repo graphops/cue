@@ -1767,10 +1767,10 @@ Allocs: 402
 Retain: 0
 
 Unifications: 2990
-Conjuncts:    8253
+Conjuncts:    8265
 Disjuncts:    135
 Notifications: 8
 
 SkippedNotification: 3
 
-NumCloseIDs: 1270
+NumCloseIDs: 1274
