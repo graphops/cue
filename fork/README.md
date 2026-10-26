@@ -34,8 +34,11 @@ Each fix also exists on its own branch, isolated on the `v0.18.0-rc.2` tag.
 | `fix/rc2-nested-disjunction-errors` | Lost diagnostics: when every disjunct failed only through a nested disjunction (e.g. each reads a field whose own disjunction failed), the error was a bare "empty disjunction" without any cause | High |
 | `fix/rc2-fmt-alias-form` | `cue fmt` wrote the single postfix alias as `~(X)` for files whose language version predates it (below v0.17.0, which cannot parse it); it now keeps `~X` there | High |
 | `fix/rc2-struct-data-incomplete` | `struct.Data` (an addition below) turned an argument that was only incomplete, such as one reading an optional field, into a permanent error, failing evaluation of a field nobody asked to be concrete; it now keeps the argument's error code, as `json.Unmarshal(json.Marshal(v))` does. Based on the `struct.Data` addition | High |
-| `fix/rc2-share-funcarg-cycle` | Spurious structural cycle: with the sharing addition below, a function applied to the result of an earlier call of the same call site, with a definition on its argument, reported a structural cycle. The addition no longer keeps a node shared that shares a function argument. Based on the sharing addition; the same cycle without a definition is an upstream issue this does not fix | Medium-high |
-| `fix/rc2-share-disjunction-finalize` | Incomplete value, a regression in v0.18.0-rc.2: a reference to a struct filled by a comprehension, unified with a disjunction of definitions, lost the comprehension's fields and left the disjunction unresolved ("incomplete value {} \| string"). Reverts upstream `082c52c57`, which finalizes the shared vertex before the comprehension has run | High |
+| `fix/rc2-share-funcarg-cycle` | **Subsumed by `fix/rc2-share-funcarg-chain` since `v0.18.0-rc.2-graphops.2`; its code change is no longer on this branch, its test is.** Spurious structural cycle: with the sharing addition below, a function applied to the result of an earlier call of the same call site, with a definition on its argument, reported a structural cycle. The addition no longer kept a node shared that shares a function argument. `fix/rc2-share-funcarg-chain` fixes the cause, which also covers the same cycle without a definition, so the addition applies to function arguments again | Medium-high |
+| `fix/rc2-share-disjunction-finalize` | **Superseded by `fix/rc2-share-disjunction-safe` since `v0.18.0-rc.2-graphops.2`; its revert of `082c52c57` is itself reverted on this branch.** Incomplete value, a regression in v0.18.0-rc.2: a reference to a struct filled by a comprehension, unified with a disjunction of definitions, lost the comprehension's fields and left the disjunction unresolved ("incomplete value {} \| string"). Reverted upstream `082c52c57`, which finalizes the shared vertex before the comprehension has run, losing its optimisation | High |
+| `fix/rc2-share-disjunction-safe` | Incomplete value or spurious "cyclic reference to field", a regression in v0.18.0-rc.2: upstream `082c52c57` finalizes the field a reference shares when the reference meets a disjunction (as with `args?: #Map \| string`), to keep sharing. If that field itself refers to a definition (`x: #A`), the definition was dropped as a self-reference and the disjunction left unresolved ("incomplete value {} \| string"); if the field was still being evaluated (a comprehension reading the reference), it was frozen before adding its fields. The field is now finalized only when no evaluation it is part of is in progress, and the node then shares what the field shares, keeping upstream's linear evaluation of `issue4512.txtar` | High |
+| `fix/rc2-share-funcarg-chain` | Spurious structural cycle, upstream since functions exist: a function applied, through a wrapper, to the result of an earlier call of the same call site, without any definition. A reference to a parameter that structure shares its argument was dereferenced to the argument's value, evaluated with the callee body's cycle-reference chain instead of the caller's; it now stops at the parameter, whose argument conjunct carries the caller's chain | Medium-high |
+| `fix/rc2-comprehension-error-loss` | Silent value loss: a field declared next to a struct-level comprehension (such as `list: [...]`) kept its declared value when the comprehension's clauses failed (an erroneous condition, or one that never becomes concrete), because the error was recorded only on the enclosing struct; a reference to the field evaluated before the struct exported `[]` with exit 0. The error now also applies to each field the comprehension's body or else clause declares. Not bisected: v0.16.1 already loses the error for `if` without `else`; v0.18 also loses it with `else` | High (fatal errors), Medium-high (incomplete errors) |
 
 ## Additions
 
@@ -46,15 +49,27 @@ above.
 | Addition | What it adds | Test |
 |---|---|---|
 | `struct.Data(v)` | `v` as concrete data (regular fields, defaults resolved, no closedness, definitions, hidden or optional fields), built as fresh CUE literals. An in-CUE replacement for `json.Unmarshal(json.Marshal(v))`, about 2.7× cheaper, which keeps CUE kinds such as bytes. An incomplete argument makes the call incomplete, as with the JSON round trip. | `pkg/struct/testdata/data.txtar`, `cmd/cue/cmd/testdata/script/struct_data_incomplete.txtar` |
-| Sharing past a repeated definition | Structure sharing is kept when a conjunct refers to a definition the shared value already applied (plainly, or opened for an opened repeat); the repeated conjunct is held and applied as usual if the node is unshared. A schema-checked value can then be passed to many places that also declare the schema. Upstream keeps sharing since `1c287ec21` when the shared value holds the definition as a direct conjunct; this extends it to definitions applied any other way (such as through a field of an opened definition), to a definition arriving before the value, and to opened definitions. Not applied to a node sharing a function argument, nor to a plain definition re-closing an opened reference (`x... & #D`). | `cue/testdata/eval/sharedefs.txtar`, `cue/testdata/functions/sharedefs_reapply.txtar` |
+| Sharing past a repeated definition | Structure sharing is kept when a conjunct refers to a definition the shared value already applied (plainly, or opened for an opened repeat); the repeated conjunct is held and applied as usual if the node is unshared. A schema-checked value can then be passed to many places that also declare the schema. Upstream keeps sharing since `1c287ec21` when the shared value holds the definition as a direct conjunct; this extends it to definitions applied any other way (such as through a field of an opened definition), to a definition arriving before the value, and to opened definitions. Not applied to a plain definition re-closing an opened reference (`x... & #D`). | `cue/testdata/eval/sharedefs.txtar`, `cue/testdata/functions/sharedefs_reapply.txtar` |
 
 ## Moving from v0.18.0-rc.1
 
 No fix was dropped: the regression test of every fix and addition still fails
 on plain v0.18.0-rc.2 without its patch, and no upstream change in
-`v0.18.0-rc.1..v0.18.0-rc.2` addresses one of them. One fix is new on this
-base: `fix/rc2-share-disjunction-finalize`, for a regression upstream
-introduced in `082c52c57`.
+`v0.18.0-rc.1..v0.18.0-rc.2` addresses one of them.
+
+Three fixes are new on this base. `fix/rc2-share-disjunction-safe` is for a
+regression upstream introduced in `082c52c57`. `v0.18.0-rc.2-graphops.1`
+handled that regression with `fix/rc2-share-disjunction-finalize`, a revert of
+`082c52c57`; `v0.18.0-rc.2-graphops.2` reverts that revert and applies the
+safe fix instead, which keeps `082c52c57`'s optimisation.
+`fix/rc2-share-funcarg-chain` and `fix/rc2-comprehension-error-loss` fix older
+upstream issues.
+
+One fix is no longer applied: `fix/rc2-share-funcarg-chain` fixes the cause of
+the cycle `fix/rc2-share-funcarg-cycle` worked around, so since
+`v0.18.0-rc.2-graphops.2` this branch no longer carries the latter's code
+change. Its test, `cue/testdata/functions/sharedefs_reapply.txtar`, is kept and
+passes.
 
 Most patches apply unchanged. These needed adapting to upstream changes:
 
@@ -87,7 +102,7 @@ Go programs that embed CUE use a release with a replace directive:
 
 ```
 require cuelang.org/go v0.18.0-rc.2
-replace cuelang.org/go => github.com/graphops/cue v0.18.0-rc.2-graphops.1
+replace cuelang.org/go => github.com/graphops/cue v0.18.0-rc.2-graphops.2
 ```
 
 ## Build and test
