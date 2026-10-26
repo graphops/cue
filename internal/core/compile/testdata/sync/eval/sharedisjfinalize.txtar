@@ -1,0 +1,39 @@
+#inlinetest:exclude golden output records the disjunction left unresolved
+# A reference into a struct whose fields a comprehension adds, unified
+# with a disjunction of definitions, keeps the fields the comprehension
+# adds: the referenced value is not finalized before its comprehension
+# has run.
+-- in.cue --
+#Map: [string]: string
+#Args: #Map | string
+#Out: args?: #Args
+
+out: #Out
+out: args: x.args
+x: args: #A
+#A: {
+	if true {a: "1"}
+}
+-- out/compile --
+--- in.cue
+{
+  #Map: {
+    [string]: string
+  }
+  #Args: (〈0;#Map〉|string)
+  #Out: {
+    args?: 〈1;#Args〉
+  }
+  out: 〈0;#Out〉
+  out: {
+    args: 〈1;x〉.args
+  }
+  x: {
+    args: 〈1;#A〉
+  }
+  #A: {
+    if true {
+      a: "1"
+    }
+  }
+}
