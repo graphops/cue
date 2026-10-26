@@ -50,10 +50,10 @@ Allocs: 37
 Retain: 0
 
 Unifications: 149
-Conjuncts:    170
+Conjuncts:    176
 Disjuncts:    0
 
-NumCloseIDs: 2
+NumCloseIDs: 4
 -- out/evalalpha --
 (struct){
   #A0: (#struct){
