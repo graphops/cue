@@ -54,19 +54,14 @@ func (n *nodeContext) unshare() {
 	}
 }
 
-// sharesSingleValue reports whether the vertex n shares holds a value that
-// is not a disjunction, finalizing the vertex if needed to know its value.
+// sharesSingleValue reports whether the vertex n shares holds a value known
+// not to be a disjunction, which requires it to be finalized.
 func (n *nodeContext) sharesSingleValue() bool {
 	v, ok := n.node.BaseValue.(*Vertex)
-	if !ok {
+	if !ok || !v.isFinal() {
 		return false
 	}
-	// A cyclic reference is left to finalizeSharing, as in that case the
-	// vertex may depend on this node.
-	if n.shareCycleType == NoCycle {
-		v.Finalize(n.ctx)
-	}
-	return v.isFinal() && disjunctionOf(v) == nil
+	return disjunctionOf(v) == nil
 }
 
 // hasResolver reports whether a disjunct of x is a reference, possibly in a
