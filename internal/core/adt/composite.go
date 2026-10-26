@@ -267,6 +267,12 @@ type Vertex struct {
 	// The debug printer, for instance, takes extra care not to print in a loop.
 	IsShared bool
 
+	// appliedDefs lists the definitions whose conjuncts were unified directly
+	// into this vertex. A node structure sharing this vertex can skip a
+	// conjunct referring to one of them: unification is idempotent, so it
+	// would add nothing. See nodeContext.skipRedundantDef.
+	appliedDefs []appliedDef
+
 	// ArcType indicates the level of optionality of this arc.
 	ArcType ArcType
 
