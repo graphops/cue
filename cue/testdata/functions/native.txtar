@@ -870,11 +870,11 @@ Allocs: 165
 Retain: 0
 
 Unifications: 1304
-Conjuncts:    3746
+Conjuncts:    3748
 Disjuncts:    232
 Notifications: 8
 
-NumCloseIDs: 643
+NumCloseIDs: 644
 
-ConjunctInfos:       1479
+ConjunctInfos:       1480
 MaxConjunctInfos:    8
