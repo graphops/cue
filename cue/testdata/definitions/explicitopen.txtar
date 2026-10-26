@@ -563,9 +563,8 @@ recloseSame.readDisjunct.m.x: conflicting values 1 and 2:
     ./issues.cue:101:10
     ./issues.cue:102:10
     ./issues.cue:103:5
+    ./issues.cue:132:6
     ./issues.cue:133:6
-    ./issues.cue:134:6
-    ./issues.cue:135:6
     ./issues.cue:136:6
 recloseSame.readDisjunct.m.y: field not allowed:
     ./issues.cue:136:11
@@ -670,19 +669,19 @@ f9: combinenew.f9.ok is in error because two f9 declarations conflict.
 f14/f15: combinenew.f14.err and f15.err are NOT in error (v3 allows these).
 Structure sharing: NewOpen2: ~(#A), combinenew.f4.ok ~(NewClosed1), combinenew.f18.ok ~(NewClosed1).
 -- out/eval/stats --
-Leaks:  29
-Freed:  855
-Reused: 768
-Allocs: 116
+Leaks:  27
+Freed:  846
+Reused: 759
+Allocs: 114
 Retain: 0
 
-Unifications: 789
-Conjuncts:    2001
-Disjuncts:    50
+Unifications: 782
+Conjuncts:    1954
+Disjuncts:    46
 
-NumCloseIDs: 697
+NumCloseIDs: 677
 
-ConjunctInfos:       1338
+ConjunctInfos:       1303
 MaxConjunctInfos:    5
 MaxReqSets:          9
 MaxRedirect:         3

@@ -1,0 +1,210 @@
+#inlinetest:exclude golden output records closedness, defaults and errors with sharing
+# A field structure shares a value that already applied a definition; a
+# further conjunct referring to that same definition is redundant and must
+# not stop the sharing, nor change the result: closedness, defaults and
+# errors are as when the conjunct is unified.
+-- in.cue --
+#D: {a: int}
+#O: {a: int, ...}
+#F: {a: *1 | int}
+#E: {a: <10}
+
+s: #D & {a: 1}
+o: #O & {a: 1}
+f: #F
+
+// Redundant conjunct, either order.
+sameDef:    s & #D
+sameDefRev: #D & s
+
+// Closedness still rejects fields #D does not allow, either order.
+closedErr:    s & #D & {b: 2}
+closedErrRev: #D & s & {b: 2}
+
+// An open definition still allows them.
+openOK: o & #O & {b: 2}
+
+// A definition the shared value did not apply is unified as usual.
+otherDef:    s & #E
+otherDefErr: (#D & {a: 20}) & #E
+
+// A value that applied no definition is closed by the conjunct.
+plain:    {a: 1}
+plainErr: plain & #D & {b: 2}
+
+// Defaults are kept.
+defaults: f & #F
+
+// An opened reference is not skipped.
+opened: {s...} & #D
+
+// A kind that brings the definition in through a spread, as blueprint kinds
+// do: a child sharing a parent's checked field keeps sharing, and closedness
+// still holds.
+#K: {ctx!: #D}
+B: {#K..., x?: _}
+parent: B & {ctx: {a: 1}}
+child:  B & {ctx: parent.ctx}
+childErr: B & {ctx: parent.ctx} & {ctx: b: 2}
+-- reclose.cue --
+@experiment(explicitopen)
+
+// A definition closes a node sharing an opened reference to a value that
+// applied it, so it is not redundant there, in either order.
+#R: {a: int}
+r: #R & {a: 1}
+reclose: {
+	y:    r... & #R
+	yErr: y & {b: 2}
+	z:    #R & r...
+	zErr: z & {b: 2}
+}
+-- out/evalalpha --
+Errors:
+childErr.ctx.b: field not allowed:
+    ./in.cue:42:41
+closedErr.b: field not allowed:
+    ./in.cue:15:25
+closedErrRev.b: field not allowed:
+    ./in.cue:16:25
+plainErr.b: field not allowed:
+    ./in.cue:27:25
+reclose.yErr.b: field not allowed:
+    ./reclose.cue:9:13
+reclose.zErr.b: field not allowed:
+    ./reclose.cue:11:13
+otherDefErr.a: invalid value 20 (out of bound <10):
+    ./in.cue:4:9
+    ./in.cue:23:24
+
+Result:
+(_|_){
+  // [eval]
+  #D: (#struct){
+    a: (int){ int }
+  }
+  #O: (#struct){
+    a: (int){ int }
+  }
+  #F: (#struct){
+    a: (int){ |(*(int){ 1 }, (int){ int }) }
+  }
+  #E: (#struct){
+    a: (number){ <10 }
+  }
+  s: (#struct){
+    a: (int){ 1 }
+  }
+  o: (#struct){
+    a: (int){ 1 }
+  }
+  f: ~(#F)
+  sameDef: ~(s)
+  sameDefRev: ~(s)
+  closedErr: (_|_){
+    // [eval]
+    b: (_|_){
+      // [eval] closedErr.b: field not allowed:
+      //     ./in.cue:15:25
+    }
+    a: (int){ 1 }
+  }
+  closedErrRev: (_|_){
+    // [eval]
+    b: (_|_){
+      // [eval] closedErrRev.b: field not allowed:
+      //     ./in.cue:16:25
+    }
+    a: (int){ 1 }
+  }
+  openOK: (#struct){
+    b: (int){ 2 }
+    a: (int){ 1 }
+  }
+  otherDef: (#struct){
+    a: (int){ 1 }
+  }
+  otherDefErr: (_|_){
+    // [eval]
+    a: (_|_){
+      // [eval] otherDefErr.a: invalid value 20 (out of bound <10):
+      //     ./in.cue:4:9
+      //     ./in.cue:23:24
+    }
+  }
+  plain: (struct){
+    a: (int){ 1 }
+  }
+  plainErr: (_|_){
+    // [eval]
+    b: (_|_){
+      // [eval] plainErr.b: field not allowed:
+      //     ./in.cue:27:25
+    }
+    a: (int){ 1 }
+  }
+  defaults: ~(#F)
+  opened: (#struct){
+    a: (int){ 1 }
+  }
+  #K: (#struct){
+    ctx!: ~(#D)
+  }
+  B: (#struct){
+    x?: (_){ _ }
+    ctx!: ~(#D)
+  }
+  parent: (#struct){
+    ctx: (#struct){
+      a: (int){ 1 }
+    }
+    x?: (_){ _ }
+  }
+  child: (#struct){
+    ctx: ~(parent.ctx)
+    x?: (_){ _ }
+  }
+  childErr: (_|_){
+    // [eval]
+    ctx: (_|_){
+      // [eval]
+      b: (_|_){
+        // [eval] childErr.ctx.b: field not allowed:
+        //     ./in.cue:42:41
+      }
+      a: (int){ 1 }
+    }
+    x?: (_){ _ }
+  }
+  #R: (#struct){
+    a: (int){ int }
+  }
+  r: (#struct){
+    a: (int){ 1 }
+  }
+  reclose: (_|_){
+    // [eval]
+    y: (#struct){
+      a: (int){ 1 }
+    }
+    yErr: (_|_){
+      // [eval]
+      b: (_|_){
+        // [eval] reclose.yErr.b: field not allowed:
+        //     ./reclose.cue:9:13
+      }
+      a: (int){ 1 }
+    }
+    z: (#struct){
+      a: (int){ 1 }
+    }
+    zErr: (_|_){
+      // [eval]
+      b: (_|_){
+        // [eval] reclose.zErr.b: field not allowed:
+        //     ./reclose.cue:11:13
+      }
+      a: (int){ 1 }
+    }
+  }
+}
