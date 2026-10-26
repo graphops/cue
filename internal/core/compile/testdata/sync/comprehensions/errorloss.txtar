@@ -1,0 +1,575 @@
+# Tests that an error in the clauses of a comprehension is an error of the
+# fields the comprehension declares, not a reason to complete those fields
+# without the comprehension's contribution.
+#
+# A comprehension is pushed down to the arcs its body (and else clause)
+# declares: it is a parent task of those arcs rather than a task of the
+# struct. When its clauses failed, the error was recorded on the struct only.
+# An arc with other conjuncts, such as list: [...], then completed as if the
+# condition were false, and a reference to it, evaluated before the struct,
+# yielded that value without an error: list: [] where list must be an error.
+-- in.cue --
+@experiment(try)
+
+ifErr: {
+	out: p.list
+	p: {
+		list: [...]
+		if bad != 1 {
+			list: ["a"]
+		}
+	}
+	bad: 1 & 2
+}
+
+twoIfs: {
+	out: p.list
+	p: {
+		list: [...]
+		if bad != 1 {
+			list: ["a"]
+		}
+		if bad == 1 {
+			list: ["b"]
+		}
+	}
+	bad: 1 & 2
+}
+
+ifElse: {
+	out: p.list
+	p: {
+		list: [...]
+		if bad != 1 {
+			list: ["a"]
+		} else {
+			list: ["b"]
+		}
+	}
+	bad: 1 & 2
+}
+
+// The condition selects a valid field of a struct that is invalid elsewhere.
+selectInvalid: {
+	cfg: #S
+	cfg: mode: "a"
+	#S: {
+		mode: string
+		items: [...(string & !="")]
+	}
+	out: p.list
+	p: {
+		list: [...]
+		if cfg.mode != "a" {
+			list: ["a"]
+		} else {
+			list: ["b"]
+		}
+	}
+	cfg: items: [""]
+}
+
+// A struct default rather than a list.
+structDefault: {
+	out: p.opts
+	p: {
+		opts: {...}
+		if bad != 1 {
+			opts: a: 1
+		}
+	}
+	bad: 1 & 2
+}
+
+// A field nested in the comprehension body.
+nested: {
+	out: p.a.list
+	p: {
+		a: list: [...]
+		if bad != 1 {
+			a: list: ["a"]
+		}
+	}
+	bad: 1 & 2
+}
+
+inDefinition: {
+	out: #D.list
+	#D: {
+		list: [...]
+		if bad != 1 {
+			list: ["a"]
+		} else {
+			list: ["b"]
+		}
+	}
+	bad: 1 & 2
+}
+
+throughReference: {
+	out: q.list
+	q: p
+	p: {
+		list: [...]
+		if bad != 1 {
+			list: ["a"]
+		}
+	}
+	bad: 1 & 2
+}
+
+throughDefinition: {
+	out: x.list
+	x: #D
+	#D: {
+		list: [...]
+		if bad != 1 {
+			list: ["a"]
+		}
+	}
+	bad: 1 & 2
+}
+
+// A condition that never becomes concrete leaves the field incomplete.
+incomplete: {
+	out: p.list
+	p: {
+		list: [...]
+		if cfg.mode == "a" {
+			list: ["a"]
+		}
+	}
+	cfg: mode: string
+}
+
+requiredMissing: {
+	out: p.list
+	p: {
+		list: [...]
+		if cfg.mode == "a" {
+			list: ["a"]
+		}
+	}
+	cfg: mode!: string
+}
+
+// The following cases must keep their value.
+
+// The condition is incomplete until a later conjunct makes it concrete.
+resolvedLater: {
+	out: p.list
+	p: {
+		list: [...]
+		if cfg.mode == "a" {
+			list: ["a"]
+		}
+	}
+	cfg: mode: string
+	cfg: mode: "a"
+}
+
+// The condition reads a field another comprehension declares.
+resolvedByComprehension: {
+	out: p.list
+	p: {
+		list: [...]
+		if q.mode == "a" {
+			list: ["a"]
+		}
+	}
+	q: {
+		mode: string
+		if r {
+			mode: "a"
+		}
+	}
+	r: true
+}
+
+resolvedByDefault: {
+	out: p.list
+	p: {
+		list: [...]
+		if cfg.mode == "a" {
+			list: ["a"]
+		} else {
+			list: ["b"]
+		}
+	}
+	cfg: mode: *"b" | "a"
+}
+
+// The conditions are false: the field keeps its declared value.
+conditionFalse: {
+	out: p.list
+	p: {
+		list: [...]
+		if cfg.mode != "a" {
+			list: ["a"]
+		}
+		if cfg.mode == "c" {
+			list: ["c"]
+		}
+	}
+	cfg: mode: "a"
+}
+
+// No comprehension contributes, so the default applies.
+defaultApplies: {
+	out: p.n
+	p: {
+		n: *1 | int
+		if cfg.mode == "b" {
+			n: 2
+		}
+	}
+	cfg: mode: "a"
+}
+
+// A condition that tests for an error does not fail.
+errorTest: {
+	out: p.list
+	p: {
+		list: [...]
+		if cfg.x == _|_ {
+			list: ["missing"]
+		}
+	}
+	cfg: {}
+}
+
+tryAbsent: {
+	out: p.list
+	p: {
+		list: [...]
+		try X = cfg.x? {
+			list: [X]
+		} else {
+			list: ["b"]
+		}
+	}
+	cfg: {}
+}
+-- out/compile --
+--- in.cue
+{
+  ifErr: {
+    out: 〈0;p〉.list
+    p: {
+      list: [
+        ...,
+      ]
+      if (〈1;bad〉 != 1) {
+        list: [
+          "a",
+        ]
+      }
+    }
+    bad: (1 & 2)
+  }
+  twoIfs: {
+    out: 〈0;p〉.list
+    p: {
+      list: [
+        ...,
+      ]
+      if (〈1;bad〉 != 1) {
+        list: [
+          "a",
+        ]
+      }
+      if (〈1;bad〉 == 1) {
+        list: [
+          "b",
+        ]
+      }
+    }
+    bad: (1 & 2)
+  }
+  ifElse: {
+    out: 〈0;p〉.list
+    p: {
+      list: [
+        ...,
+      ]
+      if (〈1;bad〉 != 1) {
+        list: [
+          "a",
+        ]
+      } else {
+        list: [
+          "b",
+        ]
+      }
+    }
+    bad: (1 & 2)
+  }
+  selectInvalid: {
+    cfg: 〈0;#S〉
+    cfg: {
+      mode: "a"
+    }
+    #S: {
+      mode: string
+      items: [
+        ...(string & !=""),
+      ]
+    }
+    out: 〈0;p〉.list
+    p: {
+      list: [
+        ...,
+      ]
+      if (〈1;cfg〉.mode != "a") {
+        list: [
+          "a",
+        ]
+      } else {
+        list: [
+          "b",
+        ]
+      }
+    }
+    cfg: {
+      items: [
+        "",
+      ]
+    }
+  }
+  structDefault: {
+    out: 〈0;p〉.opts
+    p: {
+      opts: {
+        ...
+      }
+      if (〈1;bad〉 != 1) {
+        opts: {
+          a: 1
+        }
+      }
+    }
+    bad: (1 & 2)
+  }
+  nested: {
+    out: 〈0;p〉.a.list
+    p: {
+      a: {
+        list: [
+          ...,
+        ]
+      }
+      if (〈1;bad〉 != 1) {
+        a: {
+          list: [
+            "a",
+          ]
+        }
+      }
+    }
+    bad: (1 & 2)
+  }
+  inDefinition: {
+    out: 〈0;#D〉.list
+    #D: {
+      list: [
+        ...,
+      ]
+      if (〈1;bad〉 != 1) {
+        list: [
+          "a",
+        ]
+      } else {
+        list: [
+          "b",
+        ]
+      }
+    }
+    bad: (1 & 2)
+  }
+  throughReference: {
+    out: 〈0;q〉.list
+    q: 〈0;p〉
+    p: {
+      list: [
+        ...,
+      ]
+      if (〈1;bad〉 != 1) {
+        list: [
+          "a",
+        ]
+      }
+    }
+    bad: (1 & 2)
+  }
+  throughDefinition: {
+    out: 〈0;x〉.list
+    x: 〈0;#D〉
+    #D: {
+      list: [
+        ...,
+      ]
+      if (〈1;bad〉 != 1) {
+        list: [
+          "a",
+        ]
+      }
+    }
+    bad: (1 & 2)
+  }
+  incomplete: {
+    out: 〈0;p〉.list
+    p: {
+      list: [
+        ...,
+      ]
+      if (〈1;cfg〉.mode == "a") {
+        list: [
+          "a",
+        ]
+      }
+    }
+    cfg: {
+      mode: string
+    }
+  }
+  requiredMissing: {
+    out: 〈0;p〉.list
+    p: {
+      list: [
+        ...,
+      ]
+      if (〈1;cfg〉.mode == "a") {
+        list: [
+          "a",
+        ]
+      }
+    }
+    cfg: {
+      mode!: string
+    }
+  }
+  resolvedLater: {
+    out: 〈0;p〉.list
+    p: {
+      list: [
+        ...,
+      ]
+      if (〈1;cfg〉.mode == "a") {
+        list: [
+          "a",
+        ]
+      }
+    }
+    cfg: {
+      mode: string
+    }
+    cfg: {
+      mode: "a"
+    }
+  }
+  resolvedByComprehension: {
+    out: 〈0;p〉.list
+    p: {
+      list: [
+        ...,
+      ]
+      if (〈1;q〉.mode == "a") {
+        list: [
+          "a",
+        ]
+      }
+    }
+    q: {
+      mode: string
+      if 〈1;r〉 {
+        mode: "a"
+      }
+    }
+    r: true
+  }
+  resolvedByDefault: {
+    out: 〈0;p〉.list
+    p: {
+      list: [
+        ...,
+      ]
+      if (〈1;cfg〉.mode == "a") {
+        list: [
+          "a",
+        ]
+      } else {
+        list: [
+          "b",
+        ]
+      }
+    }
+    cfg: {
+      mode: (*"b"|"a")
+    }
+  }
+  conditionFalse: {
+    out: 〈0;p〉.list
+    p: {
+      list: [
+        ...,
+      ]
+      if (〈1;cfg〉.mode != "a") {
+        list: [
+          "a",
+        ]
+      }
+      if (〈1;cfg〉.mode == "c") {
+        list: [
+          "c",
+        ]
+      }
+    }
+    cfg: {
+      mode: "a"
+    }
+  }
+  defaultApplies: {
+    out: 〈0;p〉.n
+    p: {
+      n: (*1|int)
+      if (〈1;cfg〉.mode == "b") {
+        n: 2
+      }
+    }
+    cfg: {
+      mode: "a"
+    }
+  }
+  errorTest: {
+    out: 〈0;p〉.list
+    p: {
+      list: [
+        ...,
+      ]
+      if (〈1;cfg〉.x == _|_(explicit error (_|_ literal) in source)) {
+        list: [
+          "missing",
+        ]
+      }
+    }
+    cfg: {}
+  }
+  tryAbsent: {
+    out: 〈0;p〉.list
+    p: {
+      list: [
+        ...,
+      ]
+      try X = 〈1;cfg〉.x? {
+        list: [
+          〈2;X〉,
+        ]
+      } else {
+        list: [
+          "b",
+        ]
+      }
+    }
+    cfg: {}
+  }
+}
