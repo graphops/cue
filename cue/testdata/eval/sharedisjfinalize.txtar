@@ -1,0 +1,186 @@
+# A shared reference that meets a disjunction of types, as with a field typed
+# by a disjunction of definitions, keeps its referenced value: the value is
+# finalized to keep sharing only when no evaluation it is part of is in
+# progress, and the node then shares what that value shares.
+-- in.cue --
+// A shared reference that meets a disjunction of types is kept shared only
+// once the referenced vertex is finalized. The vertex is finalized at that
+// point, unless an evaluation that finalizing it would interrupt is in
+// progress; in that case the reference is unshared, as before.
+
+// The referenced field is itself a reference to a definition, so that
+// finalizing it makes it share the definition: the node must then share
+// the definition directly, or unsharing it in the disjuncts drops the
+// definition as a self-reference.
+comprehension: {
+	#Map: [string]: string
+	#Args: #Map | string
+	#Out: args?: #Args
+	out: #Out
+	out: args: x.args @test(eq, {a: "1"})
+	x: args: #A
+	#A: {
+		if true {a: "1"}
+	}
+}
+
+plain: {
+	#Map: [string]: string
+	#Args: #Map | string
+	out: args: x.args @test(eq, {a: "1"})
+	out: args: #Args
+	x: args: #A
+	#A: {a: "1"}
+}
+
+forComprehension: {
+	#Map: [string]: string
+	#Args: #Map | string
+	#Out: args?: #Args
+	out: #Out
+	out: args: x.args @test(eq, {a: "1", b: "2"})
+	x: args: #A
+	#A: {
+		for k, v in src {(k): v}
+	}
+	src: {a: "1", b: "2"}
+}
+
+ifReference: {
+	#Map: [string]: string
+	#Args: #Map | string
+	#Out: args?: #Args
+	out: #Out
+	out: args: x.args @test(eq, {a: "1"})
+	x: args: #A
+	#A: {
+		if cond.enabled {a: cond.value}
+	}
+	cond: {enabled: true, value: "1"}
+}
+
+// The definition the referenced field shares embeds another one.
+nestedDefinitions: {
+	#Map: [string]: string
+	#Args: #Map | string
+	#Out: args?: #Args
+	out: #Out
+	out: args: x.args @test(eq, {c: "3", a: "1"})
+	x: args: #A
+	#A: #B
+	#B: {
+		#C
+		if true {a: "1"}
+	}
+	#C: {c: "3", ...}
+}
+
+// A chain of references and definitions.
+referenceChain: {
+	#Map: [string]: string
+	#Args: #Map | string
+	#Out: args?: #Args
+	out: #Out
+	out: args: x.args @test(eq, {c: "3", a: "1"})
+	x: args: y.args
+	y: args: #A
+	#A: #B
+	#B: {
+		c: "3"
+		if true {a: "1"}
+	}
+}
+
+// The referenced field shares a disjunction.
+sharedDisjunction: {
+	#Map: [string]: string
+	#Args: #Map | string
+	out: args: x.args
+	out: args: #Args
+	x: args: #A
+	#A: *{a: "1"} | {b: "2"}
+	outA: out.args.a @test(eq, "1")
+}
+
+// The node referring to x.args is evaluated by a comprehension of x.args,
+// which has not added its field yet.
+inProgressSelf: {
+	#Map: [string]: string
+	#Args: #Map | string
+	x: args: {
+		if true {a: "1"}
+		for k, v in out.args if k == "a" {b: v}
+	} @test(eq, {a: "1", b: "1"})
+	out: args: x.args
+	out: args: #Args
+}
+
+// The same, with the comprehension pushed down from the parent of x.args.
+inProgressParent: {
+	#Map: [string]: string
+	#Args: #Map | string
+	x: {
+		args: {if true {a: "1"}}
+		for k, v in out.args if k == "a" {args: b: v}
+	}
+	x: args: _ @test(eq, {a: "1", b: "1"})
+	out: args: x.args
+	out: args: #Args
+}
+
+// The node referring to x.args is evaluated by a comprehension of a field
+// of the definition x.args shares.
+inProgressArc: {
+	#Map: [string]: _
+	#Args: #Map | string
+	y: x.args.sub.d @test(eq, 2)
+	x: args: #A
+	#A: {
+		sub: {
+			c: 1
+			if out.args.sub.c == 1 {d: 2}
+		}
+	}
+	out: args: x.args @test(eq, {sub: {c: 1, d: 2}})
+	out: args: #Args
+}
+
+// A graph typed by a disjunction of definitions and declared deepest first,
+// with nodes whose fields comprehensions add.
+graph: {
+	#Task: {cmd: string, deps?: [...#Node]}
+	#Group: {type: "group", deps?: [...#Node]}
+	#Node: #Task | #Group
+	tasks: [string]: #Task
+	tasks: {
+		n3: {cmd: "x", deps: [n2]} @test(shareID=graphN2, at=deps[0])
+		n2: {cmd: "x", deps: [n1]} @test(shareID=graphN2)
+		n1: {
+			cmd: "x"
+			if true {deps: [n0]}
+		}
+		n0: {
+			cmd: "y"
+			for k, v in extra {(k): v}
+		}
+	}
+	extra: {deps: []}
+}
+graphLeaf: graph.tasks.n3.deps[0].deps[0].deps[0] @test(eq, {cmd: "y", deps: []})
+-- out/eval/stats --
+Leaks:  30
+Freed:  247
+Reused: 207
+Allocs: 70
+Retain: 0
+
+Unifications: 190
+Conjuncts:    476
+Disjuncts:    60
+
+NumCloseIDs: 98
+
+ConjunctInfos:       340
+MaxConjunctInfos:    5
+MaxReqSets:          10
+MaxRedirect:         2
