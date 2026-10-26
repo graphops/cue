@@ -35,6 +35,7 @@ Each fix also exists on its own branch, isolated on the `v0.18.0-rc.2` tag.
 | `fix/rc2-fmt-alias-form` | `cue fmt` wrote the single postfix alias as `~(X)` for files whose language version predates it (below v0.17.0, which cannot parse it); it now keeps `~X` there | High |
 | `fix/rc2-struct-data-incomplete` | `struct.Data` (an addition below) turned an argument that was only incomplete, such as one reading an optional field, into a permanent error, failing evaluation of a field nobody asked to be concrete; it now keeps the argument's error code, as `json.Unmarshal(json.Marshal(v))` does. Based on the `struct.Data` addition | High |
 | `fix/rc2-share-funcarg-cycle` | Spurious structural cycle: with the sharing addition below, a function applied to the result of an earlier call of the same call site, with a definition on its argument, reported a structural cycle. The addition no longer keeps a node shared that shares a function argument. Based on the sharing addition; the same cycle without a definition is an upstream issue this does not fix | Medium-high |
+| `fix/rc2-share-disjunction-finalize` | Incomplete value, a regression in v0.18.0-rc.2: a reference to a struct filled by a comprehension, unified with a disjunction of definitions, lost the comprehension's fields and left the disjunction unresolved ("incomplete value {} \| string"). Reverts upstream `082c52c57`, which finalizes the shared vertex before the comprehension has run | High |
 
 ## Additions
 
@@ -51,7 +52,9 @@ above.
 
 No fix was dropped: the regression test of every fix and addition still fails
 on plain v0.18.0-rc.2 without its patch, and no upstream change in
-`v0.18.0-rc.1..v0.18.0-rc.2` addresses one of them.
+`v0.18.0-rc.1..v0.18.0-rc.2` addresses one of them. One fix is new on this
+base: `fix/rc2-share-disjunction-finalize`, for a regression upstream
+introduced in `082c52c57`.
 
 Most patches apply unchanged. These needed adapting to upstream changes:
 
