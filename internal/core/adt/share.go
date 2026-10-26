@@ -585,6 +585,50 @@ func (v *Vertex) DerefNonDisjunct() *Vertex {
 	}
 }
 
+// derefResolved indirects the vertex a reference resolved to, like
+// DerefNonDisjunct, but not past a function parameter that shares its
+// argument.
+//
+// The argument conjunct of a parameter carries the cycle-reference chain of
+// the call (see [CycleInfo.IsFuncArg]), and scheduling it replaces the chain
+// of the callee's body that refers to the parameter. Dereferencing the
+// parameter to the shared argument value would instead schedule the
+// conjuncts of that value with the body's chain. If the value is the result
+// of an earlier call of the same call site, as in
+//
+//	W: func(o: _) -> _: F(o.d)
+//	once:  W({d: {}})
+//	twice: W({d: once})
+//
+// its conjuncts reach that call site again, which is then taken for a
+// structural cycle. Stopping at the parameter schedules its own conjuncts,
+// as if it were not shared: the argument is resolved again under the
+// caller's chain, and its value may still be shared from there.
+func (v *Vertex) derefResolved() *Vertex {
+	for {
+		arc, ok := v.BaseValue.(*Vertex)
+		if !ok || arc.IsDisjunct || v.sharesFuncArg() {
+			return v
+		}
+		v = arc
+	}
+}
+
+// sharesFuncArg reports whether v is a function parameter that structure
+// shares its argument. Parameters are dynamic arcs of a call's activation
+// holding the argument conjunct.
+func (v *Vertex) sharesFuncArg() bool {
+	if !v.IsShared || !v.IsDynamic {
+		return false
+	}
+	for c := range v.LeafConjuncts() {
+		if c.CloseInfo.IsFuncArg {
+			return true
+		}
+	}
+	return false
+}
+
 // DerefNonRooted indirects a node that points to a value that is not rooted.
 // This includes structure-shared nodes that point to a let field: let fields
 // may or may not be part of a struct, and thus should be treated as non-rooted.

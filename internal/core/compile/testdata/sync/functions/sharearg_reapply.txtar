@@ -1,0 +1,175 @@
+# A function applied to the result of an earlier call of the same call site,
+# through a wrapper. The parameter of the inner call structure shares its
+# argument, the earlier result. A reference to the parameter from the
+# callee's body must evaluate the argument with the caller's
+# cycle-reference chain, not the body's: the earlier result reaches the same
+# call site, which would otherwise be taken for a structural cycle.
+-- in.cue --
+@experiment(functions)
+
+F: func(r: _) -> _: {
+	let L = {p: {q: {z: 1}}}
+	r
+	x: G(L)
+}
+G: func(a: _) -> _: {y: H(a.p)}
+H: func(b: _) -> _: {for _, v in b {v}}
+
+// The wrapper passes a field of its argument.
+W: func(o: _) -> _: F(o.d)
+once:   W({d: {}})
+twice:  W({d: once})
+thrice: W({d: twice})
+fields: W({d: W({d: {a: 1}}) & {b: 2}})
+
+// The wrapper passes its argument itself, and the inner function returns
+// its argument rather than iterating over it.
+F2: func(r: _) -> _: {
+	let L = {p: {q: {z: 1}}}
+	r
+	x: G2(L)
+}
+G2: func(a: _) -> _: {y: H2(a.p)}
+H2: func(b: _) -> _: b
+W2: func(o: _) -> _: F2(o)
+once2:  W2({})
+twice2: W2(once2)
+
+// A field of the callee's body that refers to the parameter, referred to in
+// turn.
+F3: func(r: _) -> _: {
+	let L = {p: {q: {z: 1}}}
+	in: r
+	out: in
+	x: G(L)
+}
+W3: func(o: _) -> _: F3(o.d)
+once3:  W3({d: {}})
+twice3: W3({d: once3})
+
+// Genuine cycles through function calls are still structural cycles.
+cycles: {
+	R: func(r: _) -> _: {r, x: R(r)}
+	recurse: R({a: 1})
+
+	N: func(r: _) -> _: {sub: r}
+	nest: N(nest)
+
+	E: func(r: _) -> _: {r}
+	self: E(self)
+
+	A: W({d: {b: B}})
+	B: W({d: {a: A}})
+	C: W({d: {c: C}})
+}
+-- out/compile --
+--- in.cue
+{
+  F: func(r: _) -> _: {
+    let L#1 = {
+      p: {
+        q: {
+          z: 1
+        }
+      }
+    }
+    〈1;r〉
+    x: 〈2;G〉(〈0;let L#1〉)
+  }
+  G: func(a: _) -> _: {
+    y: 〈2;H〉(〈1;a〉.p)
+  }
+  H: func(b: _) -> _: {
+    for _, v in 〈1;b〉 {
+      〈1;v〉
+    }
+  }
+  W: func(o: _) -> _: 〈1;F〉(〈0;o〉.d)
+  once: 〈0;W〉({
+    d: {}
+  })
+  twice: 〈0;W〉({
+    d: 〈1;once〉
+  })
+  thrice: 〈0;W〉({
+    d: 〈1;twice〉
+  })
+  fields: 〈0;W〉({
+    d: (〈1;W〉({
+      d: {
+        a: 1
+      }
+    }) & {
+      b: 2
+    })
+  })
+  F2: func(r: _) -> _: {
+    let L#2 = {
+      p: {
+        q: {
+          z: 1
+        }
+      }
+    }
+    〈1;r〉
+    x: 〈2;G2〉(〈0;let L#2〉)
+  }
+  G2: func(a: _) -> _: {
+    y: 〈2;H2〉(〈1;a〉.p)
+  }
+  H2: func(b: _) -> _: 〈0;b〉
+  W2: func(o: _) -> _: 〈1;F2〉(〈0;o〉)
+  once2: 〈0;W2〉({})
+  twice2: 〈0;W2〉(〈0;once2〉)
+  F3: func(r: _) -> _: {
+    let L#3 = {
+      p: {
+        q: {
+          z: 1
+        }
+      }
+    }
+    in: 〈1;r〉
+    out: 〈0;in〉
+    x: 〈2;G〉(〈0;let L#3〉)
+  }
+  W3: func(o: _) -> _: 〈1;F3〉(〈0;o〉.d)
+  once3: 〈0;W3〉({
+    d: {}
+  })
+  twice3: 〈0;W3〉({
+    d: 〈1;once3〉
+  })
+  cycles: {
+    R: func(r: _) -> _: {
+      〈1;r〉
+      x: 〈2;R〉(〈1;r〉)
+    }
+    recurse: 〈0;R〉({
+      a: 1
+    })
+    N: func(r: _) -> _: {
+      sub: 〈1;r〉
+    }
+    nest: 〈0;N〉(〈0;nest〉)
+    E: func(r: _) -> _: {
+      〈1;r〉
+    }
+    self: 〈0;E〉(〈0;self〉)
+    A: 〈1;W〉({
+      d: {
+        b: 〈2;B〉
+      }
+    })
+    B: 〈1;W〉({
+      d: {
+        a: 〈2;A〉
+      }
+    })
+    C: 〈1;W〉({
+      d: {
+        c: 〈2;C〉
+      }
+    })
+  }
+}

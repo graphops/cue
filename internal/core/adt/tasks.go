@@ -146,7 +146,7 @@ func processResolver(ctx *OpContext, t *task, mode runMode) {
 		ci.ConjunctOpened = true
 	}
 
-	arc = arc.DerefNonDisjunct()
+	arc = arc.derefResolved()
 
 	if ctx.LogEval > 0 {
 		ctx.Logf(t.node.node, "RESOLVED %v to %v %v", r, arc.Label, fmt.Sprintf("%p", arc))

@@ -1,0 +1,96 @@
+# A function applied to the result of an earlier call of the same call site,
+# through a wrapper. The parameter of the inner call structure shares its
+# argument, the earlier result. A reference to the parameter from the
+# callee's body must evaluate the argument with the caller's
+# cycle-reference chain, not the body's: the earlier result reaches the same
+# call site, which would otherwise be taken for a structural cycle.
+-- in.cue --
+@experiment(functions)
+
+F: func(r: _) -> _: {
+	let L = {p: {q: {z: 1}}}
+	r
+	x: G(L)
+}
+G: func(a: _) -> _: {y: H(a.p)}
+H: func(b: _) -> _: {for _, v in b {v}}
+
+// The wrapper passes a field of its argument.
+W: func(o: _) -> _: F(o.d)
+once:   W({d: {}}) @test(eq, {x: y: z: 1})
+twice:  W({d: once}) @test(eq, {x: y: z: 1})
+thrice: W({d: twice}) @test(eq, {x: y: z: 1})
+fields: W({d: W({d: {a: 1}}) & {b: 2}}) @test(eq, {a: 1, b: 2, x: y: z: 1})
+
+// The wrapper passes its argument itself, and the inner function returns
+// its argument rather than iterating over it.
+F2: func(r: _) -> _: {
+	let L = {p: {q: {z: 1}}}
+	r
+	x: G2(L)
+}
+G2: func(a: _) -> _: {y: H2(a.p)}
+H2: func(b: _) -> _: b
+W2: func(o: _) -> _: F2(o)
+once2:  W2({}) @test(eq, {x: y: q: z: 1})
+twice2: W2(once2) @test(eq, {x: y: q: z: 1})
+
+// A field of the callee's body that refers to the parameter, referred to in
+// turn.
+F3: func(r: _) -> _: {
+	let L = {p: {q: {z: 1}}}
+	in: r
+	out: in
+	x: G(L)
+}
+W3: func(o: _) -> _: F3(o.d)
+once3:  W3({d: {}}) @test(eq, {in: {}, out: {}, x: y: z: 1})
+twice3: W3({d: once3}) @test(eq, {
+	in: {in: {}, out: {}, x: y: z: 1}
+	out: {in: {}, out: {}, x: y: z: 1}
+	x: y: z: 1
+})
+
+// Genuine cycles through function calls are still structural cycles.
+cycles: {
+	R: func(r: _) -> _: {r, x: R(r)}
+	recurse: R({a: 1}) @test(err, code=structural_cycle, contains="structural cycle")
+
+	N: func(r: _) -> _: {sub: r}
+	nest: N(nest) @test(err, code=structural_cycle, contains="structural cycle")
+
+	E: func(r: _) -> _: {r}
+	self: E(self) @test(err, code=structural_cycle, contains="structural cycle")
+
+	A: W({d: {b: B}})
+	B: W({d: {a: A}}) @test(err, code=structural_cycle, contains="structural cycle")
+	C: W({d: {c: C}}) @test(err, code=structural_cycle, contains="structural cycle")
+}
+-- out/errors.txt --
+[structural_cycle] cycles.recurse.x.x: structural cycle:
+    ./in.cue:49:29
+[structural_cycle] cycles.nest.sub.sub: structural cycle:
+    ./in.cue:53:8
+[structural_cycle] cycles.self: structural cycle:
+    ./in.cue:56:8
+[structural_cycle] cycles.B.a: structural cycle:
+    ./in.cue:12:21
+[structural_cycle] cycles.B.a: structural cycle:
+    ./in.cue:12:21
+[structural_cycle] cycles.C.c: structural cycle:
+    ./in.cue:12:21
+-- out/eval/stats --
+Leaks:  40
+Freed:  1337
+Reused: 1279
+Allocs: 98
+Retain: 0
+
+Unifications: 1337
+Conjuncts:    3353
+Disjuncts:    0
+
+NumCloseIDs: 679
+
+ConjunctInfos:       1853
+MaxConjunctInfos:    13
