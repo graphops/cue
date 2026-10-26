@@ -80,17 +80,17 @@ cycles: {
 [structural_cycle] cycles.C.c: structural cycle:
     ./in.cue:12:21
 -- out/eval/stats --
-Leaks:  40
-Freed:  1337
-Reused: 1279
-Allocs: 98
+Leaks:  86
+Freed:  1053
+Reused: 997
+Allocs: 142
 Retain: 0
 
-Unifications: 1337
-Conjuncts:    3353
+Unifications: 1099
+Conjuncts:    2803
 Disjuncts:    0
 
-NumCloseIDs: 679
+NumCloseIDs: 578
 
-ConjunctInfos:       1853
+ConjunctInfos:       1513
 MaxConjunctInfos:    13

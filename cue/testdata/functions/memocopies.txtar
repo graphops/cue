@@ -102,7 +102,7 @@ scopes: {
     ./in.cue:5:74
     ./in.cue:5:16
     ./in.cue:48:30
-[incomplete] x: non-concrete value string in operand to ==:
+[incomplete] scopes.#Base.v: non-concrete value string in operand to ==:
     ./in.cue:67:7
     ./in.cue:61:6
 -- out/eval/stats --

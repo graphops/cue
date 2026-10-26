@@ -1,0 +1,57 @@
+# A call in a comprehension that passes a loop variable to a function is
+# evaluated once per arc, not once per evaluation of the comprehension: when
+# the struct holding the comprehension is copied, each copy creates new
+# iteration environments, but they bind the same arcs.
+#inlinetest:exclude skip — performance regression guarded by out/eval/stats
+-- in.cue --
+@experiment(functions)
+
+Inner: func(n: int) -> {...}: {a: n, b: n + 1, c: [n, n]}
+Each: func(xs: [...int]) -> {...}: {
+	out: [for x in xs {Inner(x)}]
+	copy1: out
+	copy2: out
+}
+
+r: Each([1, 2, 3])
+c1: r.out
+c2: r.copy1
+c3: [r, r.copy2]
+-- out/compile --
+--- in.cue
+{
+  Inner: func(n: int) -> {
+    ...
+  }: {
+    a: 〈1;n〉
+    b: (〈1;n〉 + 1)
+    c: [
+      〈2;n〉,
+      〈2;n〉,
+    ]
+  }
+  Each: func(xs: [
+    ...int,
+  ]) -> {
+    ...
+  }: {
+    out: [
+      for _, x in 〈2;xs〉 {
+        〈5;Inner〉(〈1;x〉)
+      },
+    ]
+    copy1: 〈0;out〉
+    copy2: 〈0;out〉
+  }
+  r: 〈0;Each〉([
+    1,
+    2,
+    3,
+  ])
+  c1: 〈0;r〉.out
+  c2: 〈0;r〉.copy1
+  c3: [
+    〈1;r〉,
+    〈1;r〉.copy2,
+  ]
+}

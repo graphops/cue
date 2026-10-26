@@ -1501,7 +1501,10 @@ Allocs: 280
 Retain: 0
 
 Unifications: 2012
-Conjuncts:    5795
+Conjuncts:    5800
 Disjuncts:    127
+Notifications: 8
+
+SkippedNotification: 3
 
 NumCloseIDs: 874
