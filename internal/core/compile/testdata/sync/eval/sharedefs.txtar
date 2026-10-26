@@ -1,0 +1,151 @@
+#inlinetest:exclude golden output records closedness, defaults and errors with sharing
+# A field structure shares a value that already applied a definition; a
+# further conjunct referring to that same definition is redundant and must
+# not stop the sharing, nor change the result: closedness, defaults and
+# errors are as when the conjunct is unified.
+-- in.cue --
+#D: {a: int}
+#O: {a: int, ...}
+#F: {a: *1 | int}
+#E: {a: <10}
+
+s: #D & {a: 1}
+o: #O & {a: 1}
+f: #F
+
+// Redundant conjunct, either order.
+sameDef:    s & #D
+sameDefRev: #D & s
+
+// Closedness still rejects fields #D does not allow, either order.
+closedErr:    s & #D & {b: 2}
+closedErrRev: #D & s & {b: 2}
+
+// An open definition still allows them.
+openOK: o & #O & {b: 2}
+
+// A definition the shared value did not apply is unified as usual.
+otherDef:    s & #E
+otherDefErr: (#D & {a: 20}) & #E
+
+// A value that applied no definition is closed by the conjunct.
+plain:    {a: 1}
+plainErr: plain & #D & {b: 2}
+
+// Defaults are kept.
+defaults: f & #F
+
+// An opened reference is not skipped.
+opened: {s...} & #D
+
+// A kind that brings the definition in through a spread, as blueprint kinds
+// do: a child sharing a parent's checked field keeps sharing, and closedness
+// still holds.
+#K: {ctx!: #D}
+B: {#K..., x?: _}
+parent: B & {ctx: {a: 1}}
+child:  B & {ctx: parent.ctx}
+childErr: B & {ctx: parent.ctx} & {ctx: b: 2}
+-- reclose.cue --
+@experiment(explicitopen)
+
+// A definition closes a node sharing an opened reference to a value that
+// applied it, so it is not redundant there, in either order.
+#R: {a: int}
+r: #R & {a: 1}
+reclose: {
+	y:    r... & #R
+	yErr: y & {b: 2}
+	z:    #R & r...
+	zErr: z & {b: 2}
+}
+-- out/compile --
+--- in.cue
+{
+  #D: {
+    a: int
+  }
+  #O: {
+    a: int
+    ...
+  }
+  #F: {
+    a: (*1|int)
+  }
+  #E: {
+    a: <10
+  }
+  s: (〈0;#D〉 & {
+    a: 1
+  })
+  o: (〈0;#O〉 & {
+    a: 1
+  })
+  f: 〈0;#F〉
+  sameDef: (〈0;s〉 & 〈0;#D〉)
+  sameDefRev: (〈0;#D〉 & 〈0;s〉)
+  closedErr: ((〈0;s〉 & 〈0;#D〉) & {
+    b: 2
+  })
+  closedErrRev: ((〈0;#D〉 & 〈0;s〉) & {
+    b: 2
+  })
+  openOK: ((〈0;o〉 & 〈0;#O〉) & {
+    b: 2
+  })
+  otherDef: (〈0;s〉 & 〈0;#E〉)
+  otherDefErr: ((〈0;#D〉 & {
+    a: 20
+  }) & 〈0;#E〉)
+  plain: {
+    a: 1
+  }
+  plainErr: ((〈0;plain〉 & 〈0;#D〉) & {
+    b: 2
+  })
+  defaults: (〈0;f〉 & 〈0;#F〉)
+  opened: ({
+    〈1;s〉...
+  } & 〈0;#D〉)
+  #K: {
+    ctx!: 〈1;#D〉
+  }
+  B: {
+    〈1;#K〉...
+    x?: _
+  }
+  parent: (〈0;B〉 & {
+    ctx: {
+      a: 1
+    }
+  })
+  child: (〈0;B〉 & {
+    ctx: 〈1;parent〉.ctx
+  })
+  childErr: ((〈0;B〉 & {
+    ctx: 〈1;parent〉.ctx
+  }) & {
+    ctx: {
+      b: 2
+    }
+  })
+}
+--- reclose.cue
+{
+  #R: {
+    a: int
+  }
+  r: (〈0;#R〉 & {
+    a: 1
+  })
+  reclose: {
+    y: (〈1;r〉... & 〈1;#R〉)
+    yErr: (〈0;y〉 & {
+      b: 2
+    })
+    z: (〈1;#R〉 & 〈1;r〉...)
+    zErr: (〈0;z〉 & {
+      b: 2
+    })
+  }
+}
