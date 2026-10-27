@@ -79,7 +79,7 @@ func TestMoveToCallSiteCopiesPositions(t *testing.T) {
 	e.auxpos = e.auxposBootstrap[:0]
 	e.AddPos(pos(1))
 
-	moved, ok := (&OpContext{}).moveToCallSite(e, site, args, nil)
+	moved, ok := (&OpContext{}).moveToCallSite(e, site, args, nil, "")
 	if !ok {
 		t.Fatal("error in the arguments was not moved to the call site")
 	}
