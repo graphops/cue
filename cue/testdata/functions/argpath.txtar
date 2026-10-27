@@ -1,0 +1,62 @@
+# Tests that an error below an argument of a call, reported at the field
+# holding the call, still names its path within the argument: the parameter
+# followed by the labels down to the failing field. A closedness error would
+# otherwise not name the field it rejects, and distinct failures at the same
+# call would read the same. An error at the argument itself names no path.
+-- in.cue --
+@experiment(functions)
+
+#Cfg: {
+	name: string
+	opts: port?: int & >0
+}
+
+f: func(cfg: #Cfg) -> string: cfg.name
+
+atArg:  f(1) @test(err, code=eval, contains="conflicting values")
+extra:  f({name: "a", extra: 1}) @test(err, code=eval, contains="cfg.extra: field not allowed")
+deeper: f({name: "a", opts: porrt: 1}) @test(err, code=eval, contains="cfg.opts.porrt: field not allowed")
+bound:  f({name: "a", opts: port: 0}) @test(err, code=eval, contains="cfg.opts.port: invalid value 0")
+
+// A call inside a function body, given a value that fails a closed type of
+// the inner call only, is reported at the field holding the outer call,
+// followed by its path within the result, and names the path within the
+// inner call's argument.
+#Bus: {
+	items: [string]: string
+	refs: [string]: {ok: bool}
+}
+render: func(id: string, bus: #Bus) -> {name: string}: {name: bus.items[id]}
+build: func(src: {...}) -> {list: [...]}: {
+	list: [for id, _ in src.items {render(id, src)}]
+}
+nested: build({items: a: "a", refs: a: {ok: true, typo: 1}}) @test(err, code=eval, contains="bus.refs.a.typo: field not allowed")
+-- out/errors.txt --
+[eval] atArg: conflicting values 1 and {name:string,opts:{port?:(int & >0)}} (mismatched types int and struct):
+    ./in.cue:3:7
+    ./in.cue:8:14
+    ./in.cue:10:11
+[eval] extra: cfg.extra: field not allowed:
+    ./in.cue:11:9
+    ./in.cue:11:23
+[eval] deeper: cfg.opts.porrt: field not allowed:
+    ./in.cue:12:9
+    ./in.cue:12:29
+[eval] bound: cfg.opts.port: invalid value 0 (out of bound >0):
+    ./in.cue:5:21
+    ./in.cue:13:35
+[eval] nested.list.0: bus.refs.a.typo: field not allowed:
+    ./in.cue:25:33
+    ./in.cue:27:51
+-- out/eval/stats --
+Leaks:  0
+Freed:  78
+Reused: 51
+Allocs: 27
+Retain: 0
+
+Unifications: 76
+Conjuncts:    162
+Disjuncts:    0
+
+NumCloseIDs: 20
