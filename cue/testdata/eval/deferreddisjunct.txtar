@@ -1,0 +1,144 @@
+# A field of an inline struct or let read within a disjunct before it is
+# complete is completed as part of that disjunct: an error in it fails the
+# disjunct reading it, and neither a field outside the disjunction nor the
+# other disjuncts.
+-- in.cue --
+@experiment(explicitopen)
+
+// A field of an inline struct or let that is read within a disjunct before it
+// is complete is completed as part of that disjunct. Its error fails that
+// disjunct only, never a field outside the disjunction, and it is not checked
+// against the other disjuncts.
+
+// A group's members are leaves or groups. A leaf member read as a group fails
+// on its id, and as a member of a group read as a leaf, its fields are not
+// allowed. The id of a member is computed from its kind, which is read before
+// it is complete when the member comes from a reference and the group is
+// passed through an inline struct to a field typed by both disjunctions.
+// Whether the result field refers to the inline struct only or has another
+// conjunct decides whether it shares it.
+nestedDisjunctions: {
+	#Id: {
+		kind!: string
+		name!: string
+		id:    kind + "." + name
+	}
+	#Leaf: {
+		#Id...
+	}
+	#Group: {
+		(#Id & {kind: "group"})...
+		members!: [string]: #Leaf | #Group
+	}
+	#Wrapper: spec!: item!: {spec!: #Leaf} | {spec!: #Group}
+
+	#Inner: {
+		_in!: #Wrapper
+		name: _in.spec.item.spec.id
+	}
+	#Outer: {
+		in!:   #Wrapper
+		inner: #Inner & {_in: in}
+		out: name: inner.name
+	}
+
+	leaf: {
+		k: "leaf"
+		n: "a"
+		val: spec: {
+			id:   k + "." + n
+			kind: k
+			name: n
+		}
+	}
+	group: val: spec: #Group & {name: "g", members: a: leaf.val.spec}
+
+	_instance: {
+		src!:    _
+		wrapped: #Wrapper & {spec: item: src.val}
+		result:  (#Outer & {in: wrapped}).out
+	}
+	plain: {_instance, src: group}
+	extra: {
+		_instance
+		src:    group
+		result: _
+	}
+	@test(eq, {name: "group.g"}, at=plain.result)
+	@test(eq, {name: "group.g"}, at=extra.result)
+}
+
+// An error in the read field fails the disjunct that reads it, and only that
+// one. A default marks the disjunct expected to be chosen when no disjunct
+// fails.
+singleDisjunction: {
+	#C: {
+		id:  string & !="storage"
+		out: "k/\(id)"
+	}
+	inlineOk:  *{a: (#C & {id: "other"}).out} | {b: 1}         @test(eq, *{a: "k/other"} | {b: 1})
+	inlineErr: *{a: (#C & {id: "storage"}).out} | {b: 1}       @test(eq, {b: 1})
+	binopErr:  *{a: (#C & {id: "storage"}).out + "y"} | {b: 1} @test(eq, {b: 1})
+
+	let L1 = #C & {id: "other"}
+	letOk: *{a: L1.out} | {b: 1} @test(eq, *{a: "k/other"} | {b: 1})
+	let L2 = #C & {id: "storage"}
+	letErr:      *{a: L2.out} | {b: 1}       @test(eq, {b: 1})
+	letBinopErr: *{a: L2.out + "y"} | {b: 1} @test(eq, {b: 1})
+
+	// A validator of the read field may refer to the field reading it, which
+	// the other disjuncts do not have: it is checked in the reading disjunct
+	// only.
+	selfRefInline:      *{a: ({x: 1 & !=selfRefInline.a, out: x + 1}).out} | {b: 1}      @test(eq, *{a: 2} | {b: 1})
+	selfRefInlineOther: {a: ({x: 1 & !=selfRefInlineOther.a, out: x + 1}).out} | *{b: 1} @test(eq, *{b: 1} | {a: 2})
+	let L3 = {x: 1 & !=selfRefLet.a, out: x + 1}
+	selfRefLet: *{a: L3.out} | {b: 1} @test(eq, *{a: 2} | {b: 1})
+	let L4 = {x: 1 & !=selfRefLetOther.a, out: x + 1}
+	selfRefLetOther: {a: L4.out} | *{b: 1}                                  @test(eq, *{b: 1} | {a: 2})
+	selfRefErr:      *{a: ({x: 1 & !=selfRefErr.a, out: x + 0}).out} | {b: 1} @test(eq, {b: 1})
+}
+-- out/errors.txt --
+[incomplete] nestedDisjunctions.#Id.id: required field missing: kind:
+    ./in.cue:19:10
+nestedDisjunctions.#Id.id: required field missing: name:
+    ./in.cue:19:23
+[incomplete] nestedDisjunctions.#Leaf.id: required field missing: kind:
+    ./in.cue:19:10
+nestedDisjunctions.#Leaf.id: required field missing: name:
+    ./in.cue:19:23
+[incomplete] nestedDisjunctions.#Group.id: required field missing: name:
+    ./in.cue:19:23
+[incomplete] nestedDisjunctions.#Inner.name: required field missing: _in:
+    ./in.cue:32:9
+[incomplete] nestedDisjunctions.#Outer.inner._in: required field missing: in:
+    ./in.cue:36:25
+[incomplete] nestedDisjunctions.#Outer.inner._in: required field missing: in:
+    ./in.cue:36:25
+[incomplete] nestedDisjunctions.#Outer.inner._in: required field missing: in:
+    ./in.cue:36:25
+[incomplete] nestedDisjunctions._instance.wrapped.spec.item: required field missing: src:
+    ./in.cue:53:36
+[incomplete] nestedDisjunctions._instance.result.name: undefined field: spec:
+    ./in.cue:32:23
+    ./in.cue:28:19
+    ./in.cue:53:30
+[incomplete] singleDisjunction.#C.out: invalid interpolation: non-concrete value !="storage" (type string):
+    ./in.cue:72:8
+    ./in.cue:71:17
+-- out/eval/stats --
+Leaks:  75
+Freed:  310
+Reused: 292
+Allocs: 93
+Retain: 0
+
+Unifications: 212
+Conjuncts:    666
+Disjuncts:    56
+
+NumCloseIDs: 160
+
+ConjunctInfos:       442
+MaxConjunctInfos:    5
+MaxReqSets:          10
+MaxRedirect:         3
