@@ -17,6 +17,7 @@ package adt
 import (
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/cockroachdb/apd/v3"
 
@@ -2608,14 +2609,23 @@ func mergeFuncValues(c *OpContext, a, b *FuncValue, at ...posInfo) (*FuncValue, 
 // result, at or under result, takes the path of site followed by its path
 // within the result. Errors from other vertices, such as a field an argument
 // refers to, keep their paths.
-func (c *OpContext) atCallSite(b *Bottom, site, args, result *Vertex) *Bottom {
+//
+// An error below an argument, rather than at the argument itself, also names
+// its path within the argument, starting with the parameter, in its message,
+// as in "w: x.a: field not allowed" for w: f({a: 1}). Without it, the error
+// would no longer say which part of the argument failed, and a closedness
+// error would not even name the field it rejects.
+//
+// If argName is empty, the arcs of args are the arguments, labeled with their
+// parameters. Otherwise args is the one argument, bound to parameter argName.
+func (c *OpContext) atCallSite(b *Bottom, site, args, result *Vertex, argName string) *Bottom {
 	if b == nil || b.Err == nil || site == nil {
 		return b
 	}
 	var errs errors.Error
 	changed := false
 	for _, e := range errors.Errors(b.Err) {
-		if moved, ok := c.moveToCallSite(e, site, args, result); ok {
+		if moved, ok := c.moveToCallSite(e, site, args, result, argName); ok {
 			e = moved
 			changed = true
 		}
@@ -2636,7 +2646,7 @@ func (c *OpContext) atCallSite(b *Bottom, site, args, result *Vertex) *Bottom {
 // An error already moved to the site of a call nested in this one is moved
 // again, keeping its path below that site, so that it ends up at the
 // outermost call in the configuration.
-func (c *OpContext) moveToCallSite(e errors.Error, site, args, result *Vertex) (errors.Error, bool) {
+func (c *OpContext) moveToCallSite(e errors.Error, site, args, result *Vertex, argName string) (errors.Error, bool) {
 	var base *baseError
 	var moved errors.Error
 	switch x := e.(type) {
@@ -2651,7 +2661,7 @@ func (c *OpContext) moveToCallSite(e errors.Error, site, args, result *Vertex) (
 		if !ok || u == nil || !slices.Equal(e.Path(), u.Path()) {
 			return e, false
 		}
-		inner, ok := c.moveToCallSite(u, site, args, result)
+		inner, ok := c.moveToCallSite(u, site, args, result, argName)
 		if !ok {
 			return e, false
 		}
@@ -2673,6 +2683,29 @@ func (c *OpContext) moveToCallSite(e errors.Error, site, args, result *Vertex) (
 	// the other's.
 	base.auxpos = append(base.auxposBootstrap[:0], base.auxpos...)
 	if inArgs {
+		// The error's path within the argument: the parameter, the labels
+		// down to from, and, for an error already moved to the site of a
+		// call nested in the argument, its path below that site.
+		var p []string
+		if argName != "" {
+			p = append(p, argName)
+		}
+		for i := len(below) - 1; i >= 0; i-- {
+			p = append(p, below[i].SelectorString(c))
+		}
+		if base.site != nil {
+			p = append(p, base.altPath...)
+		}
+		if len(p) > 1 {
+			// Below the argument. An argument path the error already
+			// carries, from a call nested in this argument, describes its
+			// place within the nested call's argument and follows.
+			s := strings.Join(p, ".")
+			if base.argPath != "" {
+				s += ": " + base.argPath
+			}
+			base.argPath = s
+		}
 		base.altPath = nil
 	} else {
 		suffix := make([]string, 0, len(below)+len(base.altPath))
@@ -2689,12 +2722,11 @@ func (c *OpContext) moveToCallSite(e errors.Error, site, args, result *Vertex) (
 }
 
 // callSiteOf reports whether v lies at or under args, or at or under result,
-// and in the latter case returns the labels from v up to result, innermost
-// first.
+// and returns the labels from v up to args or result, innermost first.
 func callSiteOf(v, args, result *Vertex) (below []Feature, inArgs, ok bool) {
 	for w := v; w != nil; w = w.Parent {
 		if w == args {
-			return nil, true, true
+			return below, true, true
 		}
 		if result != nil && w == result {
 			return below, false, true
