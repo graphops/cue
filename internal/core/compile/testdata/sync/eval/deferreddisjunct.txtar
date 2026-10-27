@@ -1,0 +1,272 @@
+# A field of an inline struct or let read within a disjunct before it is
+# complete is completed as part of that disjunct: an error in it fails the
+# disjunct reading it, and neither a field outside the disjunction nor the
+# other disjuncts.
+-- in.cue --
+@experiment(explicitopen)
+
+// A field of an inline struct or let that is read within a disjunct before it
+// is complete is completed as part of that disjunct. Its error fails that
+// disjunct only, never a field outside the disjunction, and it is not checked
+// against the other disjuncts.
+
+// A group's members are leaves or groups. A leaf member read as a group fails
+// on its id, and as a member of a group read as a leaf, its fields are not
+// allowed. The id of a member is computed from its kind, which is read before
+// it is complete when the member comes from a reference and the group is
+// passed through an inline struct to a field typed by both disjunctions.
+// Whether the result field refers to the inline struct only or has another
+// conjunct decides whether it shares it.
+nestedDisjunctions: {
+	#Id: {
+		kind!: string
+		name!: string
+		id:    kind + "." + name
+	}
+	#Leaf: {
+		#Id...
+	}
+	#Group: {
+		(#Id & {kind: "group"})...
+		members!: [string]: #Leaf | #Group
+	}
+	#Wrapper: spec!: item!: {spec!: #Leaf} | {spec!: #Group}
+
+	#Inner: {
+		_in!: #Wrapper
+		name: _in.spec.item.spec.id
+	}
+	#Outer: {
+		in!:   #Wrapper
+		inner: #Inner & {_in: in}
+		out: name: inner.name
+	}
+
+	leaf: {
+		k: "leaf"
+		n: "a"
+		val: spec: {
+			id:   k + "." + n
+			kind: k
+			name: n
+		}
+	}
+	group: val: spec: #Group & {name: "g", members: a: leaf.val.spec}
+
+	_instance: {
+		src!:    _
+		wrapped: #Wrapper & {spec: item: src.val}
+		result:  (#Outer & {in: wrapped}).out
+	}
+	plain: {_instance, src: group}
+	extra: {
+		_instance
+		src:    group
+		result: _
+	}
+}
+
+// An error in the read field fails the disjunct that reads it, and only that
+// one. A default marks the disjunct expected to be chosen when no disjunct
+// fails.
+singleDisjunction: {
+	#C: {
+		id:  string & !="storage"
+		out: "k/\(id)"
+	}
+	inlineOk:  *{a: (#C & {id: "other"}).out} | {b: 1}
+	inlineErr: *{a: (#C & {id: "storage"}).out} | {b: 1}
+	binopErr:  *{a: (#C & {id: "storage"}).out + "y"} | {b: 1}
+
+	let L1 = #C & {id: "other"}
+	letOk: *{a: L1.out} | {b: 1}
+	let L2 = #C & {id: "storage"}
+	letErr:      *{a: L2.out} | {b: 1}
+	letBinopErr: *{a: L2.out + "y"} | {b: 1}
+
+	// A validator of the read field may refer to the field reading it, which
+	// the other disjuncts do not have: it is checked in the reading disjunct
+	// only.
+	selfRefInline:      *{a: ({x: 1 & !=selfRefInline.a, out: x + 1}).out} | {b: 1}
+	selfRefInlineOther: {a: ({x: 1 & !=selfRefInlineOther.a, out: x + 1}).out} | *{b: 1}
+	let L3 = {x: 1 & !=selfRefLet.a, out: x + 1}
+	selfRefLet: *{a: L3.out} | {b: 1}
+	let L4 = {x: 1 & !=selfRefLetOther.a, out: x + 1}
+	selfRefLetOther: {a: L4.out} | *{b: 1}
+	selfRefErr:      *{a: ({x: 1 & !=selfRefErr.a, out: x + 0}).out} | {b: 1}
+}
+-- out/compile --
+--- in.cue
+{
+  nestedDisjunctions: {
+    #Id: {
+      kind!: string
+      name!: string
+      id: ((〈0;kind〉 + ".") + 〈0;name〉)
+    }
+    #Leaf: {
+      〈1;#Id〉...
+    }
+    #Group: {
+      (〈1;#Id〉 & {
+        kind: "group"
+      })...
+      members!: {
+        [string]: (〈2;#Leaf〉|〈2;#Group〉)
+      }
+    }
+    #Wrapper: {
+      spec!: {
+        item!: ({
+          spec!: 〈3;#Leaf〉
+        }|{
+          spec!: 〈3;#Group〉
+        })
+      }
+    }
+    #Inner: {
+      _in!: 〈1;#Wrapper〉
+      name: 〈0;_in〉.spec.item.spec.id
+    }
+    #Outer: {
+      in!: 〈1;#Wrapper〉
+      inner: (〈1;#Inner〉 & {
+        _in: 〈1;in〉
+      })
+      out: {
+        name: 〈1;inner〉.name
+      }
+    }
+    leaf: {
+      k: "leaf"
+      n: "a"
+      val: {
+        spec: {
+          id: ((〈2;k〉 + ".") + 〈2;n〉)
+          kind: 〈2;k〉
+          name: 〈2;n〉
+        }
+      }
+    }
+    group: {
+      val: {
+        spec: (〈2;#Group〉 & {
+          name: "g"
+          members: {
+            a: 〈4;leaf〉.val.spec
+          }
+        })
+      }
+    }
+    _instance: {
+      src!: _
+      wrapped: (〈1;#Wrapper〉 & {
+        spec: {
+          item: 〈2;src〉.val
+        }
+      })
+      result: (〈1;#Outer〉 & {
+        in: 〈1;wrapped〉
+      }).out
+    }
+    plain: {
+      〈1;_instance〉
+      src: 〈1;group〉
+    }
+    extra: {
+      〈1;_instance〉
+      src: 〈1;group〉
+      result: _
+    }
+  }
+  singleDisjunction: {
+    #C: {
+      id: (string & !="storage")
+      out: "k/\(〈0;id〉)"
+    }
+    inlineOk: (*{
+      a: (〈1;#C〉 & {
+        id: "other"
+      }).out
+    }|{
+      b: 1
+    })
+    inlineErr: (*{
+      a: (〈1;#C〉 & {
+        id: "storage"
+      }).out
+    }|{
+      b: 1
+    })
+    binopErr: (*{
+      a: ((〈1;#C〉 & {
+        id: "storage"
+      }).out + "y")
+    }|{
+      b: 1
+    })
+    let L1#1 = (〈0;#C〉 & {
+      id: "other"
+    })
+    letOk: (*{
+      a: 〈1;let L1#1〉.out
+    }|{
+      b: 1
+    })
+    let L2#2 = (〈0;#C〉 & {
+      id: "storage"
+    })
+    letErr: (*{
+      a: 〈1;let L2#2〉.out
+    }|{
+      b: 1
+    })
+    letBinopErr: (*{
+      a: (〈1;let L2#2〉.out + "y")
+    }|{
+      b: 1
+    })
+    selfRefInline: (*{
+      a: {
+        x: (1 & !=〈2;selfRefInline〉.a)
+        out: (〈0;x〉 + 1)
+      }.out
+    }|{
+      b: 1
+    })
+    selfRefInlineOther: ({
+      a: {
+        x: (1 & !=〈2;selfRefInlineOther〉.a)
+        out: (〈0;x〉 + 1)
+      }.out
+    }|*{
+      b: 1
+    })
+    let L3#3 = {
+      x: (1 & !=〈1;selfRefLet〉.a)
+      out: (〈0;x〉 + 1)
+    }
+    selfRefLet: (*{
+      a: 〈1;let L3#3〉.out
+    }|{
+      b: 1
+    })
+    let L4#4 = {
+      x: (1 & !=〈1;selfRefLetOther〉.a)
+      out: (〈0;x〉 + 1)
+    }
+    selfRefLetOther: ({
+      a: 〈1;let L4#4〉.out
+    }|*{
+      b: 1
+    })
+    selfRefErr: (*{
+      a: {
+        x: (1 & !=〈2;selfRefErr〉.a)
+        out: (〈0;x〉 + 0)
+      }.out
+    }|{
+      b: 1
+    })
+  }
+}
