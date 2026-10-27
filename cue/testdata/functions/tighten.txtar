@@ -1249,7 +1249,7 @@ meet.wr: function returns _, but its signature requires number:
     ./in.cue:462:61
     ./in.cue:463:41
     ./in.cue:466:23
-[eval] narrow.badPort: invalid value 0 (out of bound >0):
+[eval] narrow.badPort: cfg.port: invalid value 0 (out of bound >0):
     ./in.cue:462:39
     ./in.cue:467:35
 [eval] narrow.neg: invalid value -1 (out of bound >=0):

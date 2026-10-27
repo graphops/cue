@@ -378,6 +378,11 @@ type baseError struct {
 	// by altPath (see [OpContext.atCallSite]).
 	site *Vertex
 
+	// argPath, if set, is the path within an argument of the call at site of
+	// an error that arose below that argument. It prefixes the message (see
+	// [OpContext.atCallSite]).
+	argPath string
+
 	// auxposBootstrap lets auxpos avoid extra allocations for few positions,
 	// which is a very common scenario.
 	auxposBootstrap [4]token.Pos
@@ -424,6 +429,15 @@ func (e *baseError) Path() (a []string) {
 		a = append(a, f.SelectorString(e.r))
 	}
 	return a
+}
+
+// withArgPath prefixes a message with the error's path within an argument,
+// if it has one.
+func (e *baseError) withArgPath(format string, args []interface{}) (string, []interface{}) {
+	if e.argPath == "" {
+		return format, args
+	}
+	return "%s: " + format, append([]interface{}{e.argPath}, args...)
 }
 
 // A ValueError is returned as a result of evaluating a value.
@@ -548,7 +562,7 @@ func (e *ValueError) Msg() (format string, args []interface{}) {
 			args[i] = Formatter{X: x, R: e.r}
 		}
 	}
-	return format, args
+	return e.withArgPath(format, args)
 }
 
 func (e *ValueError) Error() string {
@@ -571,8 +585,8 @@ func (e *ConflictError) Msg() (format string, args []interface{}) {
 	v1Str := Formatter{X: e.v1, R: e.r}
 	v2Str := Formatter{X: e.v2, R: e.r}
 	if e.k1 == e.k2 {
-		return "conflicting values %s and %s", []interface{}{v1Str, v2Str}
+		return e.withArgPath("conflicting values %s and %s", []interface{}{v1Str, v2Str})
 	}
-	return "conflicting values %s and %s (mismatched types %s and %s)",
-		[]interface{}{v1Str, v2Str, e.k1, e.k2}
+	return e.withArgPath("conflicting values %s and %s (mismatched types %s and %s)",
+		[]interface{}{v1Str, v2Str, e.k1, e.k2})
 }
