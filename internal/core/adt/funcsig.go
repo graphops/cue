@@ -2665,8 +2665,23 @@ func (c *OpContext) moveToCallSite(e errors.Error, site, args, result *Vertex, a
 		if !ok {
 			return e, false
 		}
-		format, a := e.Msg()
-		return errors.Wrapf(inner, e.Position(), format, a...), true
+		w := &callSiteWrapper{pos: e.Position(), wrap: inner}
+		if x, ok := e.(*callSiteWrapper); ok {
+			// Moved before, out of a call nested in this one: keep the
+			// message apart from the argument path it renders.
+			w.pos, w.format, w.args, w.argPath = x.pos, x.format, x.args, x.argPath
+		} else {
+			w.format, w.args = e.Msg()
+		}
+		// The wrapped error is printed after this one's message, so the
+		// argument path, which locates both, moves up in front of it.
+		if p := argPathOf(inner); p != nil && *p != "" {
+			if w.argPath != "" {
+				*p += ": " + w.argPath
+			}
+			w.argPath, *p = *p, ""
+		}
+		return w, true
 	}
 	from := base.v
 	if base.site != nil {
@@ -2720,6 +2735,62 @@ func (c *OpContext) moveToCallSite(e errors.Error, site, args, result *Vertex, a
 	base.site = site
 	return moved, true
 }
+
+// argPathOf returns where e, an error moved to the site of a call, keeps its
+// path within an argument of the call.
+func argPathOf(e errors.Error) *string {
+	switch x := e.(type) {
+	case *ValueError:
+		return &x.argPath
+	case *ConflictError:
+		return &x.argPath
+	case *callSiteWrapper:
+		return &x.argPath
+	}
+	return nil
+}
+
+// callSiteWrapper is an error wrapping another without a path of its own,
+// such as an invalid interpolation, moved to the site of a call. Like the
+// error it replaces, it is reported at the path of the error it wraps, and
+// its message precedes the wrapped one's. An argument path (see
+// [OpContext.atCallSite]) is kept here, in front of the outermost message,
+// rather than on the wrapped error.
+type callSiteWrapper struct {
+	pos     token.Pos
+	format  string
+	args    []interface{}
+	argPath string
+	wrap    errors.Error
+}
+
+func (e *callSiteWrapper) Position() token.Pos {
+	if e.pos.IsValid() {
+		return e.pos
+	}
+	return e.wrap.Position()
+}
+
+func (e *callSiteWrapper) InputPositions() []token.Pos { return errors.Positions(e.wrap) }
+
+func (e *callSiteWrapper) Path() []string { return errors.Path(e.wrap) }
+
+func (e *callSiteWrapper) Msg() (format string, args []interface{}) {
+	if e.argPath == "" {
+		return e.format, e.args
+	}
+	return "%s: " + e.format, append([]interface{}{e.argPath}, e.args...)
+}
+
+func (e *callSiteWrapper) Error() string {
+	format, args := e.Msg()
+	if msg := fmt.Sprintf(format, args...); msg != "" {
+		return msg + ": " + e.wrap.Error()
+	}
+	return e.wrap.Error()
+}
+
+func (e *callSiteWrapper) Unwrap() error { return e.wrap }
 
 // callSiteOf reports whether v lies at or under args, or at or under result,
 // and returns the labels from v up to args or result, innermost first.

@@ -3,6 +3,8 @@
 # followed by the labels down to the failing field. A closedness error would
 # otherwise not name the field it rejects, and distinct failures at the same
 # call would read the same. An error at the argument itself names no path.
+# The path precedes the outermost message of an error that wraps another,
+# such as a failed validator or an invalid interpolation, exactly once.
 -- in.cue --
 @experiment(functions)
 
@@ -31,6 +33,27 @@ build: func(src: {...}) -> {list: [...]}: {
 	list: [for id, _ in src.items {render(id, src)}]
 }
 nested: build({items: a: "a", refs: a: {ok: true, typo: 1}}) @test(err, code=eval, contains="bus.refs.a.typo: field not allowed")
+
+// A validator failing below an argument wraps the error saying why.
+#One: {
+	matchN(1, [{a!: _}, {b!: _}])
+	a?: int
+	b?: int
+}
+v:         func(cfg: {x: #One}) -> int: 1
+validator: v({x: {a: 1, b: 1}}) @test(err, code=eval, contains="cfg.x: invalid value {a:1,b:1} (does not satisfy matchN): 2 matched, expected 1")
+
+// An interpolation of an interpolation wraps the error twice.
+s:     func(cfg: {n: int}) -> string: "a\("b\(cfg.n)")"
+twice: s({n: 1.5}) @test(err, code=eval, contains="cfg.n: invalid interpolation: invalid interpolation: conflicting values")
+
+// A wrapped error moved out of a call nested in a function body, and out of
+// a call nested in an argument.
+check:           func(bus: {one: #One}) -> int: 1
+viaBody:         func(src: {...}) -> {n: int}: {n: check(src)}
+nestedValidator: viaBody({one: {a: 1, b: 1}}) @test(err, code=eval, contains="bus.one: invalid value {a:1,b:1} (does not satisfy matchN): 2 matched")
+take:            func(w: {...}) -> int: 1
+argValidator:    take({k: check({one: {a: 1, b: 1}})}) @test(err, code=eval, contains="w.k: bus.one: invalid value {a:1,b:1} (does not satisfy matchN): 2 matched")
 -- out/errors.txt --
 [eval] atArg: conflicting values 1 and {name:string,opts:{port?:(int & >0)}} (mismatched types int and struct):
     ./in.cue:3:7
@@ -48,15 +71,29 @@ nested: build({items: a: "a", refs: a: {ok: true, typo: 1}}) @test(err, code=eva
 [eval] nested.list.0: bus.refs.a.typo: field not allowed:
     ./in.cue:25:33
     ./in.cue:27:51
+[eval] validator: cfg.x: invalid value {a:1,b:1} (does not satisfy matchN): 2 matched, expected 1:
+    ./in.cue:31:2
+    ./in.cue:31:9
+[eval] twice: cfg.n: invalid interpolation: invalid interpolation: conflicting values 1.5 and int (mismatched types float and int):
+    ./in.cue:39:39
+    ./in.cue:39:22
+    ./in.cue:39:43
+    ./in.cue:40:14
+[eval] nestedValidator.n: bus.one: invalid value {a:1,b:1} (does not satisfy matchN): 2 matched, expected 1:
+    ./in.cue:31:2
+    ./in.cue:31:9
+[eval] argValidator: w.k: bus.one: invalid value {a:1,b:1} (does not satisfy matchN): 2 matched, expected 1:
+    ./in.cue:31:2
+    ./in.cue:31:9
 -- out/eval/stats --
-Leaks:  0
-Freed:  78
-Reused: 51
-Allocs: 27
+Leaks:  6
+Freed:  131
+Reused: 100
+Allocs: 37
 Retain: 0
 
-Unifications: 76
-Conjuncts:    162
+Unifications: 131
+Conjuncts:    235
 Disjuncts:    0
 
-NumCloseIDs: 20
+NumCloseIDs: 33
