@@ -2451,7 +2451,7 @@ func (x *FuncValue) call(c *OpContext, call *CallExpr, state Flags) Value {
 	result := c.newInlineVertex(anchor, nil, MakeConjunct(bodyEnv, ref, c.ci))
 	result.Finalize(c)
 	if b := result.Bottom(); b != nil && !b.IsIncomplete() {
-		return c.atCallSite(b, site, activation, result)
+		return c.atCallSite(b, site, activation, result, "")
 	}
 
 	// Force validation of parameters the body did not reference: an argument
@@ -2465,7 +2465,7 @@ func (x *FuncValue) call(c *OpContext, call *CallExpr, state Flags) Value {
 	for _, a := range arcs {
 		a.Finalize(c)
 		if b := a.Bottom(); b != nil {
-			return c.atCallSite(b, site, activation, result)
+			return c.atCallSite(b, site, activation, result, "")
 		}
 	}
 
@@ -3089,7 +3089,7 @@ func (builtin *Builtin) applyParamTypes(c *OpContext, args []Value) ([]Value, *B
 				MakeConjunct(nil, args[i], c.ci))
 			w.Finalize(c)
 			if b := w.Bottom(); b != nil && !b.IsIncomplete() {
-				return nil, c.atCallSite(b, c.vertex, w, nil)
+				return nil, c.atCallSite(b, c.vertex, w, nil, funcParamName(c, j, &tp))
 			}
 			args[i] = w
 		}
