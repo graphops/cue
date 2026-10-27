@@ -39,6 +39,7 @@ Each fix also exists on its own branch, isolated on the `v0.18.0-rc.2` tag.
 | `fix/rc2-share-disjunction-safe` | Incomplete value or spurious "cyclic reference to field", a regression in v0.18.0-rc.2: upstream `082c52c57` finalizes the field a reference shares when the reference meets a disjunction (as with `args?: #Map \| string`), to keep sharing. If that field itself refers to a definition (`x: #A`), the definition was dropped as a self-reference and the disjunction left unresolved ("incomplete value {} \| string"); if the field was still being evaluated (a comprehension reading the reference), it was frozen before adding its fields. The field is now finalized only when no evaluation it is part of is in progress, and the node then shares what the field shares, keeping upstream's linear evaluation of `issue4512.txtar` | High |
 | `fix/rc2-share-funcarg-chain` | Spurious structural cycle, upstream since functions exist: a function applied, through a wrapper, to the result of an earlier call of the same call site, without any definition. A reference to a parameter that structure shares its argument was dereferenced to the argument's value, evaluated with the callee body's cycle-reference chain instead of the caller's; it now stops at the parameter, whose argument conjunct carries the caller's chain | Medium-high |
 | `fix/rc2-comprehension-error-loss` | Silent value loss: a field declared next to a struct-level comprehension (such as `list: [...]`) kept its declared value when the comprehension's clauses failed (an erroneous condition, or one that never becomes concrete), because the error was recorded only on the enclosing struct; a reference to the field evaluated before the struct exported `[]` with exit 0. The error now also applies to each field the comprehension's body or else clause declares. Not bisected: v0.16.1 already loses the error for `if` without `else`; v0.18 also loses it with `else` | High (fatal errors), Medium-high (incomplete errors) |
+| `fix/rc2-call-closedness-path` | Lost diagnostics, a regression in v0.18.0-rc.2: upstream `7bf42f62f` reports an error arising in a function call at the field holding the call, but dropped the error's path within the argument, so a closedness error below an argument read only "field not allowed" without naming the rejected field, and distinct failures at the same call read the same and were deduplicated into one. An error below an argument now names its path within the argument, from the parameter, in front of its message (`w: cfg.extra: field not allowed`); an error at the argument itself reads as upstream reports it | High |
 
 ## Additions
 
@@ -57,8 +58,9 @@ No fix was dropped: the regression test of every fix and addition still fails
 on plain v0.18.0-rc.2 without its patch, and no upstream change in
 `v0.18.0-rc.1..v0.18.0-rc.2` addresses one of them.
 
-Three fixes are new on this base. `fix/rc2-share-disjunction-safe` is for a
-regression upstream introduced in `082c52c57`. `v0.18.0-rc.2-graphops.1`
+Four fixes are new on this base. `fix/rc2-share-disjunction-safe` and
+`fix/rc2-call-closedness-path` are for regressions upstream introduced in
+`082c52c57` and `7bf42f62f`. `v0.18.0-rc.2-graphops.1`
 handled that regression with `fix/rc2-share-disjunction-finalize`, a revert of
 `082c52c57`; `v0.18.0-rc.2-graphops.2` reverts that revert and applies the
 safe fix instead, which keeps `082c52c57`'s optimisation.
@@ -102,7 +104,7 @@ Go programs that embed CUE use a release with a replace directive:
 
 ```
 require cuelang.org/go v0.18.0-rc.2
-replace cuelang.org/go => github.com/graphops/cue v0.18.0-rc.2-graphops.2
+replace cuelang.org/go => github.com/graphops/cue v0.18.0-rc.2-graphops.3
 ```
 
 ## Build and test
