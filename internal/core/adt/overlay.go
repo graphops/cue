@@ -86,10 +86,23 @@ type vertexMap map[*Vertex]*Vertex
 type overlayFrame struct {
 	vertexMap vertexMap
 	root      *Vertex
+
+	// disjunct is the clone of root that is being evaluated as a disjunct.
+	disjunct *nodeContext
+
+	// taskDepth is the number of tasks that were running when the frame was
+	// pushed. Tasks above it run within the evaluation of disjunct; see
+	// [OpContext.rootedTaskNode].
+	taskDepth int
 }
 
-func (c *OpContext) pushOverlay(v *Vertex, m vertexMap) {
-	c.overlays = append(c.overlays, overlayFrame{m, v})
+func (c *OpContext) pushOverlay(v *Vertex, m vertexMap, d *nodeContext) {
+	c.overlays = append(c.overlays, overlayFrame{
+		vertexMap: m,
+		root:      v,
+		disjunct:  d,
+		taskDepth: len(c.stack),
+	})
 }
 
 func (c *OpContext) popOverlay() {
