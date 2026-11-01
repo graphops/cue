@@ -190,11 +190,10 @@ func (n *nodeContext) processComprehension(d *envYield, state vertexStatus) *Bot
 		condition: allKnown,
 		mode:      ignore,
 	}, d.addEnv); err != nil {
-		// The comprehension cannot decide what it contributes, so the error
-		// is also an error of each field it declares. Cycles are left to the
-		// cycle handling of those fields.
+		// Cycles are reported by lookups of the arcs the comprehension may
+		// declare.
 		if err.Code != CycleError {
-			n.addCompErr(d.comp, err)
+			pushDownErr(n, d.comp, MakeConjunct(d.env, err, d.id))
 		}
 
 		if err.IsIncomplete() {
@@ -313,33 +312,19 @@ func pushDownDeps(n *nodeContext, t *task, x Node) condition {
 	return completes | allTasksCompleted
 }
 
-// isPushedDownComp reports whether t is a comprehension task whose body and
-// else clause were fully pushed down: [pushDownDeps] returns bare
-// allTasksCompleted exactly when both consist of literal fields only. Such a
-// task contributes conjuncts solely to the arcs it pre-created at scheduling
-// time, registering itself in their parentTasks.
-func (t *task) isPushedDownComp() bool {
-	return t.run == handleComprehension && t.completes == allTasksCompleted
-}
-
-// addCompErr records err, the error from evaluating the clauses of a
-// comprehension, on the arcs of n for the fields the comprehension's body or
-// else clause declares, recursively for nested struct literals.
-//
-// [pushDownDeps] makes a comprehension a parent task of these arcs rather
-// than a task of n, so that an arc only waits for the comprehension, not for
-// all of n. The error must reach them the same way. The task of the
-// comprehension records it on n, but an arc that has other conjuncts, such as
-// a list or struct declared next to the comprehension, would otherwise
-// complete without the comprehension's contribution, as if its condition were
-// false. A reference to the arc, evaluated before n, then observes that value
-// and not the error of n.
-func (n *nodeContext) addCompErr(x Node, err *Bottom) {
+// pushDownErr adds c, the error of the clauses of a comprehension, as a
+// conjunct to the arcs for the fields that x, its body or else clause,
+// declares. [pushDownDeps] lets these arcs complete without waiting for n,
+// which records the error, so they would otherwise complete as if the
+// comprehension yielded no value. Like a conjunct the comprehension yields,
+// the error is then also seen where the conjuncts of such an arc are used, as
+// in an embedding.
+func pushDownErr(n *nodeContext, x Node, c Conjunct) {
 	switch x := x.(type) {
 	case *Comprehension:
-		n.addCompErr(x.Value, err)
+		pushDownErr(n, x.Value, c)
 		if x.Fallback != nil {
-			n.addCompErr(x.Fallback, err)
+			pushDownErr(n, x.Fallback, c)
 		}
 
 	case *StructLit:
@@ -350,17 +335,24 @@ func (n *nodeContext) addCompErr(x Node, err *Bottom) {
 				if arc == nil {
 					continue
 				}
-				// The arc may not have scheduled its conjuncts yet. Its
-				// state keeps the error when it does.
-				if s := arc.getBareState(n.ctx); s != nil {
-					s.errs = CombineErrors(nil, s.errs, err)
-					s.addCompErr(d.Value, err)
+				if arcState := arc.getBareState(n.ctx); arcState != nil {
+					arc.insertConjunct(n.ctx, c, c.CloseInfo, arc.ArcType, false, false)
+					pushDownErr(arcState, d.Value, c)
 				}
 
 			default:
-				// Embedded struct literals and nested comprehensions.
-				n.addCompErr(d, err)
+				// Embeddings, other comprehensions.
+				pushDownErr(n, d, c)
 			}
 		}
 	}
+}
+
+// isPushedDownComp reports whether t is a comprehension task whose body and
+// else clause were fully pushed down: [pushDownDeps] returns bare
+// allTasksCompleted exactly when both consist of literal fields only. Such a
+// task contributes conjuncts solely to the arcs it pre-created at scheduling
+// time, registering itself in their parentTasks.
+func (t *task) isPushedDownComp() bool {
+	return t.run == handleComprehension && t.completes == allTasksCompleted
 }

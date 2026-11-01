@@ -66,7 +66,7 @@ Allocs: 148
 Retain: 0
 
 Unifications: 521
-Conjuncts:    1607
+Conjuncts:    1614
 Disjuncts:    174
 ResolveDep:   130
 
@@ -94,7 +94,7 @@ diff old new
 +Retain: 0
 +
 +Unifications: 521
-+Conjuncts:    1607
++Conjuncts:    1614
 +Disjuncts:    174
 +ResolveDep:   130
 +
@@ -119,7 +119,7 @@ Allocs: 148
 Retain: 0
 
 Unifications: 521
-Conjuncts:    1607
+Conjuncts:    1614
 Disjuncts:    174
 ResolveDep:   130
 
@@ -147,7 +147,7 @@ diff old new
 +Retain: 0
 +
 +Unifications: 521
-+Conjuncts:    1607
++Conjuncts:    1614
 +Disjuncts:    174
 +ResolveDep:   130
 +
