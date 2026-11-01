@@ -1,0 +1,351 @@
+# A field declared both outside and in the body of a comprehension depends on
+# the clauses of the comprehension. When these fail, the field fails with them,
+# rather than taking the value it would have if the comprehension yielded
+# nothing. Each out field is evaluated before the struct it selects from, and
+# so before the struct records the error.
+-- in.cue --
+@experiment(try)
+
+incomplete: {
+	out: #P.x
+	#P: {
+		x: [...]
+		if b == 1 {
+			x: [1]
+		}
+	}
+	b: int
+}
+
+fatal: {
+	out: p.x
+	p: {
+		x: [...]
+		if b {
+			x: [1]
+		}
+	}
+	b: 1 & 2
+}
+
+// Only the else clause declares x.
+fatalElse: {
+	out: p.x
+	p: {
+		x: [...]
+		if b {
+			y: 1
+		} else {
+			x: [2]
+		}
+	}
+	b: 1 & 2
+}
+
+// The guard fails only after the selection of x.
+requiredMissing: {
+	out: p.x
+	p: {
+		x: [...]
+		if cfg.mode == "a" {
+			x: [1]
+		}
+	}
+	cfg: mode!: string
+}
+
+// An embedding and a for loop use the conjuncts of x.
+embedding: {
+	out: {p.x}
+	p: {
+		x: [...]
+		if b == 1 {
+			x: [1]
+		}
+	}
+	b: int
+}
+
+forLoop: {
+	out: [for v in p {v}]
+	p: {
+		x: [...]
+		if b == 1 {
+			x: [1]
+		}
+	}
+	b: int
+}
+
+nested: {
+	out: p.a.x
+	p: {
+		a: x: [...]
+		if b == 1 {
+			a: x: [1]
+		}
+	}
+	b: int
+}
+
+nestedComprehension: {
+	out: p.x
+	p: {
+		x: [...]
+		if b == 1 {
+			for v in [1] {
+				x: [v]
+			}
+		}
+	}
+	b: int
+}
+
+// x is declared outside the failing comprehension only by another one.
+otherComprehension: {
+	out: p.x
+	p: {
+		if b == 1 {
+			x: [1]
+		}
+		if true {
+			x: [...]
+		}
+	}
+	b: int
+}
+
+// The comprehension does not declare y.
+otherField: {
+	x: p.x
+	y: p.y
+	p: {
+		x: [...]
+		y: 1
+		if b == 1 {
+			x: [1]
+		}
+	}
+	b: int
+}
+
+// The guard becomes concrete in an instance of the definition.
+instance: {
+	out: q.x
+	q: #P & {b: 1}
+	#P: {
+		b: int
+		x: [...]
+		if b == 1 {
+			x: [1]
+		}
+	}
+}
+
+conditionFalse: {
+	out: p.x
+	p: {
+		x: [...]
+		if b == 2 {
+			x: [1]
+		}
+	}
+	b: 1
+}
+-- out/compile --
+--- in.cue
+{
+  incomplete: {
+    out: 〈0;#P〉.x
+    #P: {
+      x: [
+        ...,
+      ]
+      if (〈1;b〉 == 1) {
+        x: [
+          1,
+        ]
+      }
+    }
+    b: int
+  }
+  fatal: {
+    out: 〈0;p〉.x
+    p: {
+      x: [
+        ...,
+      ]
+      if 〈1;b〉 {
+        x: [
+          1,
+        ]
+      }
+    }
+    b: (1 & 2)
+  }
+  fatalElse: {
+    out: 〈0;p〉.x
+    p: {
+      x: [
+        ...,
+      ]
+      if 〈1;b〉 {
+        y: 1
+      } else {
+        x: [
+          2,
+        ]
+      }
+    }
+    b: (1 & 2)
+  }
+  requiredMissing: {
+    out: 〈0;p〉.x
+    p: {
+      x: [
+        ...,
+      ]
+      if (〈1;cfg〉.mode == "a") {
+        x: [
+          1,
+        ]
+      }
+    }
+    cfg: {
+      mode!: string
+    }
+  }
+  embedding: {
+    out: {
+      〈1;p〉.x
+    }
+    p: {
+      x: [
+        ...,
+      ]
+      if (〈1;b〉 == 1) {
+        x: [
+          1,
+        ]
+      }
+    }
+    b: int
+  }
+  forLoop: {
+    out: [
+      for _, v in 〈1;p〉 {
+        〈1;v〉
+      },
+    ]
+    p: {
+      x: [
+        ...,
+      ]
+      if (〈1;b〉 == 1) {
+        x: [
+          1,
+        ]
+      }
+    }
+    b: int
+  }
+  nested: {
+    out: 〈0;p〉.a.x
+    p: {
+      a: {
+        x: [
+          ...,
+        ]
+      }
+      if (〈1;b〉 == 1) {
+        a: {
+          x: [
+            1,
+          ]
+        }
+      }
+    }
+    b: int
+  }
+  nestedComprehension: {
+    out: 〈0;p〉.x
+    p: {
+      x: [
+        ...,
+      ]
+      if (〈1;b〉 == 1) {
+        for _, v in [
+          1,
+        ] {
+          x: [
+            〈2;v〉,
+          ]
+        }
+      }
+    }
+    b: int
+  }
+  otherComprehension: {
+    out: 〈0;p〉.x
+    p: {
+      if (〈1;b〉 == 1) {
+        x: [
+          1,
+        ]
+      }
+      if true {
+        x: [
+          ...,
+        ]
+      }
+    }
+    b: int
+  }
+  otherField: {
+    x: 〈0;p〉.x
+    y: 〈0;p〉.y
+    p: {
+      x: [
+        ...,
+      ]
+      y: 1
+      if (〈1;b〉 == 1) {
+        x: [
+          1,
+        ]
+      }
+    }
+    b: int
+  }
+  instance: {
+    out: 〈0;q〉.x
+    q: (〈0;#P〉 & {
+      b: 1
+    })
+    #P: {
+      b: int
+      x: [
+        ...,
+      ]
+      if (〈0;b〉 == 1) {
+        x: [
+          1,
+        ]
+      }
+    }
+  }
+  conditionFalse: {
+    out: 〈0;p〉.x
+    p: {
+      x: [
+        ...,
+      ]
+      if (〈1;b〉 == 2) {
+        x: [
+          1,
+        ]
+      }
+    }
+    b: 1
+  }
+}
