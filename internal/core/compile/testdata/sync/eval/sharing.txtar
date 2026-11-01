@@ -281,6 +281,35 @@ forwardShared: {
 		#S: {x: 2, sub: {x: 2}}
 	}
 }
+
+// A field sharing a reference that meets a disjunction may be evaluated in
+// part, such as for a selection, from within an evaluation the referenced
+// vertex depends on. The vertex is not finalized then, which would force
+// that evaluation before it adds its fields.
+// https://cuelang.org/issue/XXXX
+inProgress: {
+	#S: {...}
+	#A: #S | int
+
+	// A comprehension of the vertex selects from the field.
+	comprehension: {
+		x: {a: 1, if out.a == 1 {b: 2}}
+		out: x & #A
+	}
+	// The comprehension belongs to a vertex the shared vertex refers to.
+	reference: {
+		y: {a: 1, if out.a == 1 {b: 2}}
+		x: y
+		out: x & #A
+	}
+	// The comprehension belongs to a field of the shared vertex.
+	arc: {
+		y: x.sub.d
+		x: #B
+		#B: sub: {c: 1, if out.sub.c == 1 {d: 2}}
+		out: x & #A
+	}
+}
 -- issue3835.cue --
 // evalv3 regression with "cycle with field" error involving a comprehension
 // with a let that references a top-level field via a pattern constraint.
@@ -522,6 +551,44 @@ issue3903: noshare: {
           x: 2
         }
       }
+    }
+  }
+  inProgress: {
+    #S: {
+      ...
+    }
+    #A: (〈0;#S〉|int)
+    comprehension: {
+      x: {
+        a: 1
+        if (〈1;out〉.a == 1) {
+          b: 2
+        }
+      }
+      out: (〈0;x〉 & 〈1;#A〉)
+    }
+    reference: {
+      y: {
+        a: 1
+        if (〈1;out〉.a == 1) {
+          b: 2
+        }
+      }
+      x: 〈0;y〉
+      out: (〈0;x〉 & 〈1;#A〉)
+    }
+    arc: {
+      y: 〈0;x〉.sub.d
+      x: 〈0;#B〉
+      #B: {
+        sub: {
+          c: 1
+          if (〈2;out〉.sub.c == 1) {
+            d: 2
+          }
+        }
+      }
+      out: (〈0;x〉 & 〈1;#A〉)
     }
   }
 }
