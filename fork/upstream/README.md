@@ -52,6 +52,41 @@ version ("replaced" in the table): the fork's were incomplete, too broad, or
 larger than needed. The other three kept their code. See "Revised while
 preparing upstream changes" in the fork's `fork/README.md`.
 
+## Prior art
+
+Each topic's `PRIOR.md` records a duplicate check against cue-lang/cue's whole
+public record (as of 2026-11-01), searched with `tools/` and verified
+behaviourally. The record covers:
+
+- every issue, pull request and comment;
+- every review comment and discussion;
+- the public Gerrit, visible until about 2026-08;
+- upstream master, which still equals rc.3.
+
+Candidates' reproducers were run against rc.3 and each prepared fix.
+
+- **None of the eight is known upstream: file all eight as new issues.**
+  Each references the issues its introducing change fixed, plus the closest
+  related ones.
+- **let-pushdown:** a let in the guarded body defeats the upstream fixes for
+  #4448 and #4487. This was verified, and the issue shows it.
+- **try-finalize:** the `try` form of #4425 is another instance.
+- **buildexpr-closedness:** it also undoes #2680 for `cue eval -e`.
+- **share-disjunction-safe:** fixing it restores the older silent `x.args`
+  loss, which 082c52c57 had turned into the cycle error. Its issue says
+  so, and that loss should be filed alongside it.
+- **call-closedness-path:** its issue defers on how inner paths are
+  presented to the work on #2782. Upstream's last public change for that,
+  https://cuelang.org/cl/1238752, was abandoned as superseded by a change
+  that isn't public.
+- **Side findings:** the builtin-argument error drop is a leftover of #4510,
+  so it is a comment there, not a new issue. The other six are new
+  (`_side-findings/PRIOR.md`).
+
+Since about 2026-08, maintainers review their own changes privately. A fix
+in progress would only show as a commit on master or a mention in an issue,
+so re-run the check just before filing.
+
 ## Notes
 
 - **Commit messages on the fork that these drafts correct.** The drafts

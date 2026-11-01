@@ -91,6 +91,12 @@ evaluated it.
 This is unrelated to the comprehension pushdown (339485ddf) behind several
 other recent regressions.
 
+It also undoes, for `-e`, the closing that #2680 asked for:
+`cue eval -e 'close({}) & w'` with `w: a: 1` prints `a: 1` with v0.17.1 and
+rc.3, while v0.16.1 and the proposed change report `a: field not allowed`. The fix for #2680
+(2c281cb56) is a different mechanism, and its test, which unifies the built
+value later with `Value.Unify`, still passes.
+
 ### Proposed approach
 
 Finalize the vertex in `BuildExpr` with the OpContext that evaluated it,

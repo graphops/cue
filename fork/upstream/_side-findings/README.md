@@ -38,10 +38,12 @@ out: #M | int
 - **Why it is wrong:** `out: x` means `out` has at least every field of `x`.
 - **Triggers:** correct without the disjunction (`out: #M`) and when the loop
   reads `x` instead of `out`. Still wrong with `a: 1` written without the `if`.
+- **Upstream:** not known ([PRIOR.md](PRIOR.md)). Bisected to d47e4cee8
+  ("settle a pending arc once its comprehension is done", Updates #4487).
 - **Why it is the priority:** a silent wrong value, a regression in
   v0.18.0-rc.1.
 - **Next:**
-  1. Bisect `v0.17.1..v0.18.0-rc.1`.
+  1. Bisect `v0.17.1..v0.18.0-rc.1` (done: d47e4cee8, parent passes).
   2. Find the root cause in a debug build.
   3. Check how it relates to share-disjunction-safe (upstream `082c52c57`
      is in rc.2, not rc.1, so it is probably a different commit).
@@ -73,8 +75,10 @@ out: #A
   - `b` reads through `out` (not `x.a`, and not `b: 1`).
 
   The same narrow trigger as share-disjunction-safe.
+- **Upstream:** not known ([PRIOR.md](PRIOR.md)). Bisected to a10029dad
+  ("skip Disjunctions on ancestor-cycle arcs", cl/1237537).
 - **Next:**
-  1. Bisect `v0.16.1..v0.17.1`.
+  1. Bisect `v0.16.1..v0.17.1` (done: a10029dad, parent passes).
   2. Find the root cause in a debug build. Likely around structure sharing
      and closedness (`internal/core/adt/share.go`, re-closing opened shared
      vertices).
@@ -102,11 +106,13 @@ out: #M | string
   arc unprocessed, and export reads it.
 - **Variants:** without `y`, or without the disjunction, rc.3 reports `out.sub:
   cyclic reference to field d`.
+- **Upstream:** not known ([PRIOR.md](PRIOR.md)). Bisected to 339485ddf.
 - **Open question:** what the correct result is. The guard tests `out.sub`,
   the struct it adds to, so a cycle error may be the intended answer. A panic
   is a bug either way.
 - **Next:**
-  1. Bisect when the panic started (`v0.16.1..v0.17.1`).
+  1. Bisect when the panic started (`v0.16.1..v0.17.1`) (done: 339485ddf,
+     parent passes).
   2. Find which arc is left unprocessed and why.
   3. Decide the expected result before writing the reproducer's
      expectation.
@@ -137,19 +143,25 @@ as reported, and should be re-checked before work starts on them.
   pattern: `insertConjunct` drops conjuncts into a finalized vertex without
   an error. Making that drop an error would catch the whole class, but 28
   existing drops in the test suite would need review first (let-pushdown
-  agent).
+  agent). Not known upstream ([PRIOR.md](PRIOR.md)); bisected to 339485ddf,
+  and only `json.Marshal(x)` of the whole struct loses it.
 - **Field lost through a selected reference (verified, old).**
   `a: x.y & {z: 1}`, `x: y: on: true`, `if a.on {x: w}`, `w: y: v: 1`: `a`
   lacks `v: 1` although `x.y` has it, on v0.16.1, rc.3 and the fork. Not a
-  regression. Found while reducing pushdown-notify.
+  regression. Found while reducing pushdown-notify. Not known upstream
+  ([PRIOR.md](PRIOR.md)), and not fixed by the pushdown-notify change.
 - **Error dropped in a builtin argument read from an internal node
   (reported).** For example, `let L = {o: strings.ToUpper((#C & {id:
   "storage"}).out)}` and `r: L.o` give no error where one is expected. Same
   on v0.17.1, rc.1, rc.3 and with the fix. Inside a disjunct within an inline
   struct, it also affects the plain inline-struct case. Found while preparing
   deferred-disjunct-scope; the probe files were in that agent's scratch
-  directory.
+  directory. **Known upstream as #4510** (closed): rc.3 fixed the inline
+  call, but `let L = {o: strings.ToUpper(…)}`, `r: L.o` still loses it
+  ([PRIOR.md](PRIOR.md)).
 - **Comprehension adding to a shared selection loses a field (reported,
   old).** `out: x.args & #A`, where a comprehension on `x` adds to `args`,
   loses `b` on v0.17.1 too. This is related to u5 but older. Found while
-  preparing share-disjunction-safe.
+  preparing share-disjunction-safe. Not known upstream ([PRIOR.md](PRIOR.md)).
+  Bisected to 339485ddf. rc.3 reports a spurious cycle error instead (from
+  082c52c57), and the share-disjunction-safe fix brings the silent loss back.

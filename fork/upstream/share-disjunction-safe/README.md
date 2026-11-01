@@ -66,6 +66,27 @@ The comprehension need not belong to `x` itself: with `y: {a: 1, if out.a == 1 {
 
 Finalize the shared vertex early only while the sharing field is itself being finalized (its innermost `unify` call is in `finalize` mode), which is when `finalizeSharing` would finalize the vertex anyway. A field evaluated only in part, as for `out.a` here, keeps the behaviour from before 082c52c57: it keeps sharing only a vertex that is final already. This checks the field rather than the state of the shared vertex, as the second example shows the vertex can be idle. It fixes all three examples, and the stats of `issue4512.txtar`, which 082c52c57 improved, are unchanged, as are those of every other test in `cue/testdata`. I have a change with a regression test ready to send once the approach is agreed.
 
+One caveat. Restoring the earlier behaviour also restores an older bug that
+082c52c57 had turned into this error. When the comprehension adds to a
+field that the shared value is selected from, rather than to the selected
+struct itself:
+
+```
+#S: {...}
+#A: #S | int
+x: {
+	args: a: 1
+	if out.a == 1 {args: b: 2}
+}
+out: x.args & #A
+```
+
+v0.17.1 and v0.18.0-rc.1 silently give `out: {a: 1}` while `x.args` is
+`{a: 1, b: 2}`. v0.18.0-rc.2 and rc.3 report `x.args: cyclic reference to
+field b`, and with the approach above the silent result is back. That loss
+dates from 339485ddf and is a separate bug, which I would report
+separately.
+
 ### Related
 
 - #4512: 082c52c57 updates this issue. The fix keeps its stats unchanged, and those of #4540 too.

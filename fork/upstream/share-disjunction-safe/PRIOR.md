@@ -49,3 +49,11 @@ Also checked: the full threads of #4512, #4530, #4520, #4526, #4532, #4533 and #
 v0.18.0-rc.1..master for sharing commits (fd3117d83, 344a06b62, d3bb17ed9, d323d73f0, 19d6c62c0,
 e798b9a41, b218faaa6, 4232b8d36); `git grep` of upstream sharing tests; live `gh issue list`/`gh pr list`
 (updated ≥ 2026-10-25/30); GitHub Discussions (latest updated).
+
+**Interaction with a side finding (verified 2026-11-01).** With the fix,
+`out: x.args & #A` (the comprehension adds to `x.args`, the field `out`
+selects) returns to the v0.17.1/rc.1 result: `out` silently lacks `b`. rc.2
+and rc.3 report a spurious cycle there instead. That loss is the older bug
+since 339485ddf (`_side-findings`, "x.args"). The README states this as a
+caveat, so that the x.args loss is reported alongside, not discovered in
+review.
