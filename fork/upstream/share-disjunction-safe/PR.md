@@ -1,7 +1,8 @@
 # PR: share-disjunction-safe
 
-Branch: `fix/share-disjunction-in-progress` (commit 6c5e9900c), based on `cjorge/master` (v0.18.0-rc.3).
-Replace `XXXX` with the issue number in both the commit message and `cue/testdata/eval/sharing.txtar` (and its sync copy under `internal/core/compile/testdata/sync/eval/`) before opening.
+Branch: cjorge-graphops/cue `fix/share-disjunction-in-progress`: commit 6c5e9900c plus fixup e9fe0c322, to squash into it at filing time (`git rebase -i --autosquash cjorge/master`). Based on `cjorge/master` a0768bd98 (upstream master, v0.18.0-rc.3).
+
+Before opening, replace `XXXX` with the issue number in the commit message and in: `cmd/cue/cmd/testdata/script/export_share_in_progress.txtar`, `cue/testdata/eval/sharing.txtar`, `internal/core/compile/testdata/sync/eval/sharing.txtar`.
 
 ## Title
 
@@ -48,3 +49,12 @@ Fixes #XXXX
 Signed-off-by: Carlos Jorge <carlos@graphops.xyz>
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ```
+
+## At filing time
+
+- After squashing fixup e9fe0c322, the commit also adds
+  `cmd/cue/cmd/testdata/script/export_share_in_progress.txtar` (the embedded-expression variant, which
+  panicked in `cue export` while `cue eval` succeeded). Replace `XXXX` in that file's header too.
+- Optionally add to the commit message, after the example: "With an embedded expression in place of the
+  comprehension, evaluation succeeded but cue export panicked with \"not properly initialized\"; a
+  testscript checks the export."

@@ -54,6 +54,39 @@ version ("replaced" in the table): the fork's were incomplete, too broad, or
 larger than needed. The other three kept their code. See "Revised while
 preparing upstream changes" in the fork's `fork/README.md`.
 
+## Regression tests
+
+Each of the eight fixes to propose has a regression test, audited on
+2026-11-01, in upstream's conventions:
+
+- inline `@test` assertions in `cue/testdata`, a `cmd/cue` testscript where
+  the bug is in the command line, and a Go test where it is in the API;
+- the compiler sync mirror regenerated, and the issue linked as
+  `https://cuelang.org/issue/XXXX`.
+
+What the tests cover:
+
+- **Regression cases:** the issue's reproducer and every shape the issue
+  names, including the upstream issues it also fixes (#4448 and #4487 for
+  let-pushdown, #4425 for try-finalize, #2680 for buildexpr-closedness).
+  Each fails without the fix.
+- **Each part of each fix:** at least one case fails when only that part is
+  removed.
+- **Over-correction guards:** cases that must keep their result, such as a
+  cycle still reported, or sharing still kept where 082c52c57 intended. They
+  pass either way.
+- **Known bugs outside each fix:** recorded with `eq:todo`, and never
+  asserted as correct. Examples are the `x.args` loss and the embedded let.
+
+The cases added by the audit are a `fixup!` commit on each branch. Squash it
+into the single commit at filing time (`git rebase -i --autosquash
+cjorge/master`), together with filling in the issue number. On every branch,
+`go vet ./...` and `go test ./...` pass.
+
+`tools/regen-pr.py TOPIC BRANCH` rewrites a topic's `PR.md` from its live
+commit, keeping its "At filing time" notes. Re-run it after any change to a
+branch.
+
 ## Prior art
 
 Each topic's `PRIOR.md` records a duplicate check against cue-lang/cue's whole

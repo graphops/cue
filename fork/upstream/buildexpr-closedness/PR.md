@@ -1,17 +1,22 @@
-# PR
+# PR: buildexpr-closedness
 
-Branch: `fix/buildexpr-finalize-context` (cjorge-graphops/cue), one commit.
+Branch: cjorge-graphops/cue `fix/buildexpr-finalize-context`: commit a72a7f272 plus fixup a7d837b97, to squash into it at filing time (`git rebase -i --autosquash cjorge/master`). Based on `cjorge/master` a0768bd98 (upstream master, v0.18.0-rc.3).
+
+Before opening, replace `XXXX` with the issue number in the commit message and in: `cmd/cue/cmd/testdata/script/eval_e.txtar`, `cue/build_test.go`.
 
 ## Title
 
+```
 cue: finalize BuildExpr values in the context that evaluated them
+```
 
-## Body
+## Body (plain text, as in the commit message)
 
-Since a9f3f2a09, which fixed #4366, Vertex.unify skips the typo check
-when a vertex is finalized by an OpContext other than the one which
-started evaluating it, as the original evaluation runs the check when
-its own Finalize unwinds.
+```
+Since https://cuelang.org/cl/1238118, which fixed #4366, Vertex.unify
+skips the typo check when a vertex is finalized by an OpContext other
+than the one which started evaluating it, as the original evaluation
+runs the check when its own Finalize unwinds.
 
 Context.BuildExpr never let that happen. It evaluates the expression
 with adt.Resolve, which evaluates a conjunction or a struct literal only
@@ -37,3 +42,12 @@ Fixes #XXXX
 
 Signed-off-by: Carlos Jorge <carlos@graphops.xyz>
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+```
+
+## At filing time
+
+The fixup (a7d837b97) adds a Go API test, `TestBuildExprClosedness` in
+cue/build_test.go, next to the eval_e.txtar cases. The commit message does not
+describe the tests and stays as is; the README's "plus a case in
+cmd/cue/cmd/testdata/script/eval_e.txtar" can read "plus cases in
+cmd/cue/cmd/testdata/script/eval_e.txtar and cue/build_test.go".

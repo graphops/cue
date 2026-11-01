@@ -1,14 +1,18 @@
-Branch: cjorge-graphops/cue fix/try-own-arcs-finalize (one commit, a54fe4201), based on master a0768bd98.
-Replace #XXXX with the issue number before opening the PR, in the commit message and in the
-https://cuelang.org/issue/XXXX link in cue/testdata/comprehensions/try.txtar (and its sync copy).
-The PR body is the commit message body.
+# PR: try-finalize
 
-Title:
+Branch: cjorge-graphops/cue `fix/try-own-arcs-finalize`: commit a54fe4201 plus fixup cb95bcdf9, to squash into it at filing time (`git rebase -i --autosquash cjorge/master`). Based on `cjorge/master` a0768bd98 (upstream master, v0.18.0-rc.3).
 
+Before opening, replace `XXXX` with the issue number in the commit message and in: `cue/testdata/comprehensions/try.txtar`, `internal/core/compile/testdata/sync/comprehensions/try.txtar`.
+
+## Title
+
+```
 internal/core/adt: do not finalize fields a try clause has yet to yield into
+```
 
-Body:
+## Body (plain text, as in the commit message)
 
+```
 TryClause.yield pre-evaluates a try clause by finalizing an inline
 vertex, to find out whether a ?-marked reference fails. That vertex may
 reach the fields that the comprehension of the clause yields into. In
@@ -43,4 +47,6 @@ of cycle/compbottom2.txtar.
 
 Fixes #XXXX
 
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
+Signed-off-by: Carlos Jorge <carlos@graphops.xyz>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+```
