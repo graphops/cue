@@ -1,0 +1,177 @@
+# A function applied to the result of an earlier call of the same call site,
+# where a definition is applied to the argument both times. Keeping a node
+# structure shared past a repeated definition must not apply to a node that
+# shares a function argument: references into the parameter would then
+# dereference to the earlier result and evaluate it with the callee's
+# cycle-reference chain, reporting a spurious structural cycle.
+#inlinetest:exclude golden output records function values and lets
+-- in.cue --
+@experiment(functions)
+
+#R: {...}
+
+// The definition is the parameter constraint and the result type.
+F: func(r: #R) -> #R: {
+	let L = {p: {}}
+	r
+	x: G(L)
+}
+G: func(a: {...}) -> {...}: {y: H(a.p)}
+H: func(b: {...}) -> {...}: {for _, v in b {v}}
+
+W: func(o: {d: #R}) -> _: F(o.d)
+once:  W({d: {}})
+twice: W({d: once})
+
+// The definition only on the parameter of the wrapper.
+FP: func(r: _) -> _: {
+	let L = {p: {}}
+	r
+	x: G(L)
+}
+WP: func(o: {d: #R}) -> _: FP(o.d)
+onceP:  WP({d: {}})
+twiceP: WP({d: onceP})
+
+// A Deployment-shaped resource put through a function that adds labels to
+// its pod template, then put through it again.
+#Resource: {
+	kind!: string
+	...
+}
+Apply: func(r: #Resource) -> #Resource: {
+	let Rules = {podTemplate: {}}
+	r
+	spec: template: metadata: templateMetadata(Rules)
+}
+templateMetadata: func(rules: {...}) -> {...}: {labels: labelSet(rules.podTemplate)}
+labelSet: func(rules: {...}) -> {...}: {for _, rule in rules {rule}}
+#Out: phases: workload: [string]: #Resource
+Resources: func(o: #Out) -> [...]: [Apply(o.phases.workload.d)]
+deploy: {
+	kind: "Deployment"
+	spec: template: spec: {}
+}
+resOnce:  Resources({phases: workload: d: deploy})
+resTwice: Resources({phases: workload: d: resOnce[0]})
+
+-- out/compile --
+--- in.cue
+{
+  #R: {
+    ...
+  }
+  F: func(r: 〈0;#R〉) -> 〈0;#R〉: {
+    let L#1 = {
+      p: {}
+    }
+    〈1;r〉
+    x: 〈2;G〉(〈0;let L#1〉)
+  }
+  G: func(a: {
+    ...
+  }) -> {
+    ...
+  }: {
+    y: 〈2;H〉(〈1;a〉.p)
+  }
+  H: func(b: {
+    ...
+  }) -> {
+    ...
+  }: {
+    for _, v in 〈1;b〉 {
+      〈1;v〉
+    }
+  }
+  W: func(o: {
+    d: 〈1;#R〉
+  }) -> _: 〈1;F〉(〈0;o〉.d)
+  once: 〈0;W〉({
+    d: {}
+  })
+  twice: 〈0;W〉({
+    d: 〈1;once〉
+  })
+  FP: func(r: _) -> _: {
+    let L#2 = {
+      p: {}
+    }
+    〈1;r〉
+    x: 〈2;G〉(〈0;let L#2〉)
+  }
+  WP: func(o: {
+    d: 〈1;#R〉
+  }) -> _: 〈1;FP〉(〈0;o〉.d)
+  onceP: 〈0;WP〉({
+    d: {}
+  })
+  twiceP: 〈0;WP〉({
+    d: 〈1;onceP〉
+  })
+  #Resource: {
+    kind!: string
+    ...
+  }
+  Apply: func(r: 〈0;#Resource〉) -> 〈0;#Resource〉: {
+    let Rules#3 = {
+      podTemplate: {}
+    }
+    〈1;r〉
+    spec: {
+      template: {
+        metadata: 〈4;templateMetadata〉(〈2;let Rules#3〉)
+      }
+    }
+  }
+  templateMetadata: func(rules: {
+    ...
+  }) -> {
+    ...
+  }: {
+    labels: 〈2;labelSet〉(〈1;rules〉.podTemplate)
+  }
+  labelSet: func(rules: {
+    ...
+  }) -> {
+    ...
+  }: {
+    for _, rule in 〈1;rules〉 {
+      〈1;rule〉
+    }
+  }
+  #Out: {
+    phases: {
+      workload: {
+        [string]: 〈3;#Resource〉
+      }
+    }
+  }
+  Resources: func(o: 〈0;#Out〉) -> [
+    ...,
+  ]: [
+    〈2;Apply〉(〈1;o〉.phases.workload.d),
+  ]
+  deploy: {
+    kind: "Deployment"
+    spec: {
+      template: {
+        spec: {}
+      }
+    }
+  }
+  resOnce: 〈0;Resources〉({
+    phases: {
+      workload: {
+        d: 〈3;deploy〉
+      }
+    }
+  })
+  resTwice: 〈0;Resources〉({
+    phases: {
+      workload: {
+        d: 〈3;resOnce〉[0]
+      }
+    }
+  })
+}
