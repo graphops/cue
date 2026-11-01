@@ -154,10 +154,9 @@ func (v *Vertex) unify(c *OpContext, flags Flags) bool {
 		return false
 	}
 
-	// A try clause that is running is pre-evaluating its body, and may still
-	// yield conjuncts into the arcs it pushed down. See
-	// [nodeContext.awaitsRunningTry].
-	if mode == finalize && v.state != nil && v.state.awaitsRunningTry() {
+	// A comprehension pre-evaluating a try clause has yet to yield into v.
+	// See [scheduler.hasPreEvaluatingParentTask].
+	if mode == finalize && v.state != nil && v.state.hasPreEvaluatingParentTask() {
 		mode = attemptOnly
 	}
 

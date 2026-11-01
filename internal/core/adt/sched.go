@@ -857,7 +857,9 @@ func (s *scheduler) freeze(c condition, by Node) {
 //
 // The current task is excluded from the parent-task check only: it may
 // freeze fieldSetKnown for the very node it is the parent task of (e.g. a
-// comprehension iterating over its own source node). A running resolver
+// comprehension iterating over its own source node). This does not hold while
+// it pre-evaluates a try clause, which only decides whether it yields and must
+// not commit the field set of the nodes it yields into. A running resolver
 // among this scheduler's own tasks still defers the freeze, as its result
 // may yet add fields to this node.
 func (s *scheduler) deferFieldSetKnown(c condition) condition {
@@ -870,7 +872,7 @@ func (s *scheduler) deferFieldSetKnown(c condition) condition {
 		case taskSUCCESS, taskFAILED, taskCANCELLED:
 			continue
 		}
-		if pt != cur {
+		if pt != cur || pt.preEvaluatingTry {
 			return c &^ fieldSetKnown
 		}
 	}
@@ -947,6 +949,19 @@ func (s *scheduler) hasRunningSiblingParentTask() bool {
 	return false
 }
 
+// hasPreEvaluatingParentTask reports whether a parent task is a comprehension
+// pre-evaluating a try clause (see [finalizeTryBody]). That comprehension has
+// yet to yield into this node, so the node must not be finalized: a later
+// finalize completes it once the comprehension has run.
+func (s *scheduler) hasPreEvaluatingParentTask() bool {
+	for _, pt := range s.parentTasks {
+		if pt.preEvaluatingTry {
+			return true
+		}
+	}
+	return false
+}
+
 // runner defines properties of a type of task, including a function to run it.
 type runner struct {
 	name string
@@ -976,6 +991,11 @@ type task struct {
 	// inserting indicates that this comprehension task is inserting the
 	// conjuncts its clauses yielded; see hasInsertingComp in process.
 	inserting bool
+
+	// preEvaluatingTry indicates that this comprehension task is
+	// pre-evaluating a try clause, and has not yielded yet; see
+	// [scheduler.hasPreEvaluatingParentTask].
+	preEvaluatingTry bool
 
 	// retry requeues this task as READY instead of completing it.
 	retry bool

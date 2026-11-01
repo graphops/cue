@@ -868,6 +868,43 @@ issue4483: {
 	}
 }
 
+// =============================================================================
+// Fields the try body contributes to, reached while pre-evaluating it
+// =============================================================================
+
+// Pre-evaluating a try clause may reach the fields its comprehension yields
+// into, here x through the reference x? or s?, which share it. Finalizing x
+// or freezing its field set then dropped the conjuncts the comprehension
+// yielded into x: a constraint without an error, a new field as a cyclic
+// reference.
+// https://cuelang.org/issue/XXXX
+tryOwnFields: {
+	constraint: {
+		x: a: 5
+		try X = x? {x: a: <=2}
+	}
+	newField: {
+		x: a: 5
+		try X = x? {x: b: 1}
+	}
+	dynamicField: {
+		x: a: 5
+		try X = x? {x: ("b"): 1}
+	}
+	structForm: {
+		x: a: 5
+		s: x
+		try {y: s?, x: b: 1}
+	}
+	// Only the pre-evaluation is exempt: an if clause reading a field the
+	// body changes is still a cycle, as it is without the try clause.
+	guardAfterTry: {
+		y: 1
+		x: a: 5
+		try Y = y? if x != _|_ {x: b: 1}
+	}
+}
+
 -- out/compile --
 --- in.cue
 {
@@ -1972,6 +2009,61 @@ issue4483: {
         value: 1
       } if (〈0;y〉.value > 〈1;b〉) {
         out: 〈1;y〉
+      }
+    }
+  }
+  tryOwnFields: {
+    constraint: {
+      x: {
+        a: 5
+      }
+      try X = 〈0;x〉? {
+        x: {
+          a: <=2
+        }
+      }
+    }
+    newField: {
+      x: {
+        a: 5
+      }
+      try X = 〈0;x〉? {
+        x: {
+          b: 1
+        }
+      }
+    }
+    dynamicField: {
+      x: {
+        a: 5
+      }
+      try X = 〈0;x〉? {
+        x: {
+          "b": 1
+        }
+      }
+    }
+    structForm: {
+      x: {
+        a: 5
+      }
+      s: 〈0;x〉
+      try {
+        y: 〈1;s〉?
+        x: {
+          b: 1
+        }
+      }
+    }
+    guardAfterTry: {
+      y: 1
+      x: {
+        a: 5
+      }
+      try Y = 〈0;y〉? if (〈1;x〉 != _|_(explicit error (_|_ literal) in source)) {
+        x: {
+          b: 1
+        }
       }
     }
   }
