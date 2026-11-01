@@ -1,0 +1,54 @@
+# Tests a comprehension in a struct that is unified with a disjunction. The
+# comprehension is a parent task of the fields its body declares, and runs in
+# each disjunct after the struct is cloned for it. Those fields must remain
+# pending in the disjunct until it has run, rather than being taken as absent.
+-- in.cue --
+// The comprehension iterates over the field it is in.
+self: {
+	out: ({...} | int) & {
+		a: 1
+		for _, v in out {b: v}
+	}
+	@test(eq, {out: {a: 1, b: 1}})
+}
+
+// The field refers to a struct with the comprehension, which iterates over
+// that field.
+reference: {
+	x: {
+		a: 1
+		for _, v in out {b: v}
+	}
+	out: x & ({...} | int)
+	@test(eq, {x: {a: 1, b: 1}, out: {a: 1, b: 1}})
+}
+
+// The guard asks whether the field its body declares is absent, which is a
+// cycle, as it is without the disjunction. Both disjuncts fail, the one with
+// the struct for that cycle.
+guard: {
+	out: ({...} | int) & {
+		a: 1
+		if out.b == _|_ {b: 1}
+	}
+	@test(err, code=cycle, at=out, contains="2 errors in empty disjunction")
+}
+-- out/errors.txt --
+[cycle] guard.out: 2 errors in empty disjunction:
+guard.out: conflicting values {a:1,if (out.b == _|_(explicit error (_|_ literal) in source)) {b:1}} and int (mismatched types struct and int):
+    ./in.cue:25:16
+    ./in.cue:25:23
+guard.out: cyclic reference to field b:
+    ./in.cue:27:10
+-- out/eval/stats --
+Leaks:  6
+Freed:  28
+Reused: 15
+Allocs: 19
+Retain: 0
+
+Unifications: 16
+Conjuncts:    32
+Disjuncts:    6
+
+NumCloseIDs: 1

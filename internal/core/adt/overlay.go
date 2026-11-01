@@ -68,6 +68,10 @@ type overlayContext struct {
 	// This is used to update the Vertex values in Environment values.
 	// The overlay for a vertex v can be obtained by looking up v.overlay.
 	vertexMap vertexMap
+
+	// tasks maps the comprehension tasks that were cloned to their clones.
+	// See cloneRoot.
+	tasks map[*task]*task
 }
 
 type vertexMap map[*Vertex]*Vertex
@@ -169,6 +173,18 @@ func (ctx *overlayContext) cloneRoot(root *nodeContext) *nodeContext {
 		if n == nil {
 			continue
 		}
+
+		// The parent tasks of an arc, such as a comprehension pushed down
+		// into it, are cloned after the arc. Point the arc at their clones,
+		// which run in this disjunct, so that it keeps waiting for them. A
+		// parent task that was not cloned does not add to this disjunct.
+		pts := n.parentTasks[:0]
+		for _, t := range n.parentTasks {
+			if t, ok := ctx.tasks[t]; ok {
+				pts = append(pts, t)
+			}
+		}
+		n.parentTasks = pts
 
 		for _, t := range n.tasks {
 			t.node = ctx.vertexMap.deref(t.node.node).state
@@ -317,6 +333,7 @@ func (ctx *overlayContext) cloneScheduler(dst, src *nodeContext) {
 	ds.needs = ss.needs
 	ds.provided = ss.provided
 	ds.counters = ss.counters
+	ds.parentTasks = append(ds.parentTasks, ss.parentTasks...) // rewritten in cloneRoot
 
 	ss.blocking = ss.blocking[:0]
 
@@ -365,6 +382,13 @@ func (ctx *overlayContext) cloneTask(t *task, dst, src *scheduler) *task {
 	d.x = t.x
 	d.id = id
 	d.node = dst.node
+
+	if t.run == handleComprehension {
+		if ctx.tasks == nil {
+			ctx.tasks = make(map[*task]*task)
+		}
+		ctx.tasks[t] = d
+	}
 
 	return d
 }
