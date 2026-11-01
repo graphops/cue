@@ -1414,7 +1414,7 @@ letCycleSelfKeyword2: {
 
 	@test(eq, {
 		#E: _|_ @test(err, code=incomplete, path=regression_let3.#E,
-			contains="cannot range over s.hosts (incomplete)", pos=[4:13])
+			contains="undefined field: hosts", pos=[4:15, 1:2])
 		env: {
 			hosts: {h1: 1}
 			networks: {n1: "x"}
@@ -1559,8 +1559,9 @@ regression2.#Rollout.out: _X.patch undefined as _X is incomplete (type _):
     ./rework.cue:31:30
 [incomplete] letCycleSelfKeyword.#E: cannot range over s.hosts (incomplete type _):
     ./rework2.cue:7:13
-[incomplete] letCycleSelfKeyword2.#E: cannot range over s.hosts (incomplete):
-    ./rework2.cue:22:13
+[incomplete] letCycleSelfKeyword2.#E: undefined field: hosts:
+    ./rework2.cue:22:15
+    ./rework2.cue:19:2
 -- out/todo.txt --
 cyclicError: v3 reports improved error message vs v2.
 nestedWithDynamicFieldOK: fixed bug in v3 (was incorrect in v2).
