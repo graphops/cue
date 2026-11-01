@@ -1,18 +1,24 @@
-# evaluator: error in a comprehension condition is lost for a field declared next to it
+evaluator: a field declared next to a comprehension ignores the error of the comprehension's guard
 
-## Reproducer
+### What version of CUE are you using (`cue version`)?
 
-```txtar
-# A field declared next to a comprehension (x: [...]) keeps its declared
-# value when the comprehension's condition cannot be evaluated, instead of
-# reporting the condition's error.
+v0.18.0-rc.3 (also master at a0768bd98).
 
-# The condition never becomes concrete: out is incomplete, not [].
+### Does this issue reproduce with the latest stable release?
+
+Yes, v0.17.1 behaves the same. The `incomplete.cue` case below, and the same
+cases with an `else` clause, are a regression: v0.16.1 reports the error. The
+`fatal.cue` case without an `else` clause has been wrong since v0.5.0.
+
+### What did you do?
+
+```
+# The guard never becomes concrete.
 ! exec cue export incomplete.cue
 ! stdout .
 stderr 'non-concrete value int in operand to =='
 
-# The condition is an error: out is that error, not [].
+# The guard is an error.
 ! exec cue export -e out fatal.cue
 ! stdout .
 stderr 'conflicting values 2 and 1'
@@ -37,15 +43,14 @@ p: {
 b: 1 & 2
 ```
 
-### Expected
+### What did you expect to see?
 
-Both commands fail. `incomplete.cue`: the guard of `x` cannot be decided, so `out` is
-incomplete (`non-concrete value int in operand to ==`), as in v0.16.1. `fatal.cue`: the
-guard is an error, so `out` is that error (`conflicting values 2 and 1`).
+Both commands fail. The value of `x` depends on a guard which cannot be
+decided, so `out` is incomplete in `incomplete.cue`, and it fails with the
+error of `b` in `fatal.cue`. v0.16.1 reports
+`#P: non-concrete value int in operand to ==` for `incomplete.cue`.
 
-### Actual
-
-On v0.18.0-rc.3 (= master) both exit 0 and treat the condition as false:
+### What did you see instead?
 
 ```
 > ! exec cue export incomplete.cue
@@ -53,63 +58,45 @@ On v0.18.0-rc.3 (= master) both exit 0 and treat the condition as false:
 {
     "out": []
 }
-FAIL: repro.txtar:6: unexpected command success
+FAIL: repro.txtar:2: unexpected command success
 ```
 
-```
-$ cue export -e out fatal.cue
-[]
-$ echo $?
-0
-```
+and `cue export -e out fatal.cue` prints `[]` and exits 0. `x` is evaluated as
+if the guard were false. This needs `out` to be evaluated before the struct
+holding `x`: once that struct is evaluated, it carries the error and selecting
+from it fails. The same happens when `p.x` is embedded (`out: {p.x}`), when
+ranging over `p`, and through the Go API (`LookupPath("p.x")`), and with an
+`else` clause. `cue vet -c incomplete.cue` also exits 0.
 
-Without `x: [...]` both report an error (`undefined field: x`), and a plain `cue export
-fatal.cue` reports the error of `b`; only the reference to the declared field sees `[]`.
-`cue vet -c incomplete.cue` also exits 0.
+### Analysis
 
-## Versions
+`incomplete.cue`, and the cases with `else`, bisect to 339485ddf
+("internal/core/adt: dependency-tracking comprehension pushdown"); its parent
+376710808 reports the error. Since that change, `pushDownDeps` makes a
+comprehension a parent task of the arcs for the fields its body declares, so
+that they need not wait for the enclosing struct. When the clauses fail,
+`processComprehension` records the error on the struct only (as a failed task
+for an incomplete error, with `addBottom` for a fatal one). `x` has its own
+conjunct `[...]`, completes without the comprehension's contribution, and
+`Vertex.lookup` returns it at its `ArcMember` early return. Before 339485ddf the
+comprehension was evaluated as part of `x`, so `x` failed with it.
+`fatal.cue` without `else` bisects to 748a68589 ("internal/core/adt: use
+per-field comprehensions", v0.5.0-alpha.1).
 
-| Version | `incomplete.cue` | `fatal.cue` (`-e out`) | with `else` (`@experiment(try)`) |
-| --- | --- | --- | --- |
-| v0.18.0-rc.3 / master | fails | fails | fails |
-| v0.18.0-rc.2 | fails | fails | fails |
-| v0.18.0-rc.1 | fails | fails | fails |
-| v0.17.1 | fails | fails | fails |
-| v0.16.1 | passes | fails | passes |
+This is one instance of a cause shared with other regressions from 339485ddf:
+a field completes without the outcome of a pushed-down comprehension that
+targets it.
 
-The `incomplete.cue` case, and both cases with an `else` clause, regressed in
-339485ddf ("internal/core/adt: dependency-tracking comprehension pushdown",
-v0.17.0-alpha.2): its parent 376710808 passes, it fails (checked by building both). The
-fatal case without `else` already fails before that commit and on v0.16.1 (not bisected).
+### Proposed approach
 
-## Root cause
-
-Confirmed with debug prints in an rc.3 build on both files. `comprehension.go:pushDownDeps`
-registers the comprehension as a parent task of arc `x` (`arcState.parentTasks`), not a
-task `#P` waits on. `unify.go:Vertex.lookup` runs it via `runReadyParentTasks` (:856); the
-clauses fail and the error goes to the struct only: `processComprehension` returns an
-incomplete error, which `sched.go:runTask` records with `t.node.addBottom` on `#P` (task
-FAILED), and stores a fatal one with `n.node.state.addBottom` on `p` (:198, task SUCCESS).
-The parent tasks are not in `x`'s counters, and `deferFieldSetKnown` skips a FAILED task as
-done, so `x` finalizes with `errs == nil` and value `[...]`. The lookup returns `x` at its
-`ArcMember` early return (:891), before both its `hasActiveParentTask` checks and the
-`ArcPending` branch that reports failed parent tasks (:1084); hence `undefined field` without `x: [...]`.
-
-## Proposed fix
-
-graphops/cue branch `fix/rc3-comprehension-error-loss` (0c71b5024): in
-`processComprehension`, when the clauses fail with a non-cycle error, record it also on
-each arc the body and else clause declare (`addCompErr`, mirroring `pushDownDeps`'s walk,
-recursing into nested field values, embedded structs and nested comprehensions). This is
-the place where pushdown moved the dependency, so the error follows the same path. Cycle
-errors are left to the arcs' own cycle handling. Golden changes: `eval/issue2550` (`foo`
-now carries the guard's `undefined field` error), `comprehensions/pushdown` (one fewer
-duplicate incomplete error), and `tools/flow` stats. Limit: only arcs that already exist
-with an unfinalized state get the error (`getBareState` non-nil); dynamic fields and
-pattern constraints in the body are not covered.
-
-## Related
-
-None found (searched "comprehension error lost", "if guard error", "comprehension
-silently", "comprehension error not propagated", "pushdown comprehension error", and
-variants).
+When the clauses of a comprehension fail (other than with a cycle error, which
+the lookups of these arcs already report), add the error as a conjunct to the
+arcs for the fields the body and `else` clause declare, walking them as
+`pushDownDeps` does. As a conjunct, the error also reaches references that use
+the arc's conjuncts before it completes, such as an embedding of `p.x` or a
+for loop over `p`, which recording it in the arc's state would not.
+Alternatively, `Vertex.lookup` could report a failed parent task for a member
+arc too, as it does for a pending one, but that misses a guard that fails only
+after the lookup, and the arc's own value as seen through the API. A fix along
+the first lines is ready (+42 lines in `internal/core/adt/comprehension.go`,
+plus tests).

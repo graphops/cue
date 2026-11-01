@@ -1,13 +1,9 @@
-# A field declared next to a comprehension (x: [...]) keeps its declared
-# value when the comprehension's condition cannot be evaluated, instead of
-# reporting the condition's error.
-
-# The condition never becomes concrete: out is incomplete, not [].
+# The guard never becomes concrete.
 ! exec cue export incomplete.cue
 ! stdout .
 stderr 'non-concrete value int in operand to =='
 
-# The condition is an error: out is that error, not [].
+# The guard is an error.
 ! exec cue export -e out fatal.cue
 ! stdout .
 stderr 'conflicting values 2 and 1'
