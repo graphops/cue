@@ -1,0 +1,191 @@
+# A field of an inline struct or let that a disjunct reads before it is
+# complete is completed within that disjunct: an error in it eliminates the
+# disjunct, and fails neither a field outside the disjunction nor another
+# disjunct. See also nonrooted.txtar.
+
+-- in.cue --
+#C: {
+	id:  string & !="storage"
+	out: "k/\(id)"
+}
+
+// The #B arm of sub conflicts on kind and is discarded, so out is "b". The
+// kind of that arm is read by its id, within a disjunction inside an inline
+// struct, and was completed by out, which then failed.
+nested: {
+	#A: {kind: string, id: kind + "."}
+	#B: {kind: "b", id: kind + ".", sub: #A | #B}
+	k:   "a"
+	out: ({x: #A | #B, x: #B & {sub: {id: "a.", kind: k}}}).x.kind
+}
+
+// A let read by one disjunct was completed by the disjuncts evaluated after
+// it, which failed instead, or which checked a validator of the let against
+// a field only the reading disjunct has.
+lets: {
+	let L1 = {v: 1 & >1, out: v + 1}
+	err: {a: L1.out} | {b: 1}
+
+	let L2 = #C & {id: "storage"}
+	errDefault: *{a: L2.out} | {b: 1}
+
+	let L3 = #C & {id: "other"}
+	ok: *{a: L3.out} | {b: 1}
+
+	let L4 = {x: 1 & !=okOther.a, out: x + 1}
+	okOther: {a: L4.out} | *{b: 1}
+}
+
+// None of the nodes of a disjunction inside an inline struct is rooted.
+inline: {
+	err: ({x: *{a: (#C & {id: "storage"}).out, c: 1} | {c: 2}}).x.c
+	ok:  ({x: *{a: (#C & {id: "other"}).out, c: 1} | {c: 2}}).x.c
+}
+inlineLet: {
+	let L = #C & {id: "storage"}
+	err: ({x: *{a: L.out, c: 1} | {c: 2}}).x.c
+}
+
+// A guard absorbs the error of the let it reads, as it does when the
+// definition is used outside of a disjunct.
+guard: {
+	#E: {
+		let r = {role: "b" & !="b"}
+		let names = {for k, v in r if v != "" {(k): v}}
+		let picked = {for k, _ in {other: 1} if names[k] != _|_ {(k): true}}
+		out: [for k, _ in picked {k}]
+	}
+	direct:   (#E & {}).out
+	disjunct: (*{e: (#E & {}).out, c: 1} | {c: 2}).c
+}
+-- out/compile --
+--- in.cue
+{
+  #C: {
+    id: (string & !="storage")
+    out: "k/\(〈0;id〉)"
+  }
+  nested: {
+    #A: {
+      kind: string
+      id: (〈0;kind〉 + ".")
+    }
+    #B: {
+      kind: "b"
+      id: (〈0;kind〉 + ".")
+      sub: (〈1;#A〉|〈1;#B〉)
+    }
+    k: "a"
+    out: {
+      x: (〈1;#A〉|〈1;#B〉)
+      x: (〈1;#B〉 & {
+        sub: {
+          id: "a."
+          kind: 〈3;k〉
+        }
+      })
+    }.x.kind
+  }
+  lets: {
+    let L1#1 = {
+      v: (1 & >1)
+      out: (〈0;v〉 + 1)
+    }
+    err: ({
+      a: 〈1;let L1#1〉.out
+    }|{
+      b: 1
+    })
+    let L2#2 = (〈1;#C〉 & {
+      id: "storage"
+    })
+    errDefault: (*{
+      a: 〈1;let L2#2〉.out
+    }|{
+      b: 1
+    })
+    let L3#3 = (〈1;#C〉 & {
+      id: "other"
+    })
+    ok: (*{
+      a: 〈1;let L3#3〉.out
+    }|{
+      b: 1
+    })
+    let L4#4 = {
+      x: (1 & !=〈1;okOther〉.a)
+      out: (〈0;x〉 + 1)
+    }
+    okOther: ({
+      a: 〈1;let L4#4〉.out
+    }|*{
+      b: 1
+    })
+  }
+  inline: {
+    err: {
+      x: (*{
+        a: (〈3;#C〉 & {
+          id: "storage"
+        }).out
+        c: 1
+      }|{
+        c: 2
+      })
+    }.x.c
+    ok: {
+      x: (*{
+        a: (〈3;#C〉 & {
+          id: "other"
+        }).out
+        c: 1
+      }|{
+        c: 2
+      })
+    }.x.c
+  }
+  inlineLet: {
+    let L#5 = (〈1;#C〉 & {
+      id: "storage"
+    })
+    err: {
+      x: (*{
+        a: 〈2;let L#5〉.out
+        c: 1
+      }|{
+        c: 2
+      })
+    }.x.c
+  }
+  guard: {
+    #E: {
+      let r#6 = {
+        role: ("b" & !="b")
+      }
+      let names#7multi = {
+        for k, v in 〈1;let r#6〉 if (〈0;v〉 != "") {
+          〈1;k〉: 〈1;v〉
+        }
+      }
+      let picked#8multi = {
+        for k, _ in {
+          other: 1
+        } if (〈2;let names#7〉[〈0;k〉] != _|_(explicit error (_|_ literal) in source)) {
+          〈1;k〉: true
+        }
+      }
+      out: [
+        for k, _ in 〈1;let picked#8〉 {
+          〈1;k〉
+        },
+      ]
+    }
+    direct: (〈0;#E〉 & {}).out
+    disjunct: (*{
+      e: (〈1;#E〉 & {}).out
+      c: 1
+    }|{
+      c: 2
+    }).c
+  }
+}

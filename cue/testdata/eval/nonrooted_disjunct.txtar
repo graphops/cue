@@ -1,0 +1,84 @@
+# A field of an inline struct or let that a disjunct reads before it is
+# complete is completed within that disjunct: an error in it eliminates the
+# disjunct, and fails neither a field outside the disjunction nor another
+# disjunct. See also nonrooted.txtar.
+
+-- in.cue --
+#C: {
+	id:  string & !="storage"
+	out: "k/\(id)"
+}
+
+// The #B arm of sub conflicts on kind and is discarded, so out is "b". The
+// kind of that arm is read by its id, within a disjunction inside an inline
+// struct, and was completed by out, which then failed.
+nested: {
+	#A: {kind: string, id: kind + "."}
+	#B: {kind: "b", id: kind + ".", sub: #A | #B}
+	k:   "a"
+	out: ({x: #A | #B, x: #B & {sub: {id: "a.", kind: k}}}).x.kind @test(eq, "b")
+}
+
+// A let read by one disjunct was completed by the disjuncts evaluated after
+// it, which failed instead, or which checked a validator of the let against
+// a field only the reading disjunct has.
+lets: {
+	let L1 = {v: 1 & >1, out: v + 1}
+	err: {a: L1.out} | {b: 1} @test(eq, {b: 1})
+
+	let L2 = #C & {id: "storage"}
+	errDefault: *{a: L2.out} | {b: 1} @test(eq, {b: 1})
+
+	let L3 = #C & {id: "other"}
+	ok: *{a: L3.out} | {b: 1} @test(eq, *{a: "k/other"} | {b: 1})
+
+	let L4 = {x: 1 & !=okOther.a, out: x + 1}
+	okOther: {a: L4.out} | *{b: 1} @test(eq, *{b: 1} | {a: 2})
+}
+
+// None of the nodes of a disjunction inside an inline struct is rooted.
+inline: {
+	err: ({x: *{a: (#C & {id: "storage"}).out, c: 1} | {c: 2}}).x.c @test(eq, 2)
+	ok:  ({x: *{a: (#C & {id: "other"}).out, c: 1} | {c: 2}}).x.c   @test(eq, 1)
+}
+inlineLet: {
+	let L = #C & {id: "storage"}
+	err: ({x: *{a: L.out, c: 1} | {c: 2}}).x.c @test(eq, 2)
+}
+
+// A guard absorbs the error of the let it reads, as it does when the
+// definition is used outside of a disjunct.
+guard: {
+	#E: {
+		let r = {role: "b" & !="b"}
+		let names = {for k, v in r if v != "" {(k): v}}
+		let picked = {for k, _ in {other: 1} if names[k] != _|_ {(k): true}}
+		out: [for k, _ in picked {k}]
+	}
+	direct:   (#E & {}).out                          @test(eq, [])
+	disjunct: (*{e: (#E & {}).out, c: 1} | {c: 2}).c @test(eq, 1)
+}
+-- out/errors.txt --
+[incomplete] #C.out: invalid interpolation: non-concrete value !="storage" (type string):
+    ./in.cue:3:7
+    ./in.cue:2:16
+[incomplete] nested.#A.id: non-concrete value string in operand to +:
+    ./in.cue:10:25
+    ./in.cue:10:13
+[incomplete] nested.#B.sub: 2 errors in empty disjunction:
+nested.#B.sub: structural cycle
+nested.#B.sub.id: non-concrete value string in operand to +:
+    ./in.cue:10:25
+    ./in.cue:10:13
+-- out/eval/stats --
+Leaks:  55
+Freed:  123
+Reused: 106
+Allocs: 72
+Retain: 0
+
+Unifications: 127
+Conjuncts:    229
+Disjuncts:    24
+
+NumCloseIDs: 27
