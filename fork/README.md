@@ -18,7 +18,7 @@ Each fix also exists on its own branch, isolated on the `v0.18.0-rc.3` tag.
 |---|---|---|
 | `fix/rc3-uninit-parent-state` | Panic "vertex … not initialized": a bare parent state, from a reclaimed and revived vertex | Medium-high |
 | `fix/rc3-let-pushdown` | Silent value loss: a `let` in a comprehension body blocks its pushdown | High |
-| `fix/rc3-try-finalize` | Silent constraint loss or spurious cycle: a try clause's target arcs finalized before it yields | High |
+| `fix/rc3-try-finalize` | Silent constraint loss or spurious cycle: a try clause pre-evaluates its expression by finalizing an inline vertex, which may finalize the fields its body yields into before it yields (`try X = x? {x: a: <=2}` exported `x.a: 5`; `{x: b: 1}` was a cyclic reference; a dynamic field was dropped). While the clause pre-evaluates, finalizing a vertex it is a parent task of is lowered to attemptOnly, and the field set is not frozen; other clauses still report their cycles. Since `339485ddf` (v0.17.0-alpha.2) | High |
 | `fix/rc3-ancestor-flags` | Ancestor completion flags attributed while parent tasks are pending | Hardening, no known impact |
 | `fix/rc3-try-target-probe` | Spurious cycle from a try nested in another try's body | High |
 | `fix/rc3-ready-parent-completion` | Non-concrete value: a pushed-down arc completes before its comprehension has run | High |
@@ -33,11 +33,11 @@ Each fix also exists on its own branch, isolated on the `v0.18.0-rc.3` tag.
 | `fix/rc3-nested-disjunction-errors` | Lost diagnostics: when every disjunct failed only through a nested disjunction (e.g. each reads a field whose own disjunction failed), the error was a bare "empty disjunction" without any cause | High |
 | `fix/rc3-fmt-alias-form` | `cue fmt` wrote the single postfix alias as `~(X)` for files whose language version predates it (below v0.17.0, which cannot parse it); it now keeps `~X` there | High |
 | `fix/rc3-struct-data-incomplete` | `struct.Data` (an addition below) turned an argument that was only incomplete, such as one reading an optional field, into a permanent error, failing evaluation of a field nobody asked to be concrete; it now keeps the argument's error code, as `json.Unmarshal(json.Marshal(v))` does. Based on the `struct.Data` addition | High |
-| `fix/rc3-share-disjunction-safe` | Incomplete value or spurious "cyclic reference to field", a regression in v0.18.0-rc.2: upstream `082c52c57` finalizes the field a reference shares when the reference meets a disjunction (as with `args?: #Map \| string`), to keep sharing. If that field was still being evaluated (a comprehension reading the reference, or an evaluation of its parent or of one of its fields in progress), it was frozen before adding its fields, leaving the disjunction unresolved ("incomplete value {} \| string"). The field is now finalized only when no evaluation it is part of is in progress. The other half of the rc.2 fix, for a field that refers to a definition (`x: #A`) and was dropped as a self-reference, is upstream since `4232b8d36` | High |
+| `fix/rc3-share-disjunction-safe` | Spurious "cyclic reference to field" or lost fields, a regression in v0.18.0-rc.2: upstream `082c52c57` finalizes the vertex a field shares when the field meets a disjunction, to keep sharing. When the field is only evaluated in part, from within an evaluation the vertex depends on (a comprehension of the vertex, or of a vertex it refers to, reading the field), that evaluation was forced before it added its fields. The vertex is now finalized early only while the sharing field is itself being finalized. The self-reference half of the rc.2 fix is upstream since `4232b8d36` | High |
 | `fix/rc3-share-funcarg-chain` | Spurious structural cycle, upstream since functions exist: a function applied, through a wrapper, to the result of an earlier call of the same call site, without any definition. A reference to a parameter that structure shares its argument was dereferenced to the argument's value, evaluated with the callee body's cycle-reference chain instead of the caller's; it now stops at the parameter, whose argument conjunct carries the caller's chain. With the sharing addition below, it also covers the same cycle with a definition on the argument (test `cue/testdata/functions/sharedefs_reapply.txtar`, carried from the former `fix/rc2-share-funcarg-cycle`) | Medium-high |
-| `fix/rc3-comprehension-error-loss` | Silent value loss: a field declared next to a struct-level comprehension (such as `list: [...]`) kept its declared value when the comprehension's clauses failed (an erroneous condition, or one that never becomes concrete), because the error was recorded only on the enclosing struct; a reference to the field evaluated before the struct exported `[]` with exit 0. The error now also applies to each field the comprehension's body or else clause declares. Not bisected: v0.16.1 already loses the error for `if` without `else`; v0.18 also loses it with `else` | High (fatal errors), Medium-high (incomplete errors) |
-| `fix/rc3-call-closedness-path` | Lost diagnostics, a regression in v0.18.0-rc.2: upstream `7bf42f62f` reports an error arising in a function call at the field holding the call, but dropped the error's path within the argument, so a closedness error below an argument read only "field not allowed" without naming the rejected field, and distinct failures at the same call read the same and were deduplicated into one. An error below an argument now names its path within the argument, from the parameter, in front of its message (`w: cfg.extra: field not allowed`), also when the error wraps another, such as a failed validator; an error at the argument itself reads as upstream reports it | High |
-| `fix/rc3-deferred-disjunct-scope` | Spurious "field not allowed" and silently accepted invalid values, a regression in v0.18.0-rc.2: upstream `b68cd7163` completes a field of an inline struct or let that a task read too early by a task of the referrer, recorded on the innermost rooted node. Within a disjunct whose nodes are all internal (a disjunction inside an inline struct), that node lies outside the disjunct, so an error of a discarded disjunct failed the referrer, a let read in one disjunct was checked in the others, and a let's error did not fail the disjunct reading it. The search now stops at the disjunct being evaluated. Not on v0.16.1 or v0.18.0-rc.1 | High (cause), Medium-high (fix) |
+| `fix/rc3-comprehension-error-loss` | Silent value loss: a field declared next to a struct-level comprehension (such as `x: [...]`) kept its declared value when the comprehension's clauses failed, because the error was recorded only on the enclosing struct; a reference evaluated before the struct exported `[]` with exit 0. The error is now added as a conjunct of each field the body or else clause declares, so embeddings and loops over the field see it too. Incomplete and else cases since `339485ddf` (v0.17.0-alpha.2); a fatal guard without else since `748a68589` (v0.5.0-alpha.1) | High |
+| `fix/rc3-call-closedness-path` | Lost diagnostics, a regression in v0.18.0-rc.2: upstream `7bf42f62f` reports an error arising in a function call at the field holding the call, but dropped the error's path within the argument, so a closedness error below an argument read only "field not allowed", and distinct failures at the same call were deduplicated into one. An error below an argument is now wrapped in an error naming its path from the parameter (`w: cfg.extra: field not allowed`), whatever its kind, also when it wraps another error such as a failed validator | High |
+| `fix/rc3-deferred-disjunct-scope` | Spurious "field not allowed" and silently accepted invalid values, a regression in v0.18.0-rc.2: upstream `b68cd7163` completes a field of an inline struct or let that a task read too early with a task recorded by `rootedTaskNode`, which searched the whole task stack. Inside a disjunct, that recorded the completion outside of it: an error of a discarded disjunct failed the referrer, and a let's error landed in another disjunct, accepting an invalid one. The search now only considers the tasks the innermost disjunct started (the task stack depth recorded in its overlay frame) | High |
 
 ## Additions
 
@@ -89,8 +89,8 @@ plain v0.18.0-rc.3 without them. These needed adapting:
 - `fix/rc3-call-arg-cycle`: upstream `897d511cf` moved the call check ahead of
   the deferral in `conjunct.go`; the deferral now tests whether the call's
   arguments reach the cycle within upstream's structure.
-- `fix/rc3-share-disjunction-safe`: reduced to its in-progress check, as
-  described above.
+- `fix/rc3-share-disjunction-safe`: reduced to its in-progress check
+  (since replaced, see below).
 - `fix/rc3-share-funcarg-chain`: placed next to upstream's new `sharesOpened`;
   the code is unchanged.
 - `fix/rc3-export-let`, `fix/rc3-call-memo-copies`,
@@ -101,6 +101,34 @@ plain v0.18.0-rc.3 without them. These needed adapting:
 
 On this branch, the goldens that depend on several fixes together are
 updated in one commit.
+
+## Revised while preparing upstream changes
+
+Batch 1 of the upstream preparation re-derived eight fixes from first
+principles, as single commits on `cjorge-graphops/cue` branches based on
+upstream master, with issue drafts on this repository's branch
+`upstream/rc3-batch1` (`fork/upstream/`). Where that produced a better fix,
+it replaced the one here, as commits on top of this branch and of the
+`fix/rc3-` branch; render parity with `v0.18.0-rc.3-graphops.1` holds:
+
+- `fix/rc3-share-disjunction-safe`: the walk for an evaluation in
+  progress missed one in a vertex the shared one refers to (`x: y`); now
+  a condition on the sharing field (`fix/share-disjunction-in-progress`).
+- `fix/rc3-call-closedness-path`: the same output with a third of the
+  code and no new error type (`fix/call-error-argument-path`).
+- `fix/rc3-try-finalize`: the exemption covered every clause of a
+  comprehension with a try clause, hiding the cycle of a later if clause,
+  and a dynamic field was still rejected; now limited to the try clause's
+  pre-evaluation (`fix/try-own-arcs-finalize`).
+- `fix/rc3-deferred-disjunct-scope`: the same results without an
+  unreachable fallback that loses a let's error when forced
+  (`fix/deferred-completion-disjunct-scope`).
+- `fix/rc3-comprehension-error-loss`: the error recorded in the fields'
+  state was missed by an embedding of the field; now added as a conjunct
+  (`fix/comprehension-error-fields`).
+
+`let-pushdown`, `pushdown-notify` and `buildexpr-closedness` kept their
+code; their upstream versions only change comments and tests.
 
 ## Releases
 
