@@ -1,0 +1,27 @@
+# Found while reducing share-disjunction-safe; none is fixed by the fork.
+# Each file is checked with: cue export <file>
+-- u5.cue --
+#M: {...}
+x: {
+	if true {a: 1}
+	for k, v in out {b: v}
+}
+out: x
+out: #M | int
+-- p4.cue --
+#A: #M | int
+#M: {...}
+x: {
+	a: 1
+	b: out.a
+}
+out: x
+out: #A
+-- b5.cue --
+#M: {...}
+y: x.sub.d
+x: sub: {
+	if out.sub != _|_ {d: 2}
+}
+out: x
+out: #M | string

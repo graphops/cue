@@ -1,0 +1,18 @@
+# An error below a function argument is reported at the field holding the
+# call, but should still name its path within the argument: each rejected
+# field is named, and distinct errors are not merged into one.
+! exec cue vet x.cue
+cmp stderr want
+-- x.cue --
+@experiment(functions)
+
+#C: {a: int}
+f: func(x: #C) -> int: 1
+out: f({a: 1, b: 2, c: 3})
+-- want --
+out: x.b: field not allowed:
+    ./x.cue:5:6
+    ./x.cue:5:15
+out: x.c: field not allowed:
+    ./x.cue:5:6
+    ./x.cue:5:21

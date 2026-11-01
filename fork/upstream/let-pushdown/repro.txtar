@@ -1,0 +1,23 @@
+exec cue export x.cue
+cmp stdout want
+
+-- x.cue --
+x: {
+	on: *false | bool
+	if on {
+		let v = 1
+		out: v
+	}
+	n: 1
+}
+if x.n == 1 {
+	x: on: true
+}
+-- want --
+{
+    "x": {
+        "out": 1,
+        "on": true,
+        "n": 1
+    }
+}

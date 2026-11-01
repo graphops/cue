@@ -1,0 +1,22 @@
+exec cue export x.cue
+cmp stdout want
+
+-- x.cue --
+#S: {...}
+#A: #S | int
+x: {
+	a: 1
+	if out.a == 1 {b: 2}
+}
+out: x & #A
+-- want --
+{
+    "x": {
+        "a": 1,
+        "b": 2
+    },
+    "out": {
+        "a": 1,
+        "b": 2
+    }
+}

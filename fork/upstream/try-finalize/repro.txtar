@@ -1,0 +1,31 @@
+# A try clause loses the conjuncts of its own body when its expression refers
+# to a field that the body contributes to: a constraint is silently dropped
+# (drop.cue), and a new field is reported as a cyclic reference (cyc.cue).
+
+! exec cue export drop.cue
+cmp stderr drop.err
+
+exec cue export cyc.cue
+cmp stdout cyc.json
+
+-- drop.cue --
+@experiment(try)
+
+x: a: 5
+try X = x? {x: a: <=2}
+-- drop.err --
+x.a: invalid value 5 (out of bound <=2):
+    ./drop.cue:4:19
+    ./drop.cue:3:7
+-- cyc.cue --
+@experiment(try)
+
+x: a: 5
+try X = x? {x: b: 1}
+-- cyc.json --
+{
+    "x": {
+        "a": 5,
+        "b": 1
+    }
+}

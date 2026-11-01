@@ -1,0 +1,29 @@
+# A disjunction evaluated inside an inline struct: the #B arm of sub fails
+# (kind "a" vs "b"), but its error must not fail out. Expected: out is "b".
+exec cue export a.cue
+cmp stdout want-a
+
+# A let read in one disjunct: L.v violates >1, so the first disjunct must be
+# rejected and x is {b: 1}, not the invalid {a: 2}.
+exec cue export b.cue
+cmp stdout want-b
+
+-- a.cue --
+#A: {kind: string, id: kind + "."}
+#B: {kind: "b", id: kind + ".", sub: #A | #B}
+k: "a"
+out: ({x: #A | #B, x: #B & {sub: {id: "a.", kind: k}}}).x.kind
+-- want-a --
+{
+    "k": "a",
+    "out": "b"
+}
+-- b.cue --
+let L = {v: 1 & >1, out: v + 1}
+x: {a: L.out} | {b: 1}
+-- want-b --
+{
+    "x": {
+        "b": 1
+    }
+}

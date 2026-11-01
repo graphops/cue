@@ -1,0 +1,28 @@
+# a.b and x are unified with each other, so they must be equal.
+# The pushed-down comprehension adding x.y must also reach a.b.
+exec cue export in.cue
+cmp stdout want
+-- in.cue --
+a: {
+	b: x
+	if b.on {
+		b: {}
+	}
+}
+x: a.b & {on: true}
+if x.on {
+	x: y: 1
+}
+-- want --
+{
+    "a": {
+        "b": {
+            "on": true,
+            "y": 1
+        }
+    },
+    "x": {
+        "on": true,
+        "y": 1
+    }
+}

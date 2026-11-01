@@ -1,0 +1,20 @@
+# In a file, #S & d is rejected: #S does not allow b.
+! exec cue export x.cue
+cmp stderr want-file
+
+# The same conjunction given with -e must be rejected too.
+! exec cue export -e '#S & d' x.cue
+cmp stderr want-expr
+! exec cue eval -e '#S & d' x.cue
+cmp stderr want-expr
+
+-- x.cue --
+#S: {a?: int}
+d: {b: 1}
+x: #S & d
+-- want-file --
+x.b: field not allowed:
+    ./x.cue:2:5
+-- want-expr --
+b: field not allowed:
+    ./x.cue:2:5
