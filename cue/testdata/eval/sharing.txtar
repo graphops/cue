@@ -343,6 +343,35 @@ forwardShared: {
 		#S: {x: 2, sub: {x: 2}}
 	}
 }
+
+// A field sharing a reference that meets a disjunction may be evaluated in
+// part, such as for a selection, from within an evaluation the referenced
+// vertex depends on. The vertex is not finalized then, which would force
+// that evaluation before it adds its fields.
+// https://cuelang.org/issue/XXXX
+inProgress: {
+	#S: {...}
+	#A: #S | int
+
+	// A comprehension of the vertex selects from the field.
+	comprehension: {
+		x: {a: 1, if out.a == 1 {b: 2}} @test(eq, {a: 1, b: 2})
+		out: x & #A @test(eq, {a: 1, b: 2})
+	}
+	// The comprehension belongs to a vertex the shared vertex refers to.
+	reference: {
+		y: {a: 1, if out.a == 1 {b: 2}} @test(eq, {a: 1, b: 2})
+		x: y
+		out: x & #A @test(eq, {a: 1, b: 2})
+	}
+	// The comprehension belongs to a field of the shared vertex.
+	arc: {
+		y: x.sub.d @test(eq, 2)
+		x: #B
+		#B: sub: {c: 1, if out.sub.c == 1 {d: 2}}
+		out: x & #A @test(eq, {sub: {c: 1, d: 2}})
+	}
+}
 -- issue3835.cue --
 // evalv3 regression with "cycle with field" error involving a comprehension
 // with a let that references a top-level field via a pattern constraint.
@@ -509,17 +538,17 @@ forwardShared.closed.c.y: field not allowed:
     ./sharecycle.cue:11:11
 [structural_cycle] shareCycle.t3.Y.x.x: structural cycle
 -- out/eval/stats --
-Leaks:  25
-Freed:  391
-Reused: 364
-Allocs: 52
+Leaks:  35
+Freed:  432
+Reused: 405
+Allocs: 62
 Retain: 0
 
-Unifications: 338
-Conjuncts:    699
-Disjuncts:    56
+Unifications: 367
+Conjuncts:    756
+Disjuncts:    64
 Notifications: 1
 
-NumCloseIDs: 170
+NumCloseIDs: 181
 -- out/todo.txt --
 v3 uses structure sharing (~) extensively in issue3641, issue3546, debug, issue3849, issue3903, and pending sections where v2 expanded values inline. v3 also omits shareCycle.t2.Y.x.x structural cycle error and instead reports conflicting values for shareCycle.t2.Y.x with additional position info.
