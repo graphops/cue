@@ -117,22 +117,17 @@ func (p *taskContext) current() *task {
 // let's copy, which runs with no rooted task when the referrer shares it: it
 // records the work on itself, and the referrer finalizes it.
 //
-// The search does not leave the disjunct being evaluated, if any. The tasks
-// that started before it belong to the node the disjunction is defined on, or
-// to the nodes whose evaluation reached that node, none of which is part of
-// the disjunct. Work recorded on one of them would complete the read node,
-// which belongs to a disjunct that may yet be discarded, outside of that
-// disjunct: its error would fail a node outside the disjunction, or, through
-// the clones of the work, the other disjuncts. When no task of the disjunct is
-// running, the work is recorded on the disjunct itself, which is evaluated to
-// completion before it is accepted.
+// Within the evaluation of a disjunct, only the tasks that evaluation started
+// are considered: their nodes belong to the disjunct, or are reached and
+// completed through it. The earlier tasks belong to the node the disjunction
+// is defined on, whose tasks are cloned into the disjuncts evaluated after
+// this one, or to the nodes whose evaluation reached it, which are completed
+// whichever disjunct is chosen. Work recorded on them would report an error
+// of the disjunct, which may yet be discarded, outside of it.
 func (c *OpContext) rootedTaskNode() *nodeContext {
 	stack := c.stack
-	var disjunct *nodeContext
 	if i := len(c.overlays) - 1; i >= 0 {
-		f := c.overlays[i]
-		stack = stack[f.taskDepth:]
-		disjunct = f.disjunct
+		stack = stack[c.overlays[i].taskDepth:]
 	}
 	for _, t := range slices.Backward(stack) {
 		if !t.node.node.Internal() {
@@ -142,7 +137,7 @@ func (c *OpContext) rootedTaskNode() *nodeContext {
 	if len(stack) > 0 {
 		return stack[len(stack)-1].node
 	}
-	return disjunct
+	return nil
 }
 
 func (p *taskContext) pushTask(t *task) {
