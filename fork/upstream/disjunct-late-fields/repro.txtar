@@ -1,0 +1,24 @@
+# A comprehension adds b to x.args after its guard has read out, which unifies
+# x.args with a disjunction: out must still have every field x.args has.
+exec cue export x.cue
+cmp stdout want
+
+-- x.cue --
+x: {
+	args: a: 1
+	if out.a == 1 {args: b: 2}
+}
+out: x.args & ({...} | int)
+-- want --
+{
+    "x": {
+        "args": {
+            "a": 1,
+            "b": 2
+        }
+    },
+    "out": {
+        "a": 1,
+        "b": 2
+    }
+}

@@ -26,6 +26,8 @@ testscript fork/upstream/<topic>/repro.txtar
 | [pushdown-notify](pushdown-notify/) | field silently lost on a referring struct | 5 | v0.17.0-alpha.2 | `339485ddf` | `fix/pushdown-notify-reference` | kept |
 | [comprehension-error-loss](comprehension-error-loss/) | export exits 0 with `[]` instead of an error | 16 | v0.17.0-alpha.2 (fatal guard: v0.5.0-alpha.1, `748a68589`) | `339485ddf` | `fix/comprehension-error-fields` | replaced |
 | [buildexpr-closedness](buildexpr-closedness/) | `cue export -e '#S & d'` accepts fields `#S` forbids | 3 | v0.17.0-alpha.2 | `a9f3f2a09` | `fix/buildexpr-finalize-context` | kept |
+| [disjunct-pushdown-notify](disjunct-pushdown-notify/) (added later) | field silently lost when a struct with a comprehension meets a disjunction (u5) | 7 | v0.18.0-alpha.3 | `d47e4cee8` | `fix/disjunct-pushdown-notify` | new fix |
+| [disjunct-late-fields](disjunct-late-fields/) (added later, **report only**) | field added after a guard read a disjunction-unified reference is lost (x.args) | 5 | v0.17.0-alpha.2 | `339485ddf` | none | none |
 
 Every introducing commit was confirmed by building it and its parent. Every
 root cause was confirmed with debug prints in a scratch build of rc.3.
@@ -83,6 +85,15 @@ Candidates' reproducers were run against rc.3 and each prepared fix.
   that isn't public. That work will likely fix this regression, or change
   enough to shape how it should be fixed. Revisit once it lands: re-run the
   reproducer on the new upstream, and keep or drop the fork patch.
+- **Added later (2026-11-01):** share-disjunction-safe's fix brings back the
+  old `x.args` loss, so the two side findings in that family were taken up.
+  - u5 is fixed by `disjunct-pushdown-notify`, in the fork and prepared
+    upstream.
+  - `x.args` turned out to be a separate bug, present on plain master. Its
+    fix needs a design decision on disjunctions, so `disjunct-late-fields`
+    is a report without a fix.
+
+  File both alongside share-disjunction-safe.
 - **Side findings:** the builtin-argument error drop is a leftover of #4510,
   so it is a comment there, not a new issue. The other six are new
   (`_side-findings/PRIOR.md`).

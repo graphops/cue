@@ -19,6 +19,10 @@ containing an open definition (`#M: {...}`).
 
 ## u5: `out` silently loses a field of `x` (priority: high)
 
+> **Taken up (2026-11-01):** fixed by `../disjunct-pushdown-notify/`, in the
+> fork and prepared upstream. The cloned disjunct lost the parent tasks of its
+> arcs. Introduced by d47e4cee8 (v0.18.0-alpha.3).
+
 ```cue
 #M: {...}
 x: {
@@ -160,7 +164,8 @@ as reported, and should be re-checked before work starts on them.
   call, but `let L = {o: strings.ToUpper(…)}`, `r: L.o` still loses it
   ([PRIOR.md](PRIOR.md)).
 - **Comprehension adding to a shared selection loses a field (reported,
-  old).** `out: x.args & #A`, where a comprehension on `x` adds to `args`,
+  old).** *Taken up as the report-only `../disjunct-late-fields/`: present on
+  plain master since 339485ddf. Its fix needs a design decision.* `out: x.args & #A`, where a comprehension on `x` adds to `args`,
   loses `b` on v0.17.1 too. This is related to u5 but older. Found while
   preparing share-disjunction-safe. Not known upstream ([PRIOR.md](PRIOR.md)).
   Bisected to 339485ddf. rc.3 reports a spurious cycle error instead (from

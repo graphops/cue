@@ -1,0 +1,20 @@
+exec cue export in.cue
+cmp stdout want
+
+-- in.cue --
+x: {
+	a: 1
+	for _, v in out {b: v}
+}
+out: x & ({...} | int)
+-- want --
+{
+    "x": {
+        "a": 1,
+        "b": 1
+    },
+    "out": {
+        "a": 1,
+        "b": 1
+    }
+}
