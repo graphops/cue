@@ -62,11 +62,103 @@ func (n *nodeContext) sharesSingleValue() bool {
 		return false
 	}
 	// A cyclic reference is left to finalizeSharing, as in that case the
-	// vertex may depend on this node.
-	if n.shareCycleType == NoCycle {
+	// vertex may depend on this node. So is a vertex whose evaluation is
+	// still in progress: finalizing it now would force its outstanding work
+	// from within that evaluation.
+	if !v.isFinal() && n.shareCycleType == NoCycle && !finalizeInterrupts(v) {
 		v.Finalize(n.ctx)
 	}
 	return v.isFinal() && disjunctionOf(v) == nil
+}
+
+// finalizeInterrupts reports whether finalizing v could interfere with an
+// evaluation in progress, which finalizing would force from within.
+//
+// The evaluator records evaluations in progress on the vertices they apply
+// to: a unify call on the stack marks its vertex with the evaluation depth
+// (see nodeContext.markDepth), completeNodeTasks marks it as completing, and
+// a task being run is in the taskRUNNING state on the node it belongs to and,
+// for a comprehension pushed down from a parent, on the arcs it adds fields
+// to (scheduler.parentTasks). Finalizing v finalizes the arcs of v and the
+// vertices v and its arcs share, recursively, so none of them may be in
+// progress. A task running on an ancestor of any of them, such as a
+// comprehension or an embedded reference, may still add conjuncts to them.
+//
+// For example, in
+//
+//	x: args: {
+//		if true {a: "1"}
+//		for k, v in out.args {b: v}
+//	}
+//	out: args: x.args & (#Map | string)
+//
+// out.args is evaluated by the running comprehension of x.args, which would
+// otherwise be frozen before it adds b.
+func finalizeInterrupts(v *Vertex) bool {
+	var c finalizeCheck
+	return c.interrupts(v)
+}
+
+// finalizeCheck holds the vertices visited by finalizeInterrupts, as the
+// vertices shared by arcs may lead back to vertices visited before.
+type finalizeCheck struct {
+	seen map[*Vertex]bool
+}
+
+// interrupts reports whether v, its ancestors or the vertices finalizing v
+// would finalize are in progress; see finalizeInterrupts.
+func (c *finalizeCheck) interrupts(v *Vertex) bool {
+	for p := v.Parent; p != nil; p = p.Parent {
+		if s := p.state; s != nil && p.status != finalized && hasRunningTask(s) {
+			return true
+		}
+	}
+	return c.inProgress(v)
+}
+
+// inProgress reports whether v, its arcs, or the vertices they share are
+// being evaluated.
+func (c *finalizeCheck) inProgress(v *Vertex) bool {
+	if v.status == finalized {
+		return false
+	}
+	if c.seen[v] {
+		return false
+	}
+	if c.seen == nil {
+		c.seen = map[*Vertex]bool{}
+	}
+	c.seen[v] = true
+
+	if s := v.state; s != nil &&
+		(s.evalDepth > 0 || s.isCompleting > 0 || hasRunningTask(s)) {
+		return true
+	}
+	if w, ok := v.BaseValue.(*Vertex); ok && c.interrupts(w) {
+		return true
+	}
+	for _, a := range v.Arcs {
+		if c.inProgress(a) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasRunningTask reports whether a task of n, or one pushed down to n from a
+// parent, is running.
+func hasRunningTask(n *nodeContext) bool {
+	for _, t := range n.tasks {
+		if t.state == taskRUNNING {
+			return true
+		}
+	}
+	for _, t := range n.parentTasks {
+		if t.state == taskRUNNING {
+			return true
+		}
+	}
+	return false
 }
 
 // hasResolver reports whether a disjunct of x is a reference, possibly in a
