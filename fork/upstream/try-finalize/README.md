@@ -1,16 +1,20 @@
-# evaluator: try clause whose expression reaches the arcs its body sets drops the body (constraint lost, or spurious cyclic reference)
+Title: evaluator: try clause drops what it yields into a field its own expression refers to
 
-When the expression of a `try` clause refers to a field that the clause's own
-body also contributes to, the body's conjuncts are lost. A constraint is
-dropped without an error (`drop.cue`), and a new field is reported as a cyclic
-reference (`cyc.cue`).
+No existing issue covers this (searched again on 2026-11-01). #4485 and #4486
+are different `try` shapes; see Analysis.
 
-`try` is experimental: it needs `@experiment(try)` in the file (preview since
-v0.16.0; inside a module, `language: version` must be at least `v0.16.0`).
+### What version of CUE are you using (`cue version`)?
 
-## Reproducer
+v0.18.0-rc.3, and master at a0768bd98, which is the same tree.
 
-```txtar
+### Does this issue reproduce with the latest stable release?
+
+Yes, v0.17.1 fails in the same way. v0.16.1 and v0.17.0-alpha.1 give the
+expected output.
+
+### What did you do?
+
+```
 ! exec cue export drop.cue
 cmp stderr drop.err
 
@@ -40,14 +44,15 @@ try X = x? {x: b: 1}
 }
 ```
 
-### Expected
+### What did you expect to see?
 
-`drop.cue` fails with `x.a: invalid value 5 (out of bound <=2)`, and `cyc.cue`
-exports `{"x": {"a": 5, "b": 1}}`.
+`x` exists, so both try clauses yield their body. `drop.cue` fails because
+`x.a` is 5, which is out of bound `<=2`, and `cyc.cue` exports
+`{"x": {"a": 5, "b": 1}}`. v0.16.1 does both.
 
-### Actual
+### What did you see instead?
 
-`drop.cue` exports without error, and the constraint is not applied:
+`drop.cue` exports without an error, and the constraint is lost:
 
 ```
 {
@@ -65,59 +70,64 @@ x: cyclic reference to field b:
     ./cyc.cue:3:1
 ```
 
-## Versions
+With a dynamic field, as in `try X = x? {x: ("b"): 1}`, the field is lost
+without an error as well.
 
-| Version | Result |
-| --- | --- |
-| v0.18.0-rc.3 (= master) | fails (both) |
-| v0.18.0-rc.2 | fails (both) |
-| v0.18.0-rc.1 | fails (both) |
-| v0.17.1 | fails (both) |
-| v0.16.1 | passes |
+### Analysis
 
 Bisected to 339485ddf ("internal/core/adt: dependency-tracking comprehension
-pushdown", first released in v0.17.0-alpha.2): its parent passes, 339485ddf fails.
+pushdown", https://cuelang.org/cl/1236923, first in v0.17.0-alpha.2). Its
+parent passes.
 
-## Root cause
+`TryClause.yield` (expr.go) finalizes an inline vertex for the expression `x?`
+to find out whether a `?`-marked reference fails. That vertex shares `x`, so
+`Vertex.unify` and `nodeContext.finalizeSharing` (share.go) finalize `x`, and
+`completeAllArcs` finalizes `x.a`/`x.b`. Since 339485ddf, `pushDownDeps`
+(comprehension.go) makes the try comprehension a parent task of these arcs,
+and that comprehension has not yielded yet. When it does,
+`Vertex.insertConjunct` (fields.go) finds `x` finalized and drops the body's
+conjunct without an error. In `cyc.cue`, `x.b` is still a pending placeholder
+when `x` is completed, and `updateArcType` (composite.go) reports the cycle.
+For the dynamic field, the pre-evaluation also freezes the field set of `x`:
+`scheduler.deferFieldSetKnown` (sched.go) does not defer the freeze for the
+current task, which is the try comprehension. I confirmed each step with
+debug prints.
 
-1. `pushDownDeps` (comprehension.go) creates the body's arcs `x`, `x.a`/`x.b`
-   as pending and adds the try comprehension to their `parentTasks`.
-2. `TryClause.yield` (expr.go) pre-evaluates `x?` in an inline vertex and calls
-   `v.Finalize(c)` on it. That inline vertex shares `x`, so `Vertex.unify`
-   (unify.go, sharing branch, `w.unify(...)` with mode `finalize`) and
-   `finalizeSharing` (share.go) finalize `x`. Its `completeAllArcs` then
-   finalizes `x.a`/`x.b`, while the try comprehension is still `taskRUNNING`
-   and has not yielded its body.
-3. When the body is then yielded, `Vertex.insertConjunct` (fields.go) gets a nil
-   state from `getBareState` because `x` is finalized, and returns without
-   adding the conjunct. `{a: <=2}` is lost silently.
-4. For `cyc.cue`, `x.b` is still `ArcPending` when `completeAllArcs` reaches it.
-   `updateArcType(ArcNotPresent)` sees `arcTypeKnown` frozen and calls
-   `reportFieldCycleError` (composite.go), which reports the cyclic reference.
+This is one instance of a pattern from 339485ddf: a field is finalized while a
+pushed-down comprehension that yields into it is still running. Here the field
+is finalized by the comprehension's own try clause.
 
-I confirmed each step with debug prints in a scratch build of rc.3. Before
-339485ddf, pushdown materialized the body's fields early, so nothing was left
-for the pre-evaluation to finalize ahead of the yield.
+`if` and `for` clauses do not finalize what they read (they evaluate with
+`yield` or `attemptOnly`), so `if x.a > 0 {x: a: <=2}` works. When a guard
+does need the final value, as `if x != _|_ {x: b: 1}` does, the cycle is
+reported, and `cycle/compbottom2.txtar` relies on that. The try clause is
+different: its decision only depends on whether its `?`-marked references
+resolve, and finalizing what they refer to is an implementation detail of
+the pre-evaluation.
 
-## Proposed fix
+Related: #4485 (closed, fixed by 5e2823acf) is `try { x: b: x.a? }`, a body
+reading a field it also sets. It is fixed on master and is not this bug. #4486
+(open) is a nested `try` whose target lookup freezes the type of a
+placeholder arc. That is a different path, and the fix proposed below does not
+fix #4486 or interact with a fix for it.
 
-Fork commit `e220d925d` (graphops/cue branch `fix/rc3-try-finalize`): on entry
-to `Vertex.unify`, a `finalize` request is lowered to `attemptOnly` when one
-of the node's `parentTasks` is a running comprehension with a try clause
-(`nodeContext.awaitsRunningTry`). The node is finalized later, after the
-comprehension completes. One check in `unify` covers every path that reaches
-these arcs (sharing, `finalizeSharing`, `completeAllArcs`). The fix is
-limited to try clauses on purpose. Doing the same for every running parent
-task hides real guard cycles, for example `cycle/compbottom2.txtar`. `go test
-./internal/core/... ./cue/...` passes with the fix. Limits: during the
-pre-evaluation, the try's expression now sees those arcs before they are
-final. The fix also adds a scan of `parentTasks` to each `finalize` call on a
-node that has parent tasks.
+### Proposed approach
 
-## Related
+While a comprehension pre-evaluates a try clause, mark its task. While a
+parent task of a vertex is marked:
 
-- #4485 (closed): `try { x: b: x.a? }`, a try body reading an arc it also
-  sets. This is a different shape, and the fix for it (5e2823acf) is in rc.3.
-- #4486 (open): spurious cyclic reference from a `try` nested in another
-  `try`'s body. This is a different trigger: the inner try's target probe.
-- No existing issue was found for this shape.
+- `Vertex.unify` lowers a request to finalize the vertex to `attemptOnly`. A
+  later finalize completes the vertex once the comprehension has yielded. This
+  one check covers every path the pre-evaluation takes to these arcs.
+- `deferFieldSetKnown` treats the marked task like any other parent task, so
+  it does not freeze the field set of the vertex.
+
+The exemption covers only the pre-evaluation, not the rest of the
+comprehension. An `if` clause after the `try`, as in
+`try Y = y? if x != _|_ {x: b: 1}`, then still reports the same cycle as
+without the `try`. Marking every running comprehension that has a try clause
+would hide that cycle. Marking every running comprehension would also hide
+the cycles in `cycle/compbottom2.txtar`.
+
+I have a change with a regression test in `cue/testdata/comprehensions/try.txtar`
+ready. No existing test output or stats change.
