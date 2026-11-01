@@ -967,6 +967,46 @@ issue4483: {
 	} @test(err, code=incomplete, contains="cannot reference optional field: a")
 }
 
+// =============================================================================
+// Fields the try body contributes to, reached while pre-evaluating it
+// =============================================================================
+
+// Pre-evaluating a try clause may reach the fields its comprehension yields
+// into, here x through the reference x? or s?, which share it. Finalizing x
+// or freezing its field set then dropped the conjuncts the comprehension
+// yielded into x: a constraint without an error, a new field as a cyclic
+// reference.
+// https://cuelang.org/issue/XXXX
+tryOwnFields: {
+	constraint: {
+		x: a: 5 @test(err, code=eval, contains="invalid value 5 (out of bound <=2)")
+		try X = x? {x: a: <=2}
+	}
+	newField: {
+		x: a: 5
+		try X = x? {x: b: 1}
+		@test(eq, {x: {a: 5, b: 1}})
+	}
+	dynamicField: {
+		x: a: 5
+		try X = x? {x: ("b"): 1}
+		@test(eq, {x: {a: 5, b: 1}})
+	}
+	structForm: {
+		x: a: 5
+		s: x
+		try {y: s?, x: b: 1}
+		@test(eq, {x: {a: 5, b: 1}, s: {a: 5, b: 1}, y: {a: 5, b: 1}})
+	}
+	// Only the pre-evaluation is exempt: an if clause reading a field the
+	// body changes is still a cycle, as it is without the try clause.
+	guardAfterTry: {
+		y: 1
+		x: a: 5 @test(err, code=incomplete, contains="cyclic reference to field b")
+		try Y = y? if x != _|_ {x: b: 1}
+	}
+}
+
 -- out/errors.txt --
 [incomplete] requiredUnfilled.x: required field missing: a:
     ./in.cue:83:11
@@ -1035,6 +1075,12 @@ issue4483: {
     ./in.cue:963:35
 issue4483.guards: cannot reference optional field: b:
     ./in.cue:965:35
+[eval] tryOwnFields.constraint.x.a: invalid value 5 (out of bound <=2):
+    ./in.cue:982:21
+    ./in.cue:981:9
+[incomplete] tryOwnFields.guardAfterTry.x: cyclic reference to field b:
+    ./in.cue:1005:17
+    ./in.cue:1004:3
 -- out/todo.txt --
 In v2, the try mechanism does not exist and many operations that succeed in v3
 produce errors in v2 (type errors, index out of range on open lists, etc.).
