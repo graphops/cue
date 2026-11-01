@@ -1,0 +1,117 @@
+# Tests that a let in the body of a comprehension does not keep the
+# comprehension from being pushed down. A let in a comprehension body can only
+# be referenced from within that body, so it does not add field conjuncts to
+# the node the comprehension runs on.
+#
+# This is issue4448.txtar with a let added to the body of the guarded
+# comprehension. Counting the let as adding field conjuncts made the
+# comprehension's completes broader than allTasksCompleted, so it no longer
+# counted as pushed down, and looking up the settled _port arc forced its
+# guard again. That re-entered the in-flight port vertex and froze the
+# "\(port)" interpolation as non-concrete, as in
+# https://cuelang.org/issue/4448.
+-- in.cue --
+import (
+	"list"
+	"strings"
+)
+
+_s: strings.ToLower("A")
+
+#App: {
+	units: {_elem: {
+		spec: {src: string, tags: _} | {tags: _}
+		if spec != _|_ {
+			let L = 1
+			x: L
+		}
+	}}
+	m: units._elem
+}
+
+#Mixin: {
+	#cfg: {
+		entries: w: {
+			_lines: ["\(port)"]
+			port: _
+		}
+		_all: list.Concat([entries.w._lines])
+	}
+
+	...
+}
+
+app: #App
+app: #Mixin
+app: {
+	#cfg: entries: w: {
+		port: units._elem._port
+	}
+	units: _elem: {
+		_port: 8080
+		spec: {
+			src: "x"
+			tags: [#cfg._all]
+		}
+	}
+}
+-- out/compile --
+--- in.cue
+{
+  _s: 〈import;strings〉.ToLower("A")
+  #App: {
+    units: {
+      _elem: {
+        spec: ({
+          src: string
+          tags: _
+        }|{
+          tags: _
+        })
+        if (〈0;spec〉 != _|_(explicit error (_|_ literal) in source)) {
+          let L#1 = 1
+          x: 〈0;let L#1〉
+        }
+      }
+    }
+    m: 〈0;units〉._elem
+  }
+  #Mixin: {
+    #cfg: {
+      entries: {
+        w: {
+          _lines: [
+            "\(〈1;port〉)",
+          ]
+          port: _
+        }
+      }
+      _all: 〈import;list〉.Concat([
+        〈1;entries〉.w._lines,
+      ])
+    }
+    ...
+  }
+  app: 〈0;#App〉
+  app: 〈0;#Mixin〉
+  app: {
+    #cfg: {
+      entries: {
+        w: {
+          port: 〈3;units〉._elem._port
+        }
+      }
+    }
+    units: {
+      _elem: {
+        _port: 8080
+        spec: {
+          src: "x"
+          tags: [
+            〈4;#cfg〉._all,
+          ]
+        }
+      }
+    }
+  }
+}
