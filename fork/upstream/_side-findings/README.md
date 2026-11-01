@@ -10,7 +10,10 @@ v0.17.1, v0.18.0-rc.1 and v0.18.0-rc.3, on `graphops/v0.18.0-rc.3`, and on a
 few hand-made variants. Neither bisection nor root-cause analysis has been
 done yet.
 
-All three share one shape, the same as share-disjunction-safe: a struct `x`
+All three share one shape with share-disjunction-safe, but none is caused by
+the same commit: each behaves the same on rc.3 with `082c52c57` reverted, and
+with the upstream fix prepared for it (`fix/share-disjunction-in-progress`).
+The shape: a struct `x`
 reads from `out`, `out: x`, and `out` is also unified with a disjunction
 containing an open definition (`#M: {...}`).
 
