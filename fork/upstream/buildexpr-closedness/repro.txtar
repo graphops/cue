@@ -7,6 +7,8 @@ cmp stderr want-file
 cmp stderr want-expr
 ! exec cue eval -e '#S & d' x.cue
 cmp stderr want-expr
+! exec cue eval -e '{y: #S & d}' x.cue
+cmp stderr want-nested
 
 -- x.cue --
 #S: {a?: int}
@@ -17,4 +19,7 @@ x.b: field not allowed:
     ./x.cue:2:5
 -- want-expr --
 b: field not allowed:
+    ./x.cue:2:5
+-- want-nested --
+y.b: field not allowed:
     ./x.cue:2:5

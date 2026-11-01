@@ -1,8 +1,21 @@
-# cue: values built by Context.BuildExpr skip closedness checks, so `cue export -e '#S & d'` accepts fields #S does not allow
+# cue: values built by Context.BuildExpr skip closedness checks, so `cue eval -e '#S & d'` accepts fields #S does not allow
 
-## Reproducer
+### What version of CUE are you using (`cue version`)?
 
-```txtar
+<pre>
+$ cue version
+cue version v0.18.0-rc.3
+</pre>
+
+Also reproduced with master at a0768bd98.
+
+### Does this issue reproduce with the latest stable release?
+
+Yes, with v0.17.1. It does not reproduce with v0.16.1.
+
+### What did you do?
+
+```
 # In a file, #S & d is rejected: #S does not allow b.
 ! exec cue export x.cue
 cmp stderr want-file
@@ -12,6 +25,8 @@ cmp stderr want-file
 cmp stderr want-expr
 ! exec cue eval -e '#S & d' x.cue
 cmp stderr want-expr
+! exec cue eval -e '{y: #S & d}' x.cue
+cmp stderr want-nested
 
 -- x.cue --
 #S: {a?: int}
@@ -23,16 +38,19 @@ x.b: field not allowed:
 -- want-expr --
 b: field not allowed:
     ./x.cue:2:5
+-- want-nested --
+y.b: field not allowed:
+    ./x.cue:2:5
 ```
 
-### Expected
+### What did you expect to see?
 
-All three commands fail. The two `-e` commands report `b: field not allowed`, as the
-same conjunction does when it is written in the file.
+The testscript passes: every command fails with `field not allowed`, as the
+conjunction does when it is written in the file, and as it did with v0.16.1.
 
-### Actual
+### What did you see instead?
 
-On v0.18.0-rc.3 (= master), the file is rejected, but the `-e` commands succeed:
+The file is rejected, but the expressions given with `-e` are accepted:
 
 ```
 > ! exec cue export -e '#S & d' x.cue
@@ -43,55 +61,52 @@ On v0.18.0-rc.3 (= master), the file is rejected, but the `-e` commands succeed:
 FAIL: repro.txtar:6: unexpected command success
 ```
 
-`cue eval -e '#S & d'` prints `b: 1`, and `cue def -e '#S & d'` prints the expression
-without error. Nested forms such as `-e '{y: #S & d}'`, `-e '[#S & d][0]'` and
-`-e '#S & {b: 1}'` are accepted too. The Go API has the same problem:
-`ctx.BuildExpr(expr, cue.Scope(v)).Validate()` returns nil. `cue vet -d '#S & d'` is not
-affected.
+`cue eval -e '#S & d'` prints `b: 1`, `cue eval -e '{y: #S & d}'` prints
+`y: b: 1`, and `cue def -e '#S & d'` succeeds too. The Go API behaves the same:
+`ctx.BuildExpr(expr, cue.Scope(v)).Validate()` returns nil for `#S & d`.
+`cue vet -d '#S & d'` is not affected.
 
-## Versions
+### Analysis
 
-- v0.18.0-rc.3 / master: fails
-- v0.18.0-rc.2: fails
-- v0.18.0-rc.1: fails
-- v0.17.1: fails
-- v0.16.1: passes
-- Bisected to a9f3f2a09 ("internal/core/adt: skip typo check on cross-context Finalize",
-  v0.17.0-alpha.2, fix for #4366): its parent passes and it fails.
+Bisected to a9f3f2a09 ("internal/core/adt: skip typo check on cross-context
+Finalize", the fix for #4366, first in v0.17.0-alpha.2); its parent passes.
+Since then `Vertex.unify` skips the typo check when an OpContext other than
+the one which started evaluating a vertex finalizes it, as the original
+evaluation is expected to run the check when its own `Finalize` unwinds.
 
-## Root cause
+`Context.BuildExpr` (cue/context.go) never does that. It evaluates the
+expression with `adt.Resolve`, which for a conjunction or a struct literal
+calls `OpContext.Evaluate` and returns a vertex still `evaluating`, its arcs
+unprocessed. It then passes the vertex to `Context.make`, whose
+`newVertexRoot` (cue/types.go) finalizes it with a new OpContext: the
+`GenerationMismatch` branch fires and the typo check is skipped, so nothing
+ever runs it. A debug build confirms this for `-e '#S & d'`.
 
-`Context.BuildExpr` (cue/context.go) evaluates the expression with the OpContext `c.ctx()`
-through `adt.Resolve` (internal/core/adt/adt.go). A conjunction is an `Evaluator`, so
-`Resolve` calls `OpContext.Evaluate`. That returns a vertex whose `status` is still
-`evaluating`, with `v.state` owned by that OpContext. `BuildExpr` then passes the vertex to
-`Context.make`. `make` creates a new OpContext, and `newVertexRoot` (cue/types.go) calls
-`x.Finalize` with it. In `Vertex.unify` (internal/core/adt/unify.go),
-`v.state.ctx.opID != c.opID` now holds, so it records a `GenerationMismatch` and, since
-a9f3f2a09, sets `checkTypos = false`. That change assumes the original evaluation will run
-the typo check when its own Finalize unwinds. `BuildExpr` never finalizes in the original
-context, so nothing runs the check. A debug build of rc.3 confirms this for
-`-e '#S & d'`: the vertex leaves `Resolve` with status `evaluating`, and the next Finalize
-hits the mismatch with `checkTypos` true on entry.
+The other `Context` and `Value` methods we checked (`CompileString`,
+`BuildFile`, `Encode`, `NewList`, `LookupPath`, `FillPath` with an
+`ast.Expr`, `Unify`) are not affected: they either hand `make` a vertex no
+context has evaluated yet, or finalize their result in the context that
+evaluated it.
 
-## Proposed fix
+This is unrelated to the comprehension pushdown (339485ddf) behind several
+other recent regressions.
 
-Call `v.Finalize(ctx)` in `BuildExpr` after `adt.Resolve`, with the same OpContext, before
-`c.make(v)`. `Context.Encode` already does this. The vertex is then `finalized` before the
-second OpContext sees it, so the typo check runs with consistent defIDs, and the Finalize in
-`make` does nothing. The change is 5 lines in cue/context.go, plus `TestBuildExprClosedness`
-in cue/build_test.go and cmd/cue/cmd/testdata/script/eval_e_closedness.txtar. It leaves the
-a9f3f2a09 skip in place for the case it targets: re-entrant `value.Make` during evaluation,
-as in #4366. Limit: the fix only covers `BuildExpr`. Other API paths that return a partly
-evaluated vertex through a new OpContext may have the same gap; we did not audit them. Fork
-commit: graphops/cue branch `fix/rc3-buildexpr-closedness`, 8681680.
+### Proposed approach
 
-## Related
+Finalize the vertex in `BuildExpr` with the OpContext that evaluated it,
+before `c.make(v)`, as `Context.Encode` already does. The vertex is then
+finalized with consistent closedness IDs, the `Finalize` in `make` does
+nothing, and the skip from a9f3f2a09 stays in place for the re-entrant case
+it targets (#4366). The change is one line in cue/context.go plus a case in
+cmd/cue/cmd/testdata/script/eval_e.txtar; all tests pass with it.
 
-- #4366 (closed): the issue whose fix, a9f3f2a09, introduced the typo-check skip.
-- #4349 (closed): `-e` with `cue def --out jsonschema` loses nested closedness. That is a
-  different mechanism (jsonschema encoding), not a duplicate.
-- No existing issue found for this bug. Searched for "eval -e field not allowed",
-  "export -e field not allowed", "BuildExpr closedness", "BuildExpr closed",
-  "GenerationMismatch" and "cross-context Finalize", and listed issues matching
-  "closedness -e" and "eval -e not allowed".
+An alternative is to finalize inside `adt.Resolve`, where a
+`// TODO: Finalize here?` already sits. That also passes all tests, but it
+changes the other two callers (`Value.FillPath` with an `ast.Expr` and cue
+struct tags in internal/core/convert), which are not affected, so we prefer
+the local change. Fixing it in `make` or `newVertexRoot` is not possible:
+they do not know the original context, and in the #4366 case that context
+is still mid-evaluation.
+
+We have a commit ready following this approach and can send it once the
+approach is agreed.
