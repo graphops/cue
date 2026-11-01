@@ -1,0 +1,235 @@
+# A call in a struct that is copied wherever it is referenced shares one
+# memoized result when its arguments read only environments the copies have in
+# common, and keeps a result per copy when they read anything else.
+-- in.cue --
+@experiment(functions)
+
+import "strings"
+
+F: func(x: {a: string, ...}) -> {...}: {up: strings.ToUpper(x.a), twice: x.a + x.a}
+
+// The call reads only the activation of Make: every copy of Make's result
+// shares the same arguments.
+Make: func(name: string) -> {...}: {spec: v: F({a: name}), copy: spec}
+shared: {
+	m:     Make("x")
+	again: m.spec
+	more:  [m, m.copy]
+	check: again.v.up
+	checkMore: more[1].v.twice
+}
+
+// The argument reads a field of the enclosing instance: each instance keeps
+// its own result.
+#T: {s: string, out: v: F({a: s})}
+perInstance: {
+	a: #T & {s: "a"}
+	b: #T & {s: "b"}
+	ac: a.out
+	bc: b.out
+	checkA: ac.v.up
+	checkB: bc.v.up
+}
+
+// The argument reads a sibling field: the innermost environment.
+sibling: {
+	#Base: {n: string, v: F({a: n})}
+	p: #Base & {n: "p"}
+	q: #Base & {n: "q"}
+	checkP: p.v.twice
+	checkQ: q.v.twice
+}
+
+// References are lexical: a copy of t.inner still reads t.n.
+lexical: {
+	t: {n: "t", inner: v: F({a: n})}
+	p: {n: "p", inner: t.inner}
+	check: p.inner.v.up
+}
+
+// Each disjunct keeps its own result.
+disjunct: {
+	#D: {n: string, i: v: F({a: n})}
+	d: #D & (*{n: "one"} | {n: "two"})
+	e: [#D & {n: "one"}, #D & {n: "two"}]
+	checkD:  d.i.v.up
+	checkE0: e[0].i.v.up
+	checkE1: e[1].i.v.up
+}
+
+// Arguments that open scopes of their own: struct and list literals,
+// comprehensions, lets and function literals bind their references inside.
+scopes: {
+	G: func(x: {...}) -> {...}: {r: x}
+	#Base: {
+		n: string
+		v: G({
+			lit: {m: n, k: [n, for c in [n] {c}]}
+			let L = n
+			l: L
+			f: (func(y: string) -> string: y + n)("-")
+			if n == "a" {cond: n}
+		})
+	}
+	a: #Base & {n: "a"}
+	b: #Base & {n: "b"}
+	ac: a.v
+	bc: b.v
+	checkA:  ac.r.f
+	checkB:  bc.r.f
+	checkK:  bc.r.lit.k
+	checkL:  ac.r.l
+}
+-- out/compile --
+--- in.cue
+{
+  F: func(x: {
+    a: string
+    ...
+  }) -> {
+    ...
+  }: {
+    up: 〈import;strings〉.ToUpper(〈1;x〉.a)
+    twice: (〈1;x〉.a + 〈1;x〉.a)
+  }
+  Make: func(name: string) -> {
+    ...
+  }: {
+    spec: {
+      v: 〈3;F〉({
+        a: 〈3;name〉
+      })
+    }
+    copy: 〈0;spec〉
+  }
+  shared: {
+    m: 〈1;Make〉("x")
+    again: 〈0;m〉.spec
+    more: [
+      〈1;m〉,
+      〈1;m〉.copy,
+    ]
+    check: 〈0;again〉.v.up
+    checkMore: 〈0;more〉[1].v.twice
+  }
+  #T: {
+    s: string
+    out: {
+      v: 〈2;F〉({
+        a: 〈2;s〉
+      })
+    }
+  }
+  perInstance: {
+    a: (〈1;#T〉 & {
+      s: "a"
+    })
+    b: (〈1;#T〉 & {
+      s: "b"
+    })
+    ac: 〈0;a〉.out
+    bc: 〈0;b〉.out
+    checkA: 〈0;ac〉.v.up
+    checkB: 〈0;bc〉.v.up
+  }
+  sibling: {
+    #Base: {
+      n: string
+      v: 〈2;F〉({
+        a: 〈1;n〉
+      })
+    }
+    p: (〈0;#Base〉 & {
+      n: "p"
+    })
+    q: (〈0;#Base〉 & {
+      n: "q"
+    })
+    checkP: 〈0;p〉.v.twice
+    checkQ: 〈0;q〉.v.twice
+  }
+  lexical: {
+    t: {
+      n: "t"
+      inner: {
+        v: 〈3;F〉({
+          a: 〈2;n〉
+        })
+      }
+    }
+    p: {
+      n: "p"
+      inner: 〈1;t〉.inner
+    }
+    check: 〈0;p〉.inner.v.up
+  }
+  disjunct: {
+    #D: {
+      n: string
+      i: {
+        v: 〈3;F〉({
+          a: 〈2;n〉
+        })
+      }
+    }
+    d: (〈0;#D〉 & (*{
+      n: "one"
+    }|{
+      n: "two"
+    }))
+    e: [
+      (〈1;#D〉 & {
+        n: "one"
+      }),
+      (〈1;#D〉 & {
+        n: "two"
+      }),
+    ]
+    checkD: 〈0;d〉.i.v.up
+    checkE0: 〈0;e〉[0].i.v.up
+    checkE1: 〈0;e〉[1].i.v.up
+  }
+  scopes: {
+    G: func(x: {
+      ...
+    }) -> {
+      ...
+    }: {
+      r: 〈1;x〉
+    }
+    #Base: {
+      n: string
+      v: 〈1;G〉({
+        lit: {
+          m: 〈2;n〉
+          k: [
+            〈3;n〉,
+            for _, c in [
+              〈4;n〉,
+            ] {
+              〈1;c〉
+            },
+          ]
+        }
+        let L#1 = 〈1;n〉
+        l: 〈0;let L#1〉
+        f: func(y: string) -> string: (〈0;y〉 + 〈2;n〉)("-")
+        if (〈1;n〉 == "a") {
+          cond: 〈2;n〉
+        }
+      })
+    }
+    a: (〈0;#Base〉 & {
+      n: "a"
+    })
+    b: (〈0;#Base〉 & {
+      n: "b"
+    })
+    ac: 〈0;a〉.v
+    bc: 〈0;b〉.v
+    checkA: 〈0;ac〉.r.f
+    checkB: 〈0;bc〉.r.f
+    checkK: 〈0;bc〉.r.lit.k
+    checkL: 〈0;ac〉.r.l
+  }
+}

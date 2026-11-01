@@ -118,27 +118,25 @@ nestedDisjunctions.#Leaf.id: required field missing: name:
     ./in.cue:36:25
 [incomplete] nestedDisjunctions._instance.wrapped.spec.item: required field missing: src:
     ./in.cue:53:36
-[incomplete] nestedDisjunctions._instance.result.name: undefined field: spec:
-    ./in.cue:32:23
-    ./in.cue:28:19
-    ./in.cue:53:30
+[incomplete] nestedDisjunctions._instance.wrapped.spec.item: required field missing: src:
+    ./in.cue:53:36
 [incomplete] singleDisjunction.#C.out: invalid interpolation: non-concrete value !="storage" (type string):
     ./in.cue:72:8
     ./in.cue:71:17
 -- out/eval/stats --
-Leaks:  75
-Freed:  310
-Reused: 292
-Allocs: 93
+Leaks:  64
+Freed:  271
+Reused: 253
+Allocs: 82
 Retain: 0
 
-Unifications: 212
-Conjuncts:    666
-Disjuncts:    56
+Unifications: 194
+Conjuncts:    565
+Disjuncts:    48
 
-NumCloseIDs: 160
+NumCloseIDs: 129
 
-ConjunctInfos:       442
+ConjunctInfos:       372
 MaxConjunctInfos:    5
 MaxReqSets:          10
 MaxRedirect:         3

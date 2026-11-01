@@ -158,25 +158,25 @@ union: {
 		n0: {cmd: "x"}
 		n1: {cmd: "x", deps: [n0]}
 		n2: {cmd: "x", deps: [n1]}
-		n3: {cmd: "x", deps: [n2]} @test(shareID:todo=unionN3)
-		n4: {cmd: "x", deps: [n3]} @test(shareID:todo=unionN3, at=deps[0])
+		n3: {cmd: "x", deps: [n2]} @test(shareID=unionN3)
+		n4: {cmd: "x", deps: [n3]} @test(shareID=unionN3, at=deps[0])
 	}
 }
 unionLeaf: union.tasks.n4.deps[0].deps[0].deps[0].deps[0].cmd @test(eq, "x")
 -- out/eval/stats --
-Leaks:  222
-Freed:  2254
-Reused: 2154
-Allocs: 322
+Leaks:  130
+Freed:  1265
+Reused: 1201
+Allocs: 194
 Retain: 0
 
-Unifications: 847
-Conjuncts:    2765
-Disjuncts:    431
+Unifications: 661
+Conjuncts:    1962
+Disjuncts:    245
 
-NumCloseIDs: 433
+NumCloseIDs: 315
 
-ConjunctInfos:       1803
+ConjunctInfos:       1404
 MaxConjunctInfos:    5
 MaxReqSets:          19
 MaxRedirect:         5

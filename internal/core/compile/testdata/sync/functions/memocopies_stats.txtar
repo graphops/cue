@@ -1,0 +1,50 @@
+# A call in a struct that is copied wherever it is referenced is evaluated
+# once, not once per copy: function results are not structure shared, so every
+# reference copies the struct and would repeat the call and the calls in its
+# body.
+#inlinetest:exclude skip — performance regression guarded by out/eval/stats
+-- in.cue --
+@experiment(functions)
+
+Inner: func(n: int) -> {...}: {a: n, b: n + 1, c: [n, n]}
+Mid: func(n: int) -> {...}: {x: Inner(n), y: Inner(n + 1)}
+Outer: func(n: int) -> {...}: {m: Mid(n), copy1: m, copy2: m.x}
+
+r: Outer(1)
+c1: r.m
+c2: r.copy1
+c3: [r, r.copy2]
+-- out/compile --
+--- in.cue
+{
+  Inner: func(n: int) -> {
+    ...
+  }: {
+    a: 〈1;n〉
+    b: (〈1;n〉 + 1)
+    c: [
+      〈2;n〉,
+      〈2;n〉,
+    ]
+  }
+  Mid: func(n: int) -> {
+    ...
+  }: {
+    x: 〈2;Inner〉(〈1;n〉)
+    y: 〈2;Inner〉((〈1;n〉 + 1))
+  }
+  Outer: func(n: int) -> {
+    ...
+  }: {
+    m: 〈2;Mid〉(〈1;n〉)
+    copy1: 〈0;m〉
+    copy2: 〈0;m〉.x
+  }
+  r: 〈0;Outer〉(1)
+  c1: 〈0;r〉.m
+  c2: 〈0;r〉.copy1
+  c3: [
+    〈1;r〉,
+    〈1;r〉.copy2,
+  ]
+}

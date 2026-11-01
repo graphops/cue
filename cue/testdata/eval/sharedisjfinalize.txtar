@@ -168,14 +168,15 @@ graph: {
 graphLeaf: graph.tasks.n3.deps[0].deps[0].deps[0] @test(eq, {cmd: "y", deps: []})
 -- out/eval/stats --
 Leaks:  29
-Freed:  246
-Reused: 206
+Freed:  247
+Reused: 207
 Allocs: 69
 Retain: 0
 
 Unifications: 190
-Conjuncts:    486
+Conjuncts:    487
 Disjuncts:    60
+Notifications: 1
 
 NumCloseIDs: 108
 
