@@ -123,3 +123,33 @@ Follow the batch-1 process (see [`../README.md`](../README.md)):
 
 Re-check each case on the current upstream tag first; they may have been
 fixed since.
+
+## More findings from preparing batch 1 for upstream
+
+Found by the agents re-deriving the batch-1 fixes. None is fixed by the fork or
+by the prepared upstream fixes. Verified by hand where noted. The others are
+as reported, and should be re-checked before work starts on them.
+
+- **Constraint lost behind a guard needing the final value (verified).**
+  `x: a: 5` plus `if json.Marshal(x) != "" {x: a: <=2}`: v0.16.1 reports
+  `x.a: invalid value 5 (out of bound <=2)`, while v0.17.1, rc.3 and the fork
+  export `{"x":{"a":5}}`. A regression since v0.17. Likely the 339485ddf
+  pattern: `insertConjunct` drops conjuncts into a finalized vertex without
+  an error. Making that drop an error would catch the whole class, but 28
+  existing drops in the test suite would need review first (let-pushdown
+  agent).
+- **Field lost through a selected reference (verified, old).**
+  `a: x.y & {z: 1}`, `x: y: on: true`, `if a.on {x: w}`, `w: y: v: 1`: `a`
+  lacks `v: 1` although `x.y` has it, on v0.16.1, rc.3 and the fork. Not a
+  regression. Found while reducing pushdown-notify.
+- **Error dropped in a builtin argument read from an internal node
+  (reported).** For example, `let L = {o: strings.ToUpper((#C & {id:
+  "storage"}).out)}` and `r: L.o` give no error where one is expected. Same
+  on v0.17.1, rc.1, rc.3 and with the fix. Inside a disjunct within an inline
+  struct, it also affects the plain inline-struct case. Found while preparing
+  deferred-disjunct-scope; the probe files were in that agent's scratch
+  directory.
+- **Comprehension adding to a shared selection loses a field (reported,
+  old).** `out: x.args & #A`, where a comprehension on `x` adds to `args`,
+  loses `b` on v0.17.1 too. This is related to u5 but older. Found while
+  preparing share-disjunction-safe.
