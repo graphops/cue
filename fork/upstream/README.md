@@ -16,16 +16,16 @@ go install github.com/rogpeppe/go-internal/cmd/testscript@v1.14.1
 testscript fork/upstream/<topic>/repro.txtar
 ```
 
-| Topic | Symptom on rc.3 | CUE lines | Since | Introduced by |
-|---|---|---|---|---|
-| [share-disjunction-safe](share-disjunction-safe/) | spurious "cyclic reference to field" | 7 | v0.18.0-rc.2 | `082c52c57` |
-| [deferred-disjunct-scope](deferred-disjunct-scope/) | spurious "field not allowed"; invalid value exported | 6 | v0.18.0-rc.2 | `b68cd7163` |
-| [call-closedness-path](call-closedness-path/) | "field not allowed" names no field; errors merged | 3 | v0.18.0-rc.2 | `7bf42f62f` |
-| [let-pushdown](let-pushdown/) | conjunct silently dropped, wrong value exported | 11 | v0.17.0-alpha.2 | `339485ddf` |
-| [try-finalize](try-finalize/) | try body constraint dropped; spurious cycle | 6 | v0.17.0-alpha.2 | `339485ddf` |
-| [pushdown-notify](pushdown-notify/) | field silently lost on a referring struct | 10 | v0.17.0-alpha.2 | `339485ddf` |
-| [comprehension-error-loss](comprehension-error-loss/) | export exits 0 with `[]` instead of an error | 16 | v0.17.0-alpha.2 (fatal case older) | `339485ddf` |
-| [buildexpr-closedness](buildexpr-closedness/) | `cue export -e '#S & d'` accepts fields `#S` forbids | 3 | v0.17.0-alpha.2 | `a9f3f2a09` |
+| Topic | Symptom on rc.3 | CUE lines | Since | Introduced by | Branch on cjorge-graphops/cue | Fork fix |
+|---|---|---|---|---|---|---|
+| [share-disjunction-safe](share-disjunction-safe/) | spurious "cyclic reference to field" | 7 | v0.18.0-rc.2 | `082c52c57` | `fix/share-disjunction-in-progress` | replaced |
+| [deferred-disjunct-scope](deferred-disjunct-scope/) | spurious "field not allowed"; invalid value exported | 6 | v0.18.0-rc.2 | `b68cd7163` | `fix/deferred-completion-disjunct-scope` | replaced |
+| [call-closedness-path](call-closedness-path/) | "field not allowed" names no field; errors merged | 3 | v0.18.0-rc.2 | `7bf42f62f` | `fix/call-error-argument-path` | replaced |
+| [let-pushdown](let-pushdown/) | conjunct silently dropped, wrong value exported | 11 | v0.17.0-alpha.2 | `339485ddf` | `fix/let-comprehension-pushdown` | kept |
+| [try-finalize](try-finalize/) | try body constraint dropped; spurious cycle | 6 | v0.17.0-alpha.2 | `339485ddf` | `fix/try-own-arcs-finalize` | replaced |
+| [pushdown-notify](pushdown-notify/) | field silently lost on a referring struct | 5 | v0.17.0-alpha.2 | `339485ddf` | `fix/pushdown-notify-reference` | kept |
+| [comprehension-error-loss](comprehension-error-loss/) | export exits 0 with `[]` instead of an error | 16 | v0.17.0-alpha.2 (fatal guard: v0.5.0-alpha.1, `748a68589`) | `339485ddf` | `fix/comprehension-error-fields` | replaced |
+| [buildexpr-closedness](buildexpr-closedness/) | `cue export -e '#S & d'` accepts fields `#S` forbids | 3 | v0.17.0-alpha.2 | `a9f3f2a09` | `fix/buildexpr-finalize-context` | kept |
 
 Every introducing commit was confirmed by building it and its parent. Every
 root cause was confirmed with debug prints in a scratch build of rc.3.
@@ -35,6 +35,22 @@ comprehension pushdown"): a field can complete, or be finalized, while a
 pushed-down comprehension that targets it is still pending or running. The
 fixes are local to each symptom; upstream may prefer to address the shared
 cause.
+
+## Status
+
+Each topic is ready to file: `README.md` is the issue text, in upstream's bug
+template, and `PR.md` the pull request text. Each branch holds one signed-off
+commit on upstream master. The commit is written in upstream's style: earlier
+changes are cited as `https://cuelang.org/cl/N`, and `Fixes #XXXX` stands for
+the issue number to fill in. The test file names and test comments carry the
+same placeholder. Upstream asks that an issue's approach be agreed before a
+pull request is sent, so the order is: file the issue, wait for agreement,
+fill in the issue number, then open the pull request.
+
+Re-deriving each fix replaced five of the fork's fixes with the prepared
+version ("replaced" in the table): the fork's were incomplete, too broad, or
+larger than needed. The other three kept their code. See "Revised while
+preparing upstream changes" in the fork's `fork/README.md`.
 
 ## Notes
 
