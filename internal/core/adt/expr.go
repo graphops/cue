@@ -4039,6 +4039,24 @@ func (tb *tryBody) declaresOnly(v *Vertex, f Feature) bool {
 	return declared
 }
 
+// finalizeTryBody finalizes v, the inline vertex pre-evaluating a try clause
+// of the comprehension run by the current task. Doing so may reach the arcs
+// the comprehension was pushed down to, as in
+//
+//	x: a: 5
+//	try X = x? {x: a: <=2}
+//
+// where v shares x. Until the comprehension yields into these arcs, they must
+// not be finalized, nor their field set frozen, or what it yields is dropped.
+// See [scheduler.hasPreEvaluatingParentTask].
+func finalizeTryBody(c *OpContext, v *Vertex) {
+	if t := c.current(); t != nil {
+		t.preEvaluatingTry = true
+		defer func() { t.preEvaluatingTry = false }()
+	}
+	v.Finalize(c)
+}
+
 func (x *TryClause) Source() ast.Node {
 	if x.Src == nil {
 		return nil
@@ -4086,7 +4104,7 @@ func (x *TryClause) yield(s *compState) {
 		// and so that finalizing it leaves tasks blocked on rooted vertices
 		// alone (see [scheduler.inTryBody]).
 		v.getState(c).tryBody = tb
-		v.Finalize(c)
+		finalizeTryBody(c, v)
 
 		if len(tb.awaiting) == 0 {
 			break
