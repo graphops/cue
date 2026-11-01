@@ -116,7 +116,10 @@ it replaced the one here, as commits on top of this branch and of the
   progress missed one in a vertex the shared one refers to (`x: y`); now
   a condition on the sharing field (`fix/share-disjunction-in-progress`).
 - `fix/rc3-call-closedness-path`: the same output with a third of the
-  code and no new error type (`fix/call-error-argument-path`).
+  code and no new error type (`fix/call-error-argument-path`). **Not
+  proposed upstream; fork-only for now.** Upstream is reworking how the
+  inner paths of wrapped errors are reported (#2782), which will likely fix
+  this or change how it should be fixed. Revisit when that work lands.
 - `fix/rc3-try-finalize`: the exemption covered every clause of a
   comprehension with a try clause, hiding the cycle of a later if clause,
   and a dynamic field was still rejected; now limited to the try clause's
