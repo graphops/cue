@@ -1,0 +1,67 @@
+# Tests a comprehension in a struct that is unified with a disjunction. The
+# comprehension is a parent task of the fields its body declares, and runs in
+# each disjunct after the struct is cloned for it. Those fields must remain
+# pending in the disjunct until it has run, rather than being taken as absent.
+-- in.cue --
+// The comprehension iterates over the field it is in.
+self: {
+	out: ({...} | int) & {
+		a: 1
+		for _, v in out {b: v}
+	}
+}
+
+// The field refers to a struct with the comprehension, which iterates over
+// that field.
+reference: {
+	x: {
+		a: 1
+		for _, v in out {b: v}
+	}
+	out: x & ({...} | int)
+}
+
+// The guard asks whether the field its body declares is absent, which is a
+// cycle, as it is without the disjunction. Both disjuncts fail, the one with
+// the struct for that cycle.
+guard: {
+	out: ({...} | int) & {
+		a: 1
+		if out.b == _|_ {b: 1}
+	}
+}
+-- out/compile --
+--- in.cue
+{
+  self: {
+    out: (({
+      ...
+    }|int) & {
+      a: 1
+      for _, v in 〈1;out〉 {
+        b: 〈1;v〉
+      }
+    })
+  }
+  reference: {
+    x: {
+      a: 1
+      for _, v in 〈1;out〉 {
+        b: 〈1;v〉
+      }
+    }
+    out: (〈0;x〉 & ({
+      ...
+    }|int))
+  }
+  guard: {
+    out: (({
+      ...
+    }|int) & {
+      a: 1
+      if (〈1;out〉.b == _|_(explicit error (_|_ literal) in source)) {
+        b: 1
+      }
+    })
+  }
+}
