@@ -87,6 +87,13 @@ This is one instance of a cause shared with other regressions from 339485ddf:
 a field completes without the outcome of a pushed-down comprehension that
 targets it.
 
+Related: I found no existing report. `cue/testdata/eval/issue2550.txtar`
+records `foo` as `string` next to `if bar.missing == "x" {foo: ...}`, which is
+this behaviour, but that test was written for a panic (#2550). d0182fcb6
+(#4448) and e147bfc48 (#4533) changed how `Vertex.lookup` treats the
+pushed-down comprehensions of a member arc. They are not the cause:
+v0.17.1 does not contain d0182fcb6 and already fails.
+
 ### Proposed approach
 
 When the clauses of a comprehension fail (other than with a cycle error, which

@@ -72,7 +72,7 @@ FAIL: repro.txtar:2: stdout and want differ
 
 ### Analysis
 
-Bisected to 339485ddf ("dependency-tracking comprehension pushdown"); its parent 376710808 passes. At 339485ddf the variant without the let fails too. e147bfc48 ("stop lookups from forcing pushed-down comprehensions") fixed that variant but not this one.
+Bisected to 339485ddf ("dependency-tracking comprehension pushdown"); its parent 376710808 passes. At 339485ddf the variant without the let fails too. e147bfc48 ("stop lookups from forcing pushed-down comprehensions", the fix for #4533) fixed that variant but not this one.
 
 `pushDownDeps` (internal/core/adt/comprehension.go) adds `fieldConjunctsKnown` to a comprehension's `completes` for each let in its body. So the `if on` comprehension is not counted as pushed down. To resolve `x.n` in the top-level guard, `SelectorExpr.resolve` calls `OpContext.processRef`, which runs `process(arcTypeKnown|fieldSetKnown, yield)` on `x`. That selects tasks that complete `fieldConjunctsKnown`, so the `if on` comprehension runs now. Its guard reads `x.on` while the top-level comprehension that adds `on: true` is still evaluating its own guard further up the stack, and `x.on` is finalized at its default. `Vertex.insertConjunct` (fields.go) later finds `x.on` finalized and drops `on: true` without an error. I confirmed this sequence with debug prints.
 
@@ -86,4 +86,4 @@ The change also affects `scheduler.mayDeclareArcs`: it no longer treats such a c
 
 This is the narrow fix for the let case. It does not address the general problem described above.
 
-Related: #4448. With a let added to the body of the guarded comprehension in `issue4448.txtar`, that test fails again because the `"\(port)"` interpolation stays unresolved. The proposed change fixes that too. #4520, a different symptom, was also bisected to 339485ddf. #4478 also involves a let in a comprehension, but is a different bug. Its test still passes with the proposed change.
+Related: #4448, #4487, #4533. With a let added to the body of the guarded comprehension in `issue4448.txtar`, that test fails again because the `"\(port)"` interpolation stays unresolved. The proposed change fixes that too. The same holds for #4487: with its `if len(n) != 0` body written as `let m = n` and `out: m`, its reproducer again fails on master with `error in call to len: incomplete argument list (type list)`, and passes with the proposed change. #4520, a different symptom, was also bisected to 339485ddf. #4478 also involves a let in a comprehension, but is a different bug. Its test still passes with the proposed change.

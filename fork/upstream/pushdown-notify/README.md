@@ -79,7 +79,16 @@ registration too, because `x` has all its ancestors processed.
 #4520 and #4487 were bisected to the same commit and have the same shape,
 with different symptoms. In all three, a pushed-down comprehension that
 targets a field is still pending or running, and some code treats the
-field as complete because its parent is.
+field as complete because its parent is. Both are fixed on master
+(b218faaa6 and d47e4cee8), but those changes do not cover this case.
+
+#4524 has a similar shape: `m1: c1 & {y: 3}`, with
+`if c1.x == 2 {c1: #B}` adding to `c1` under explicitopen. It is a
+different bug. It still fails with the change below, and without
+explicitopen (`c1: {x: 2, ...}`) the same shape passes on master. The same
+miss does affect closedness when the guard reads the referring field.
+With `m1: c1 & {y: 3}`, `c1: {x: 2, ...}` and `if m1.x == 2 {c1: #B}`,
+master accepts `m1.y`.
 
 ### Proposed approach
 

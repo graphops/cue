@@ -109,7 +109,12 @@ Related: #4485 (closed, fixed by 5e2823acf) is `try { x: b: x.a? }`, a body
 reading a field it also sets. It is fixed on master and is not this bug. #4486
 (open) is a nested `try` whose target lookup freezes the type of a
 placeholder arc. That is a different path, and the fix proposed below does not
-fix #4486 or interact with a fix for it.
+fix #4486 or interact with a fix for it. The fixes for #4098 (7d035b83b) and
+#4483 (e7fa93e0c) let the pre-evaluation finalize the rooted vertices that a
+try body refers to. The fix below keeps that: it only affects the arcs that
+the try comprehension itself yields into. The `if` form of #4425 works, but
+its `try` form, `try L = local? {local: _zones[L.zone]}`, also drops
+`sos_region` silently.
 
 ### Proposed approach
 
