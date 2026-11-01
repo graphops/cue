@@ -1,4 +1,4 @@
-# Found while reducing share-disjunction-safe; none is fixed by the fork.
+# Found while reducing share-disjunction-safe; none is fixed by the fork. See ../README.md for versions.
 # Each file is checked with: cue export <file>
 -- u5.cue --
 #M: {...}

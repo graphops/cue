@@ -49,6 +49,12 @@ cause.
 - Upstream issue #4486 (open) is the spurious cycle fixed by the fork's
   `try-target-probe`, which is not in this batch.
 - `_side-findings/cases.txtar`: three problems found while reducing, none
-  fixed by the fork: `u5` (rc.1 regression, `out` loses a field `x` has),
-  `p4` (spurious "field not allowed" against an open definition, all
-  versions), `b5` (panic "not properly initialized", all versions).
+  fixed by the fork, causes not analyzed:
+  - `u5`: `out` loses a field that `x` has, although `out: x`. Correct on
+    v0.17.1, wrong since v0.18.0-rc.1.
+  - `p4`: spurious "field not allowed" against an open definition. Correct
+    on v0.16.1, wrong since v0.17.1 at the latest.
+  - `b5`: `cue export` panics with "not properly initialized" since v0.17.1
+    at the latest, while `cue eval` prints values. v0.16.1 reports an
+    error instead. The correct result may be a cycle error, but never a
+    panic.
