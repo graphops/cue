@@ -1253,6 +1253,25 @@ entitlement: {
 	ncLComp:  (func(g: func([for v in [1] {v}]) -> int) -> int: 7)(cbA) @test(eq, 7, hint="a comprehension is taken to call, even one that calls nothing")
 	ncIdx:    (func(g: func(#Sel.l[_n()]) -> int) -> int: 7)(cbA) @test(eq, 7)
 }
+
+// An error below an argument, rather than at the argument itself (see
+// errorPaths), names its path within the argument, starting with the
+// parameter: a closedness error names the field it rejects, and distinct
+// errors at the same call are reported apart.
+argumentPaths: {
+	#C:      {a: int}
+	c:       func(x: #C) -> int: 1
+	atArg:   c(1) @test(err, code=eval, contains="atArg: conflicting values")
+	closed:  c({a: 1, b: 2, d: 3}) @test(err, code=eval, contains="x.b: field not allowed")
+	m:       func(x: {n: matchN(1, [>0, <10])}) -> int: 1
+	matched: m({n: 5}) @test(err, code=eval, contains="x.n: invalid value 5 (does not satisfy matchN)")
+	take:    func(w: {...}) -> int: 1
+	inArg:   take({k: c({a: 1, b: 2})}) @test(err, code=eval, contains="w.k: x.b: field not allowed")
+	r:       func() -> {foo: #C}: {foo: {a: 1, b: 2}}
+	inRes:   take({k: r()}) @test(err, code=eval, contains="w.k.foo.b: field not allowed")
+	len2:    (func(v: #C) -> int) & len
+	builtin: len2({a: 1, b: 2}) @test(err, code=eval, contains="v.b: field not allowed")
+}
 -- try.cue --
 @experiment(functions)
 @experiment(try)
@@ -1759,15 +1778,37 @@ admission.rxC: invalid value "c" (out of bound =~"b"):
 [eval] entitlement.cfIdx: parameter x of the function supplied for parameter g permits only int, but parameter g permits #Sel.l[0]:
     ./in.cue:1102:9
     ./in.cue:1229:21
+[eval] argumentPaths.atArg: conflicting values 1 and {a:int} (mismatched types int and struct):
+    ./in.cue:1249:11
+    ./in.cue:1250:19
+    ./in.cue:1251:13
+[eval] argumentPaths.closed: x.b: field not allowed:
+    ./in.cue:1252:11
+    ./in.cue:1252:20
+argumentPaths.closed: x.d: field not allowed:
+    ./in.cue:1252:11
+    ./in.cue:1252:26
+[eval] argumentPaths.matched: x.n: invalid value 5 (does not satisfy matchN): 2 matched, expected 1:
+    ./in.cue:1253:23
+    ./in.cue:1253:30
+[eval] argumentPaths.inArg: w.k: x.b: field not allowed:
+    ./in.cue:1256:20
+    ./in.cue:1256:29
+[eval] argumentPaths.inRes: w.k.foo.b: field not allowed:
+    ./in.cue:1258:20
+    ./in.cue:1257:45
+[eval] argumentPaths.builtin: v.b: field not allowed:
+    ./in.cue:1260:11
+    ./in.cue:1260:23
 -- out/eval/stats --
-Leaks:  163
-Freed:  3016
-Reused: 2777
-Allocs: 402
+Leaks:  165
+Freed:  3066
+Reused: 2828
+Allocs: 403
 Retain: 0
 
-Unifications: 2990
-Conjuncts:    8248
+Unifications: 3039
+Conjuncts:    8336
 Disjuncts:    135
 
-NumCloseIDs: 1270
+NumCloseIDs: 1282

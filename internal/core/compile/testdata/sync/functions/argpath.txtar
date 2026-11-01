@@ -1,0 +1,177 @@
+# Tests that an error below an argument of a call, reported at the field
+# holding the call, still names its path within the argument: the parameter
+# followed by the labels down to the failing field. A closedness error would
+# otherwise not name the field it rejects, and distinct failures at the same
+# call would read the same. An error at the argument itself names no path.
+# The path precedes the outermost message of an error that wraps another,
+# such as a failed validator or an invalid interpolation, exactly once.
+-- in.cue --
+@experiment(functions)
+
+#Cfg: {
+	name: string
+	opts: port?: int & >0
+}
+
+f: func(cfg: #Cfg) -> string: cfg.name
+
+atArg:  f(1)
+extra:  f({name: "a", extra: 1})
+deeper: f({name: "a", opts: porrt: 1})
+bound:  f({name: "a", opts: port: 0})
+
+// A call inside a function body, given a value that fails a closed type of
+// the inner call only, is reported at the field holding the outer call,
+// followed by its path within the result, and names the path within the
+// inner call's argument.
+#Bus: {
+	items: [string]: string
+	refs: [string]: {ok: bool}
+}
+render: func(id: string, bus: #Bus) -> {name: string}: {name: bus.items[id]}
+build: func(src: {...}) -> {list: [...]}: {
+	list: [for id, _ in src.items {render(id, src)}]
+}
+nested: build({items: a: "a", refs: a: {ok: true, typo: 1}})
+
+// A validator failing below an argument wraps the error saying why.
+#One: {
+	matchN(1, [{a!: _}, {b!: _}])
+	a?: int
+	b?: int
+}
+v:         func(cfg: {x: #One}) -> int: 1
+validator: v({x: {a: 1, b: 1}})
+
+// An interpolation of an interpolation wraps the error twice.
+s:     func(cfg: {n: int}) -> string: "a\("b\(cfg.n)")"
+twice: s({n: 1.5})
+
+// A wrapped error moved out of a call nested in a function body, and out of
+// a call nested in an argument.
+check:           func(bus: {one: #One}) -> int: 1
+viaBody:         func(src: {...}) -> {n: int}: {n: check(src)}
+nestedValidator: viaBody({one: {a: 1, b: 1}})
+take:            func(w: {...}) -> int: 1
+argValidator:    take({k: check({one: {a: 1, b: 1}})})
+-- out/compile --
+--- in.cue
+{
+  #Cfg: {
+    name: string
+    opts: {
+      port?: (int & >0)
+    }
+  }
+  f: func(cfg: 〈0;#Cfg〉) -> string: 〈0;cfg〉.name
+  atArg: 〈0;f〉(1)
+  extra: 〈0;f〉({
+    name: "a"
+    extra: 1
+  })
+  deeper: 〈0;f〉({
+    name: "a"
+    opts: {
+      porrt: 1
+    }
+  })
+  bound: 〈0;f〉({
+    name: "a"
+    opts: {
+      port: 0
+    }
+  })
+  #Bus: {
+    items: {
+      [string]: string
+    }
+    refs: {
+      [string]: {
+        ok: bool
+      }
+    }
+  }
+  render: func(id: string, bus: 〈0;#Bus〉) -> {
+    name: string
+  }: {
+    name: 〈1;bus〉.items[〈1;id〉]
+  }
+  build: func(src: {
+    ...
+  }) -> {
+    list: [
+      ...,
+    ]
+  }: {
+    list: [
+      for id, _ in 〈2;src〉.items {
+        〈5;render〉(〈1;id〉, 〈4;src〉)
+      },
+    ]
+  }
+  nested: 〈0;build〉({
+    items: {
+      a: "a"
+    }
+    refs: {
+      a: {
+        ok: true
+        typo: 1
+      }
+    }
+  })
+  #One: {
+    matchN(1, [
+      {
+        a!: _
+      },
+      {
+        b!: _
+      },
+    ])
+    a?: int
+    b?: int
+  }
+  v: func(cfg: {
+    x: 〈1;#One〉
+  }) -> int: 1
+  validator: 〈0;v〉({
+    x: {
+      a: 1
+      b: 1
+    }
+  })
+  s: func(cfg: {
+    n: int
+  }) -> string: "a\("b\(〈0;cfg〉.n)")"
+  twice: 〈0;s〉({
+    n: 1.5
+  })
+  check: func(bus: {
+    one: 〈1;#One〉
+  }) -> int: 1
+  viaBody: func(src: {
+    ...
+  }) -> {
+    n: int
+  }: {
+    n: 〈2;check〉(〈1;src〉)
+  }
+  nestedValidator: 〈0;viaBody〉({
+    one: {
+      a: 1
+      b: 1
+    }
+  })
+  take: func(w: {
+    ...
+  }) -> int: 1
+  argValidator: 〈0;take〉({
+    k: 〈1;check〉({
+      one: {
+        a: 1
+        b: 1
+      }
+    })
+  })
+}
