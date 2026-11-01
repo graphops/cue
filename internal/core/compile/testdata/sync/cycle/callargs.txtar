@@ -1,0 +1,498 @@
+# Tests that a call is not reported as a structural cycle when it is inherited
+# from a cycle its arguments do not reach.
+#
+# With `b: c`, `c: b` and `b: z: b.v`, looking up b while c is evaluated closes a cycle on
+# the reference to c in b, and every conjunct b inherits from c is marked
+# cyclic, including the call in `c: x: f(k)`. A call in a cyclic conjunct was
+# postponed until its node had a non-cyclic conjunct, unless all its arguments
+# were literals; b.x has none, so it became a structural cycle, depending on
+# evaluation order: c.x, and b.x when the call is declared after the cycle,
+# evaluate fine.
+#
+# Calls whose arguments do reach the cycle are still postponed: see
+# builtins.txtar and stillCyclic below.
+-- a.cue --
+@experiment(functions)
+
+// The call is in a file before the one that wires the cycle.
+files: {
+	_f: func(s: _) -> _: s.a
+
+	config: x: _f({a: "x"})
+}
+-- b.cue --
+files: {
+	blueprint~(_,Bp): {config: Cfg}
+	config~(_,Cfg): Bp.config
+
+	blueprint: config: b: 1
+	blueprint: config: c: blueprint.config.b
+
+}
+filesReordered: {
+	blueprint~(_,Bp): {config: Cfg}
+	config~(_,Cfg): Bp.config
+
+	blueprint: config: b: 1
+	blueprint: config: c: blueprint.config.b
+
+}
+-- z.cue --
+@experiment(functions)
+
+// The same, with the call in a file after the one that wires the cycle.
+filesReordered: {
+	_f: func(s: _) -> _: s.a
+
+	config: x: _f({a: "x"})
+}
+-- in.cue --
+@experiment(functions)
+
+import "math"
+
+// Single files: the call is declared before the cycle.
+funcStructArg: {
+	f: func(s: _) -> _: s.a
+	c: x: f({a: "x"})
+	b: c
+	c: b
+	b: v: 1
+	b: z: b.v
+}
+funcIgnoredArg: {
+	f: func(s: _) -> _: 1
+	c: x: f({})
+	b: c
+	c: b
+	b: v: 1
+	b: z: b.v
+}
+funcRefArg: {
+	f: func(s: _) -> _: s.a
+	k: {a: "x"}
+	c: x: f(k)
+	b: c
+	c: b
+	b: v: 1
+	b: z: b.v
+}
+builtinRefArg: {
+	k: "abc"
+	c: x: len(k)
+	b: c
+	c: b
+	b: v: 1
+	b: z: b.v
+}
+builtinStructArg: {
+	k: {a: 1}
+	c: x: len({a: k.a, b: 2})
+	b: c
+	c: b
+	b: v: 1
+	b: z: b.v
+}
+importArg: {
+	c: x: math.Floor(math.Pi)
+	b: c
+	c: b
+	b: v: 1
+	b: z: b.v
+}
+selectionArg: {
+	c: x: len(c.y)
+	c: y: "abc"
+	b: c
+	c: b
+	b: v: 1
+	b: z: b.v
+}
+selfSelectionArg: {
+	c: x: len(self.y)
+	c: y: "abc"
+	b: c
+	c: b
+	b: v: 1
+	b: z: b.v
+}
+letArg: {
+	let K = "abc"
+	c: x: len(K)
+	b: c
+	c: b
+	b: v: 1
+	b: z: b.v
+}
+letSelectionArg: {
+	c: {
+		let S = self
+		x: len(S.y)
+		y: "abc"
+	}
+	b: c
+	c: b
+	b: v: 1
+	b: z: b.v
+}
+
+// These evaluated fine before.
+comprehensionArg: {
+	k: [1, 2]
+	c: x: len([for v in k {v}])
+	b: c
+	c: b
+	b: v: 1
+	b: z: b.v
+}
+scalarArg: {
+	f: func(s: _) -> _: 1
+	c: x: f(1)
+	b: c
+	c: b
+	b: v: 1
+	b: z: b.v
+}
+callAfterCycle: {
+	b: c
+	c: b
+	b: v: 1
+	b: z: b.v
+	f: func(s: _) -> _: s.a
+	c: x: f({a: "x"})
+}
+-- cycle.cue --
+import "encoding/json"
+
+// Calls whose arguments reach the cycle remain structural cycles.
+stillCyclic: {
+	direct: {
+		x: y: json.Validate(x)
+		x: y: "{}"
+	}
+	indirect: {
+		data: #c
+		data: a: b: "foo"
+		#k: #c
+		#c: {
+			b: string
+			a: matchN(1, [#k])
+		}
+	}
+	selection: {
+		data: #c
+		data: a: b: "foo"
+		#c: {
+			b: string
+			a: matchN(1, [#c.a])
+		}
+	}
+}
+-- out/compile --
+--- a.cue
+{
+  files: {
+    _f: func(s: _) -> _: 〈0;s〉.a
+    config: {
+      x: 〈1;_f〉({
+        a: "x"
+      })
+    }
+  }
+}
+--- b.cue
+{
+  files: {
+    blueprint: {
+      config: 〈1;config〉
+    }
+    config: 〈0;blueprint〉.config
+    blueprint: {
+      config: {
+        b: 1
+      }
+    }
+    blueprint: {
+      config: {
+        c: 〈2;blueprint〉.config.b
+      }
+    }
+  }
+  filesReordered: {
+    blueprint: {
+      config: 〈1;config〉
+    }
+    config: 〈0;blueprint〉.config
+    blueprint: {
+      config: {
+        b: 1
+      }
+    }
+    blueprint: {
+      config: {
+        c: 〈2;blueprint〉.config.b
+      }
+    }
+  }
+}
+--- cycle.cue
+{
+  stillCyclic: {
+    direct: {
+      x: {
+        y: 〈import;"encoding/json"〉.Validate(〈1;x〉)
+      }
+      x: {
+        y: "{}"
+      }
+    }
+    indirect: {
+      data: 〈0;#c〉
+      data: {
+        a: {
+          b: "foo"
+        }
+      }
+      #k: 〈0;#c〉
+      #c: {
+        b: string
+        a: matchN(1, [
+          〈2;#k〉,
+        ])
+      }
+    }
+    selection: {
+      data: 〈0;#c〉
+      data: {
+        a: {
+          b: "foo"
+        }
+      }
+      #c: {
+        b: string
+        a: matchN(1, [
+          〈2;#c〉.a,
+        ])
+      }
+    }
+  }
+}
+--- in.cue
+{
+  funcStructArg: {
+    f: func(s: _) -> _: 〈0;s〉.a
+    c: {
+      x: 〈1;f〉({
+        a: "x"
+      })
+    }
+    b: 〈0;c〉
+    c: 〈0;b〉
+    b: {
+      v: 1
+    }
+    b: {
+      z: 〈1;b〉.v
+    }
+  }
+  funcIgnoredArg: {
+    f: func(s: _) -> _: 1
+    c: {
+      x: 〈1;f〉({})
+    }
+    b: 〈0;c〉
+    c: 〈0;b〉
+    b: {
+      v: 1
+    }
+    b: {
+      z: 〈1;b〉.v
+    }
+  }
+  funcRefArg: {
+    f: func(s: _) -> _: 〈0;s〉.a
+    k: {
+      a: "x"
+    }
+    c: {
+      x: 〈1;f〉(〈1;k〉)
+    }
+    b: 〈0;c〉
+    c: 〈0;b〉
+    b: {
+      v: 1
+    }
+    b: {
+      z: 〈1;b〉.v
+    }
+  }
+  builtinRefArg: {
+    k: "abc"
+    c: {
+      x: len(〈1;k〉)
+    }
+    b: 〈0;c〉
+    c: 〈0;b〉
+    b: {
+      v: 1
+    }
+    b: {
+      z: 〈1;b〉.v
+    }
+  }
+  builtinStructArg: {
+    k: {
+      a: 1
+    }
+    c: {
+      x: len({
+        a: 〈2;k〉.a
+        b: 2
+      })
+    }
+    b: 〈0;c〉
+    c: 〈0;b〉
+    b: {
+      v: 1
+    }
+    b: {
+      z: 〈1;b〉.v
+    }
+  }
+  importArg: {
+    c: {
+      x: 〈import;math〉.Floor(〈import;math〉.Pi)
+    }
+    b: 〈0;c〉
+    c: 〈0;b〉
+    b: {
+      v: 1
+    }
+    b: {
+      z: 〈1;b〉.v
+    }
+  }
+  selectionArg: {
+    c: {
+      x: len(〈1;c〉.y)
+    }
+    c: {
+      y: "abc"
+    }
+    b: 〈0;c〉
+    c: 〈0;b〉
+    b: {
+      v: 1
+    }
+    b: {
+      z: 〈1;b〉.v
+    }
+  }
+  selfSelectionArg: {
+    c: {
+      x: len(〈1〉.y)
+    }
+    c: {
+      y: "abc"
+    }
+    b: 〈0;c〉
+    c: 〈0;b〉
+    b: {
+      v: 1
+    }
+    b: {
+      z: 〈1;b〉.v
+    }
+  }
+  letArg: {
+    let K#1 = "abc"
+    c: {
+      x: len(〈1;let K#1〉)
+    }
+    b: 〈0;c〉
+    c: 〈0;b〉
+    b: {
+      v: 1
+    }
+    b: {
+      z: 〈1;b〉.v
+    }
+  }
+  letSelectionArg: {
+    c: {
+      let S#2 = 〈1〉
+      x: len(〈0;let S#2〉.y)
+      y: "abc"
+    }
+    b: 〈0;c〉
+    c: 〈0;b〉
+    b: {
+      v: 1
+    }
+    b: {
+      z: 〈1;b〉.v
+    }
+  }
+  comprehensionArg: {
+    k: [
+      1,
+      2,
+    ]
+    c: {
+      x: len([
+        for _, v in 〈2;k〉 {
+          〈1;v〉
+        },
+      ])
+    }
+    b: 〈0;c〉
+    c: 〈0;b〉
+    b: {
+      v: 1
+    }
+    b: {
+      z: 〈1;b〉.v
+    }
+  }
+  scalarArg: {
+    f: func(s: _) -> _: 1
+    c: {
+      x: 〈1;f〉(1)
+    }
+    b: 〈0;c〉
+    c: 〈0;b〉
+    b: {
+      v: 1
+    }
+    b: {
+      z: 〈1;b〉.v
+    }
+  }
+  callAfterCycle: {
+    b: 〈0;c〉
+    c: 〈0;b〉
+    b: {
+      v: 1
+    }
+    b: {
+      z: 〈1;b〉.v
+    }
+    f: func(s: _) -> _: 〈0;s〉.a
+    c: {
+      x: 〈1;f〉({
+        a: "x"
+      })
+    }
+  }
+}
+--- z.cue
+{
+  filesReordered: {
+    _f: func(s: _) -> _: 〈0;s〉.a
+    config: {
+      x: 〈1;_f〉({
+        a: "x"
+      })
+    }
+  }
+}
