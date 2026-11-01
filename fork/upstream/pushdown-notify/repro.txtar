@@ -1,25 +1,19 @@
-# a.b and x are unified with each other, so they must be equal.
-# The pushed-down comprehension adding x.y must also reach a.b.
+# a unifies x, so it must have every field x has,
+# including y, which the comprehension adds to x.
 exec cue export in.cue
 cmp stdout want
 -- in.cue --
-a: {
-	b: x
-	if b.on {
-		b: {}
-	}
-}
-x: a.b & {on: true}
-if x.on {
+a: x & {z: 1}
+x: on: true
+if a.on {
 	x: y: 1
 }
 -- want --
 {
     "a": {
-        "b": {
-            "on": true,
-            "y": 1
-        }
+        "on": true,
+        "y": 1,
+        "z": 1
     },
     "x": {
         "on": true,
