@@ -1253,6 +1253,25 @@ entitlement: {
 	ncLComp:  (func(g: func([for v in [1] {v}]) -> int) -> int: 7)(cbA)
 	ncIdx:    (func(g: func(#Sel.l[_n()]) -> int) -> int: 7)(cbA)
 }
+
+// An error below an argument, rather than at the argument itself (see
+// errorPaths), names its path within the argument, starting with the
+// parameter: a closedness error names the field it rejects, and distinct
+// errors at the same call are reported apart.
+argumentPaths: {
+	#C:      {a: int}
+	c:       func(x: #C) -> int: 1
+	atArg:   c(1)
+	closed:  c({a: 1, b: 2, d: 3})
+	m:       func(x: {n: matchN(1, [>0, <10])}) -> int: 1
+	matched: m({n: 5})
+	take:    func(w: {...}) -> int: 1
+	inArg:   take({k: c({a: 1, b: 2})})
+	r:       func() -> {foo: #C}: {foo: {a: 1, b: 2}}
+	inRes:   take({k: r()})
+	len2:    (func(v: #C) -> int) & len
+	builtin: len2({a: 1, b: 2})
+}
 -- try.cue --
 @experiment(functions)
 @experiment(try)
@@ -2672,6 +2691,52 @@ admission: {
       },
     ]) -> int) -> int: 7(〈0;cbA〉)
     ncIdx: func(g: func(〈0;#Sel〉.l[〈0;_n〉()]) -> int) -> int: 7(〈0;cbA〉)
+  }
+  argumentPaths: {
+    #C: {
+      a: int
+    }
+    c: func(x: 〈0;#C〉) -> int: 1
+    atArg: 〈0;c〉(1)
+    closed: 〈0;c〉({
+      a: 1
+      b: 2
+      d: 3
+    })
+    m: func(x: {
+      n: matchN(1, [
+        >0,
+        <10,
+      ])
+    }) -> int: 1
+    matched: 〈0;m〉({
+      n: 5
+    })
+    take: func(w: {
+      ...
+    }) -> int: 1
+    inArg: 〈0;take〉({
+      k: 〈1;c〉({
+        a: 1
+        b: 2
+      })
+    })
+    r: func() -> {
+      foo: 〈1;#C〉
+    }: {
+      foo: {
+        a: 1
+        b: 2
+      }
+    }
+    inRes: 〈0;take〉({
+      k: 〈1;r〉()
+    })
+    len2: (func(v: 〈0;#C〉) -> int & len)
+    builtin: 〈0;len2〉({
+      a: 1
+      b: 2
+    })
   }
 }
 --- try.cue
