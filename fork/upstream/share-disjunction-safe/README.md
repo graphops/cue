@@ -65,3 +65,9 @@ The comprehension need not belong to `x` itself: with `y: {a: 1, if out.a == 1 {
 ### Proposed approach
 
 Finalize the shared vertex early only while the sharing field is itself being finalized (its innermost `unify` call is in `finalize` mode), which is when `finalizeSharing` would finalize the vertex anyway. A field evaluated only in part, as for `out.a` here, keeps the behaviour from before 082c52c57: it keeps sharing only a vertex that is final already. This checks the field rather than the state of the shared vertex, as the second example shows the vertex can be idle. It fixes all three examples, and the stats of `issue4512.txtar`, which 082c52c57 improved, are unchanged, as are those of every other test in `cue/testdata`. I have a change with a regression test ready to send once the approach is agreed.
+
+### Related
+
+- #4512: 082c52c57 updates this issue. The fix keeps its stats unchanged, and those of #4540 too.
+- #4530: another regression from 082c52c57, fixed by 4232b8d36, a different mechanism (cycle detection dropped a conjunct). That fix is in rc.3, where this still fails.
+- #4520, #4526: other recent bugs in which a field read early through structure sharing gives a wrong result. Both are fixed in rc.3 and involve neither a comprehension being frozen nor 082c52c57.

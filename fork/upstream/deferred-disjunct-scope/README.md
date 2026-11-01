@@ -92,3 +92,9 @@ This is not related to the comprehension pushdown of 339485ddf: no comprehension
 Within a disjunct, consider only the tasks started by the evaluation of that disjunct: record the depth of the task stack in each overlay frame (`pushOverlay`), and have `rootedTaskNode` search above the innermost frame's depth. The existing fallback to the current task's node then applies within the disjunct as it does at the top level: a let copy that a field of the disjunct shares, or a node of the disjunct, both completed as part of it. Outside of a disjunct nothing changes, and the stats of `nonrooted.txtar` are unchanged.
 
 I tried two alternatives, which each fail a case: recording the completion on the disjunct itself loses the error in `b.cue`, as the disjunct may have run its own tasks by the time its field reads the let, and recording it on the outermost task of the disjunct lets an error bypass a guard (`if names[k] != _|_`) of the let reading it, the problem described in 47d81c3cb (#4532). I have a change with a regression test ready to send once the approach is agreed.
+
+### Related
+
+- #4510: b68cd7163 fixed it. Its reproducer still passes with the proposed fix.
+- #4532: another regression from b68cd7163, fixed by 47d81c3cb (a pending completion kept a let from becoming a struct). That fix is in rc.3, where this still fails.
+- The message of b68cd7163 notes a separate pre-existing bug: an inline struct that reads back into the disjunction it is read from is evaluated only against the first disjunct. The examples here do not read back into the disjunction.

@@ -80,3 +80,23 @@ changes: `out: x.b: field not allowed`. Putting the argument path into
 `Path()` instead (e.g. `out.x.b`) would name a path that does not exist and
 would be ambiguous with an error in the call's result. A fix along these
 lines is ready (+49/-30 lines in internal/core/adt, plus tests).
+
+How the inner path is presented is the part most open to discussion: #2782
+is the same question for builtins. There, https://cuelang.org/cl/1238666
+(joining the path onto `Path()`) was reverted, and its follow-up
+https://cuelang.org/cl/1238752 was abandoned as superseded by a newer
+change. If that newer work settles how inner paths of wrapped errors are
+reported, we would rather follow it. The regression itself, the field
+not named and distinct errors merged into one, holds whichever form is
+chosen.
+
+### Related
+
+- #4270: since its fix, distinct messages at one position are kept. Here
+  they merge because the lost path makes the two errors identical.
+- #2782, #3186: the same missing inner path for errors from the builtins
+  `json.Validate` and `json.Marshal` ("field not allowed" names no
+  field). The proposed fix does not change them. See above for the
+  reverted and abandoned changes for #2782.
+- #4335: asks for "field not allowed" messages that say what closed the
+  struct.
