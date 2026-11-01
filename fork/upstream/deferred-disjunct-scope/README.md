@@ -1,15 +1,32 @@
-# evaluator: deferred completion of an inline struct or let field escapes the disjunct reading it (v0.18.0-rc.2 regression)
+Title: evaluator: an error in a let or inline struct read by a disjunct escapes that disjunct (v0.18.0-rc.2 regression)
 
-## Reproducer
+### What version of CUE are you using (`cue version`)?
 
-```txtar
-# A disjunction evaluated inside an inline struct: the #B arm of sub fails
-# (kind "a" vs "b"), but its error must not fail out. Expected: out is "b".
+<pre>
+$ cue version
+cue version v0.18.0-rc.3
+
+CUE language version v0.18.0
+</pre>
+
+Also reproduced with the current master (a0768bd98).
+
+### Does this issue reproduce with the latest stable release?
+
+No for `a.cue`: v0.17.1 and v0.18.0-rc.1 export `"out": "b"`. It fails since v0.18.0-rc.2.
+
+`b.cue` never gave the right result, but differently: v0.17.1 and v0.18.0-rc.1 fail with `x: incomplete value {a:2} | {b:1}`, as the let's error is not checked at all. Since v0.18.0-rc.2 the export succeeds with the invalid disjunct.
+
+Bisected to https://github.com/cue-lang/cue/commit/b68cd7163 (the fix for #4510), "internal/core/adt: complete nodes read through a let once the referrer is known". Its parent passes `a.cue` and gives the rc.1 error for `b.cue`.
+
+### What did you do?
+
+```
+# The #B arm of x.sub conflicts on kind and is discarded, so out is "b".
 exec cue export a.cue
 cmp stdout want-a
 
-# A let read in one disjunct: L.v violates >1, so the first disjunct must be
-# rejected and x is {b: 1}, not the invalid {a: 2}.
+# L.v violates >1, so the first disjunct fails and x is {b: 1}.
 exec cue export b.cue
 cmp stdout want-b
 
@@ -34,14 +51,13 @@ x: {a: L.out} | {b: 1}
 }
 ```
 
-### Expected
+### What did you expect to see?
 
-`a.cue` exports `out: "b"` (`sub` resolves to `#A`, the `#B` arm is discarded).
-`b.cue` exports `x: {b: 1}` (the first disjunct reads `L.out`, whose `L.v` fails `>1`).
+A passing test. In `a.cue`, `x.sub` can only be `#A`, as `#B` requires kind `"b"`, and so `x` is `#B` and `out` is `"b"`. In `b.cue`, the first disjunct reads `L.out`, and `L.v` fails its validator, so the first disjunct is eliminated, as `r: L.out` alone fails since #4510.
 
-### Actual
+### What did you see instead?
 
-`a.cue`, a bogus error from the discarded `#B` arm of `sub`:
+`a.cue` fails with an error of the discarded `#B` arm of `x.sub`:
 
 ```
 x.sub.kind: field not allowed:
@@ -50,7 +66,7 @@ x.sub.kind: field not allowed:
     ./a.cue:4:45
 ```
 
-`b.cue`, the invalid disjunct is exported silently and the valid one is dropped:
+`b.cue` exports the disjunct that violates the let's validator:
 
 ```
 {
@@ -60,57 +76,19 @@ x.sub.kind: field not allowed:
 }
 ```
 
-## Versions
+### Analysis
 
-| Version | `a.cue` | `b.cue` |
-| --- | --- | --- |
-| v0.18.0-rc.3 / master (a0768bd98) | fails: "field not allowed" | fails: exports `{a: 2}` |
-| v0.18.0-rc.2 | fails: same | fails: exports `{a: 2}` |
-| v0.18.0-rc.1 | passes | fails: `incomplete value {a:2} \| {b:1}` |
-| v0.17.1 | passes | fails: `incomplete value {a:2} \| {b:1}` |
+Since b68cd7163, when a task reads a field of an inline struct or let copy that is not complete, `OpContext.evalStateCI` schedules a `handleDeferred` task on `rootedTaskNode()`: the node of the innermost running task that is not internal, or the current task's node when all are internal. That search covers the whole task stack, including the tasks that were running when the evaluation of a disjunct started, which belong to the node the disjunction is defined on, or to the fields whose evaluation reached it. A debug build shows:
 
-Both rc.3 outputs first appear at b68cd7163 ("complete nodes read through a let once the referrer
-is known", the fix for #4510). Its parent passes `a.cue` and gives the rc.1 output for `b.cue`.
-At b68cd7163 itself `a.cue` fails with `x.sub.kind: conflicting values "a" and "b"`, also an
-error of the discarded arm. `b.cue` never gave the right answer, but before b68cd7163 the let's
-error was ignored in both disjuncts, so export failed as ambiguous. Since b68cd7163 the error
-eliminates the valid disjunct and the invalid one is exported without an error.
+- `a.cue`: `x` and `x.sub` are in an inline struct, so no node of either disjunction is rooted. `x.sub.id` of the `#B` arm reads `x.sub.kind`, and the completion is recorded on `out`, which then fails with that arm's error.
+- `b.cue`: the disjunct's field `a` shares the let copy `L.out`, whose task reads `L.v`. The only rooted task is the one evaluating the disjunction of `x`, so the completion is recorded on `x` itself. It is cloned into the `{b: 1}` disjunct, evaluated next, which fails, while `{a: 2}` was already accepted without the error.
 
-## Root cause
+The same happens to a let read within a disjunct inside an inline struct: its error then fails the whole field, or eliminates the wrong disjunct.
 
-When a task reads a field of an internal node (inline struct or let copy) that is not finished,
-`OpContext.evalStateCI` (context.go) schedules a `handleDeferred` task on
-`c.rootedTaskNode()`. `processDeferred` (tasks.go) later completes that field and calls
-`ctx.AddBottom` with its error on the node that owns the task. `taskContext.rootedTaskNode`
-(sched.go) walks the whole task stack for the innermost non-internal node, ignoring
-`OpContext.overlays`. Inside a disjunct whose nodes are all internal, that node lies outside the
-disjunct. A debug build of rc.3 shows:
+This is not related to the comprehension pushdown of 339485ddf: no comprehension is involved.
 
-- `a.cue`: the read is `x.sub.kind`, done by the task of `x.sub.id` inside two overlay frames
-  (`x` and `x.sub`). The task is recorded on `out`. When it runs, `x.sub.kind` is completed
-  in the `#B` arm and "field not allowed" is added to `out`.
-- `b.cue`: the read is `L.v`, done by the task of `L.out`. The task is recorded on the original
-  `x`, the overlay root, not on the `{a: L.out}` disjunct. The disjunct that later runs it has
-  arcs `[b]`, so the `{b: 1}` disjunct gets `L.v`'s error and `{a: 2}` is kept without it.
+### Proposed approach
 
-## Proposed fix
+Within a disjunct, consider only the tasks started by the evaluation of that disjunct: record the depth of the task stack in each overlay frame (`pushOverlay`), and have `rootedTaskNode` search above the innermost frame's depth. The existing fallback to the current task's node then applies within the disjunct as it does at the top level: a let copy that a field of the disjunct shares, or a node of the disjunct, both completed as part of it. Outside of a disjunct nothing changes, and the stats of `nonrooted.txtar` are unchanged.
 
-Fork commit 6ba9fee66 (graphops/cue branch `fix/rc3-deferred-disjunct-scope`) stops the search at
-the innermost disjunct being evaluated. `pushOverlay` (overlay.go) also records the disjunct's
-`nodeContext` and `len(c.stack)` on the overlay frame. `rootedTaskNode`, now on `OpContext`,
-looks only at tasks above that depth. If none of them is rooted, it uses the current task's node,
-as before. If no task of the disjunct is running, it uses the disjunct, which is completed before
-it is accepted. Outside a disjunction nothing changes. The stats of
-`cue/testdata/eval/nonrooted.txtar` (the #4510 tests) are unchanged.
-
-Limits: when no rooted task is found inside the disjunct, the work goes on an internal node and
-relies on the disjunct's evaluation completing that node. This works for the cases above and for
-the fork's test `cue/testdata/eval/deferreddisjunct.txtar`, but I have not shown it holds in
-general.
-
-## Related
-
-- #4510 (closed): fixed by b68cd7163, which introduced this.
-- No existing issue found for this regression. Searched for disjunction + let, "field not
-  allowed" + disjunction, deferred, nonrooted and inline struct + disjunction, and checked the
-  issues opened since 2026-10-15.
+I tried two alternatives, which each fail a case: recording the completion on the disjunct itself loses the error in `b.cue`, as the disjunct may have run its own tasks by the time its field reads the let, and recording it on the outermost task of the disjunct lets an error bypass a guard (`if names[k] != _|_`) of the let reading it, the problem described in 47d81c3cb (#4532). I have a change with a regression test ready to send once the approach is agreed.

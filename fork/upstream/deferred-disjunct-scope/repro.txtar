@@ -1,10 +1,8 @@
-# A disjunction evaluated inside an inline struct: the #B arm of sub fails
-# (kind "a" vs "b"), but its error must not fail out. Expected: out is "b".
+# The #B arm of x.sub conflicts on kind and is discarded, so out is "b".
 exec cue export a.cue
 cmp stdout want-a
 
-# A let read in one disjunct: L.v violates >1, so the first disjunct must be
-# rejected and x is {b: 1}, not the invalid {a: 2}.
+# L.v violates >1, so the first disjunct fails and x is {b: 1}.
 exec cue export b.cue
 cmp stdout want-b
 
