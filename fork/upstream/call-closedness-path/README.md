@@ -1,3 +1,9 @@
+> **Status: not to be filed (fork-only).** Held back on 2026-11-01 until
+> upstream's rework of error paths for #2782 lands, since it will likely fix
+> this or change how it should be fixed. Revisit then: re-run `repro.txtar` on
+> the new upstream. The prepared change stays on cjorge-graphops/cue
+> `fix/call-error-argument-path`, for reference only.
+
 evaluator: an error below a function argument no longer names its path, so "field not allowed" names no field and distinct errors merge
 
 ### What version of CUE are you using (`cue version`)?

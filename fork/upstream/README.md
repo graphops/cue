@@ -20,7 +20,7 @@ testscript fork/upstream/<topic>/repro.txtar
 |---|---|---|---|---|---|---|
 | [share-disjunction-safe](share-disjunction-safe/) | spurious "cyclic reference to field" | 7 | v0.18.0-rc.2 | `082c52c57` | `fix/share-disjunction-in-progress` | replaced |
 | [deferred-disjunct-scope](deferred-disjunct-scope/) | spurious "field not allowed"; invalid value exported | 6 | v0.18.0-rc.2 | `b68cd7163` | `fix/deferred-completion-disjunct-scope` | replaced |
-| [call-closedness-path](call-closedness-path/) | "field not allowed" names no field; errors merged | 3 | v0.18.0-rc.2 | `7bf42f62f` | `fix/call-error-argument-path` | replaced |
+| [call-closedness-path](call-closedness-path/) (**not proposed: fork-only**) | "field not allowed" names no field; errors merged | 3 | v0.18.0-rc.2 | `7bf42f62f` | `fix/call-error-argument-path` | replaced |
 | [let-pushdown](let-pushdown/) | conjunct silently dropped, wrong value exported | 11 | v0.17.0-alpha.2 | `339485ddf` | `fix/let-comprehension-pushdown` | kept |
 | [try-finalize](try-finalize/) | try body constraint dropped; spurious cycle | 6 | v0.17.0-alpha.2 | `339485ddf` | `fix/try-own-arcs-finalize` | replaced |
 | [pushdown-notify](pushdown-notify/) | field silently lost on a referring struct | 5 | v0.17.0-alpha.2 | `339485ddf` | `fix/pushdown-notify-reference` | kept |
@@ -65,7 +65,8 @@ behaviourally. The record covers:
 
 Candidates' reproducers were run against rc.3 and each prepared fix.
 
-- **None of the eight is known upstream: file all eight as new issues.**
+- **None of the eight is known upstream. Seven are to be filed as new issues;
+  call-closedness-path is held back (below).**
   Each references the issues its introducing change fixed, plus the closest
   related ones.
 - **let-pushdown:** a let in the guarded body defeats the upstream fixes for
@@ -75,10 +76,13 @@ Candidates' reproducers were run against rc.3 and each prepared fix.
 - **share-disjunction-safe:** fixing it restores the older silent `x.args`
   loss, which 082c52c57 had turned into the cycle error. Its issue says
   so, and that loss should be filed alongside it.
-- **call-closedness-path:** its issue defers on how inner paths are
-  presented to the work on #2782. Upstream's last public change for that,
+- **call-closedness-path: dropped from the upstream set (decided
+  2026-11-01).** It stays a fork-only patch. mvdan is reworking how inner
+  paths of wrapped errors are reported (#2782). The last public change,
   https://cuelang.org/cl/1238752, was abandoned as superseded by a change
-  that isn't public.
+  that isn't public. That work will likely fix this regression, or change
+  enough to shape how it should be fixed. Revisit once it lands: re-run the
+  reproducer on the new upstream, and keep or drop the fork patch.
 - **Side findings:** the builtin-argument error drop is a leftover of #4510,
   so it is a comment there, not a new issue. The other six are new
   (`_side-findings/PRIOR.md`).
