@@ -1,0 +1,79 @@
+# The order of a struct's fields does not depend on where the module cache
+# is. A dependency's files are named by their path in the cache, and so
+# sort before or after the main module's files depending on the cache's
+# directory; that comparison must not reach the result.
+
+env CUE_CACHE_DIR=$WORK/a-cache
+cd $WORK/main
+exec cue export
+cmp stdout $WORK/want-stdout
+
+env CUE_CACHE_DIR=$WORK/zz-cache
+exec cue export
+cmp stdout $WORK/want-stdout
+
+-- want-stdout --
+{
+    "out": {
+        "x": {
+            "a1": "v",
+            "b1": "v",
+            "c1": "v",
+            "d4": "v",
+            "e1": "v",
+            "f1": "v",
+            "g1": "v",
+            "d1": "v",
+            "d2": "v",
+            "d3": "v",
+            "h1": "v",
+            "h2": "v"
+        },
+        "y": {
+            "b": "v",
+            "a": "v"
+        }
+    }
+}
+-- main/cue.mod/module.cue --
+module: "main.org@v0"
+language: version: "v0.17.0"
+deps: "example.com/dep@v0": v: "v0.0.1"
+-- main/main.cue --
+package main
+
+import "example.com/dep"
+
+out: dep.s & {}
+-- _registry/example.com_dep_v0.0.1/cue.mod/module.cue --
+module: "example.com/dep@v0"
+language: version: "v0.17.0"
+-- _registry/example.com_dep_v0.0.1/dep.cue --
+package dep
+
+// The structs declaring the fields of x are all reached through dep.s,
+// so they take the position of that reference in main.cue. The structs
+// that only embed others keep their positions here. These used to be
+// sorted unstably, so which side of main.cue they fell on permuted the
+// structs reached through dep.s, among them those with dynamic fields.
+s: x: {
+	{a1: "v"}
+	{_b, _c}
+	{"\("d1")": "v", d2: "v"}
+	{("d3"): "v"}
+	{d4: "v"}
+	{_e, _f}
+	if true {g1: "v"}
+	{"\("h1")": "v", h2: "v"}
+}
+
+_b: {b1: "v"}
+_c: {c1: "v"}
+_e: {e1: "v"}
+_f: {f1: "v"}
+
+// The comprehension's struct takes the position of dep.s, while the empty
+// struct it embeds keeps its own position here. When the cache sorted
+// first, the two were adjacent and were emitted as one run of the firing,
+// across the two files, which lost the iteration order of b and a.
+s: y: {for k in ["b", "a"] {{}, (k): "v"}}

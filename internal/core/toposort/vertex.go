@@ -127,7 +127,9 @@ package toposort
 // unified. Also, structInfos that correspond to the same position
 // (including no position) will be treated as explicity unified, and
 // so no weight will be given to their relative position within the
-// Vertex's slice of StructInfos.
+// Vertex's slice of StructInfos. StructInfos with dynamic fields are
+// not batched though, so those at the same position keep their order
+// in that slice.
 //
 // TODO: Switch if possible to finding if a struct has been unified
 // with a definition and as much as possible taking order from the
@@ -401,7 +403,17 @@ func VertexFeatures(ctx *adt.OpContext, v *adt.Vertex) []adt.Feature {
 		stats:        ctx.Stats(),
 	}
 
-	slices.SortFunc(roots, vf.compareStructMeta)
+	// Roots in different files are ordered by file name, and so by where
+	// the files are: the names of a dependency's files in the module
+	// cache sort before or after those of the main module depending on
+	// the cache's directory. Nothing below may depend on that order. The
+	// frontier is reset between files, and a run of roots from one
+	// comprehension firing stops at the end of a file. Roots at equal
+	// positions, such as all the structs reached through one reference,
+	// keep the order in which the evaluator added them: an unstable sort
+	// would permute them depending on the roots around them, including
+	// those of other files.
+	slices.SortStableFunc(roots, vf.compareStructMeta)
 	debug("roots: %v\n", roots)
 
 	var batches structMetaBatches
@@ -421,11 +433,18 @@ func VertexFeatures(ctx *adt.OpContext, v *adt.Vertex) []adt.Feature {
 	// label queue drains in natural iteration order; e.g.
 	// `for x in ["A","B"] { (x)1, (x)2 }` produces [A1, A2, B1, B2] rather
 	// than the label-queue-draining order [A1, B1, A2, B2].
+	//
+	// A run does not continue into another file. The frontier is reset
+	// between files, so interleaving the yields of roots in two files
+	// would only drop the order of each, and whether such roots are
+	// adjacent at all depends on how the names of their files compare.
 	for i := 0; i < len(roots); {
 		runEnd := i + 1
 		if compID := roots[i].structInfo.CompID; compID != 0 {
+			filename := roots[i].pos.Filename()
 			for runEnd < len(roots) &&
-				roots[runEnd].structInfo.CompID == compID {
+				roots[runEnd].structInfo.CompID == compID &&
+				roots[runEnd].pos.Filename() == filename {
 				runEnd++
 			}
 		}
