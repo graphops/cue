@@ -88,6 +88,10 @@ type Bottom struct {
 	ChildError   bool // Err is the error of the child
 	NotExists    bool // This error originated from a failed lookup.
 	CloseCheck   bool // This error resulted from a close check.
+	// NotAllowed reports that this error is a failed lookup of a field that a
+	// closed struct does not allow, and nothing else: an error that combines
+	// it with another one does not have it. See [OpContext.retryOptionalLookup].
+	NotAllowed bool
 	// Value holds the computed value so far in case
 	Value Value
 
@@ -332,6 +336,7 @@ func addVertexPositions(err *ValueError, v *Vertex) {
 
 func (v *Vertex) reportFieldError(c *OpContext, pos token.Pos, f Feature, intMsg, stringMsg string) *Bottom {
 	code := IncompleteError
+	notAllowed := false
 	// If v is an error, we need to adopt the worst error.
 	if b := v.Bottom(); b != nil && !isCyclePlaceholder(b) {
 		code = b.Code
@@ -344,6 +349,7 @@ func (v *Vertex) reportFieldError(c *OpContext, pos token.Pos, f Feature, intMsg
 		code = s.errs.Code
 	} else if !v.Accept(c, f) {
 		code = EvalError
+		notAllowed = f.IsString() && v.Kind()&StructKind != 0
 	}
 
 	label := f.SelectorString(c.Runtime)
@@ -356,9 +362,10 @@ func (v *Vertex) reportFieldError(c *OpContext, pos token.Pos, f Feature, intMsg
 	}
 	addVertexPositions(err, v)
 	b := &Bottom{
-		Code: code,
-		Err:  err,
-		Node: v,
+		Code:       code,
+		Err:        err,
+		NotAllowed: notAllowed,
+		Node:       v,
 	}
 	// TODO: yield failure
 	c.AddBottom(b) // TODO: unify error mechanism.
