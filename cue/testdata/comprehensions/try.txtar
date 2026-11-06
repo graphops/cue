@@ -207,11 +207,11 @@ closedness: {
 	}
 	notExistsDef: {
 		try { v: #Def.g? }
-		@test(err, code=eval, path=v, contains="undefined field: %s", args=[g], pos=[1:17, -8:2])
+		@test(eq, {})
 	}
 	notExistsValue: {
 		try { v: d.g? }
-		@test(err, code=eval, path=v, contains="undefined field: %s", args=[g], pos=[1:14, -12:2])
+		@test(eq, {})
 	}
 }
 
@@ -1012,12 +1012,6 @@ tryOwnFields: {
     ./in.cue:83:11
 [incomplete] requiredWithType.x: required field missing: a:
     ./in.cue:101:11
-[eval] closedness.notExistsDef.v: undefined field: g:
-    ./in.cue:208:17
-    ./in.cue:199:2
-[eval] closedness.notExistsValue.v: undefined field: g:
-    ./in.cue:212:14
-    ./in.cue:199:2
 [eval] indexTests.outOfRangeClosed.v: index out of range [10] with length 3:
     ./in.cue:240:23
     ./in.cue:223:2

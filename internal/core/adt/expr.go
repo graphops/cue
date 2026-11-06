@@ -673,7 +673,19 @@ func (c *OpContext) lookupRef(n *Vertex, pos token.Pos, l Feature, optional bool
 // the field is absent, the enclosing try body is marked to be discarded,
 // unless the field exists in the struct the body is inserted into (see
 // [OpContext.lookupInTryTarget]).
+//
+// A ? tests whether a field exists, and a field that a closed struct does not
+// allow does not exist. It must make no difference that it never can: whether
+// a lookup sees base as closed depends on whether base has been evaluated yet,
+// as its closedness is only recorded once its conjuncts are processed. So a
+// field absent from a closed struct is handled as one absent from an open one.
 func (c *OpContext) retryOptionalLookup(base *Vertex, pos token.Pos, l Feature, flags Flags) *Vertex {
+	if c.errs != nil && c.errs.NotAllowed {
+		b := *c.errs
+		b.Code = IncompleteError
+		b.NotAllowed = false
+		c.errs = &b
+	}
 	if c.errs == nil || !c.errs.IsIncomplete() {
 		return nil
 	}
