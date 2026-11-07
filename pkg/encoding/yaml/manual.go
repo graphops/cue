@@ -18,6 +18,8 @@ package yaml
 import (
 	"bytes"
 	"io"
+	"slices"
+	"strings"
 
 	"cuelang.org/go/cue"
 	"cuelang.org/go/cue/ast"
@@ -30,12 +32,52 @@ import (
 // Marshal returns the YAML encoding of v, following the same rules as
 // [cuelang.org/go/encoding/yaml.Encode].
 func Marshal(v cue.Value) (string, error) {
+	return marshal(v, false)
+}
+
+// MarshalSorted is like [Marshal], except that the fields of every struct,
+// at any depth, are ordered by key, comparing the unquoted keys byte by byte,
+// instead of by the order of their declarations. Lists keep their order.
+// The result does not change when declarations move, so it is suited to
+// content that is hashed.
+func MarshalSorted(v cue.Value) (string, error) {
+	return marshal(v, true)
+}
+
+func marshal(v cue.Value, sorted bool) (string, error) {
 	if err := v.Validate(cue.Concrete(true)); err != nil {
 		return "", err
 	}
 	n := v.Syntax(cue.Concrete(true))
+	if sorted {
+		ast.Walk(n, func(n ast.Node) bool {
+			switch n := n.(type) {
+			case *ast.File:
+				sortFields(n.Decls)
+			case *ast.StructLit:
+				sortFields(n.Elts)
+			}
+			return true
+		}, nil)
+	}
 	b, err := cueyaml.Encode(n)
 	return string(b), err
+}
+
+// sortFields orders the fields among decls by key. Any other declarations
+// come first; the encoder gives them no position among the fields.
+func sortFields(decls []ast.Decl) {
+	key := func(d ast.Decl) string {
+		f, ok := d.(*ast.Field)
+		if !ok {
+			return ""
+		}
+		name, _, _ := ast.LabelName(f.Label)
+		return name
+	}
+	slices.SortStableFunc(decls, func(x, y ast.Decl) int {
+		return strings.Compare(key(x), key(y))
+	})
 }
 
 // MarshalStream returns the YAML encoding of v.
