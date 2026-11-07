@@ -77,6 +77,18 @@ var p = &pkg.Package{
 			}
 		},
 	}, {
+		Name: "MarshalSorted",
+		Params: []pkg.Param{
+			{Kind: adt.TopKind},
+		},
+		Result: adt.StringKind,
+		Func: func(c *pkg.CallCtxt) {
+			v := c.Value(0)
+			if c.Do() {
+				c.Ret, c.Err = MarshalSorted(v)
+			}
+		},
+	}, {
 		Name: "MarshalStream",
 		Params: []pkg.Param{
 			{Kind: adt.TopKind},
@@ -134,6 +146,7 @@ Compact:         func(src: bytes | string) -> string
 Indent:          func(src: bytes | string, prefix: string, indent: string) -> string
 HTMLEscape:      func(src: bytes | string) -> string
 Marshal:         func(v: _) -> string
+MarshalSorted:   func(v: _) -> string
 MarshalStream:   func(v: _) -> string
 UnmarshalStream: func(data: bytes | string) -> _
 Unmarshal:       func(b: bytes | string) -> _
