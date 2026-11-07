@@ -79,6 +79,26 @@ func Marshal(v cue.Value) (string, error) {
 	return string(b), err
 }
 
+// MarshalSorted is like [Marshal], except that the fields of every struct,
+// at any depth, are ordered by key, comparing the unquoted keys byte by byte,
+// instead of by the order of their declarations. Lists keep their order.
+// The result does not change when declarations move, so it is suited to
+// content that is hashed.
+func MarshalSorted(v cue.Value) (string, error) {
+	b, err := internaljson.Marshal(sortedValue{v})
+	return string(b), err
+}
+
+// sortedValue is a value which marshals with its fields sorted, so that
+// [MarshalSorted] differs from [Marshal] in nothing else.
+type sortedValue struct {
+	v cue.Value
+}
+
+func (s sortedValue) MarshalJSON() ([]byte, error) {
+	return s.v.MarshalJSONSorted()
+}
+
 // MarshalStream turns a list into a stream of JSON objects.
 func MarshalStream(v cue.Value) (string, error) {
 	// TODO: return an io.Reader and allow asynchronous processing.

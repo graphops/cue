@@ -1,0 +1,247 @@
+# json.MarshalSorted orders the fields of every struct by key, whatever the
+# order of their declarations, and otherwise encodes as json.Marshal does.
+-- in.cue --
+import (
+	"encoding/json"
+	"math"
+)
+
+nested: json.MarshalSorted({
+	z: {y: 1, x: {b: 2, a: 3}}
+	a: true
+})
+
+// Lists keep their order, and the structs in them are sorted.
+lists: json.MarshalSorted({
+	l: [{b: 1, a: 2}, [{d: 3, c: 4}], "x"]
+	k: []
+})
+
+// The result is the same for any order of declarations, in one struct or
+// across unified structs and files: the fields of s and t are declared in
+// opposite orders, here and in b.cue.
+#Base: {
+	id:      string
+	labels?: [string]: string
+	o?: [string]: int
+}
+s: labels: {z: "1"}
+t: labels: {b: "2"}
+s: {#Base, id: "x", o: {y: 1, x: 2}}
+t: {o: {x: 2, y: 1}, id: "x", #Base}
+sameAcrossFiles: json.MarshalSorted(s) == json.MarshalSorted(t)
+unsortedDiffers: json.Marshal(s) != json.Marshal(t)
+sortedBytes:     json.MarshalSorted(s)
+
+// Keys sort by their unquoted bytes, not by their JSON encoding: '"' encoded
+// is \", and so would sort after 'Z', and \u0001 is encoded with a letter.
+keys: json.MarshalSorted({
+	"é":    1
+	"z":    2
+	"Z":    3
+	"10":   4
+	"9":    5
+	"a b":  6
+	"\"":   7
+	"\u0001": 8
+	"<a>":  9
+	"":     10
+})
+
+// A struct reached through a definition is sorted as any other.
+#Embed: {
+	b: {y: 1, x: 2}
+	a: 1
+}
+embedded: json.MarshalSorted({
+	#Embed
+	c: {#Embed, d: 2}
+})
+
+// Only the key order differs from json.Marshal: for a value whose keys are
+// in order, the two are equal, including how values are encoded.
+scalars: {
+	a: "<&> \n\"é"
+	b: 1.0
+	c: 1e3
+	d: 123456789012345678901234567890
+	e: 0.1
+	f: 'bytes'
+	g: null
+	h: false
+	i: [1, "2", 3.5]
+	j: *"default" | string
+	#k: 1
+	_l: 2
+	m?: 3
+}
+scalarsSame: json.MarshalSorted(scalars) == json.Marshal(scalars)
+scalarsBytes: json.MarshalSorted(scalars)
+
+// A non-struct argument encodes as json.Marshal does.
+top: {
+	string: json.MarshalSorted("<a>")
+	number: json.MarshalSorted(1.50)
+	list:   json.MarshalSorted([{b: 1, a: 2}])
+	null:   json.MarshalSorted(null)
+}
+
+// json.Indent composes with it.
+indented: json.Indent(json.MarshalSorted({b: {d: 1, c: [{f: 1, e: 2}]}, a: 2}), "", "  ")
+
+// Non-concrete values and invalid JSON fail as they do in json.Marshal.
+#Open: {a: int}
+incomplete: {
+	struct:      json.MarshalSorted({b: 1, a: int})
+	structPlain: json.Marshal({b: 1, a: int})
+	nested:      json.MarshalSorted({a: [{b: string}]})
+	nestedPlain: json.Marshal({a: [{b: string}]})
+	reference:   json.MarshalSorted(#Open)
+}
+invalid: {
+	conflict:       json.MarshalSorted({b: 1, a: 1 & 2})
+	conflictPlain:  json.Marshal({b: 1, a: 1 & 2})
+	nonFinite:      json.MarshalSorted(math.Pow(0, -1))
+	nonFinitePlain: json.Marshal(math.Pow(0, -1))
+}
+-- b.cue --
+s: labels: {b: "2"}
+t: labels: {z: "1"}
+-- out/json-v3 --
+Errors:
+invalid.conflict: error in call to encoding/json.MarshalSorted: conflicting values 2 and 1:
+    ./in.cue:99:18
+    ./in.cue:99:47
+    ./in.cue:99:51
+invalid.conflictPlain: error in call to encoding/json.Marshal: conflicting values 2 and 1:
+    ./in.cue:100:18
+    ./in.cue:100:41
+    ./in.cue:100:45
+invalid.nonFinite: error in call to encoding/json.MarshalSorted: invalid character 'I' looking for beginning of value:
+    ./in.cue:101:18
+invalid.nonFinitePlain: error in call to encoding/json.Marshal: invalid character 'I' looking for beginning of value:
+    ./in.cue:102:18
+
+Result:
+import "encoding/json"
+
+nested: "{\"a\":true,\"z\":{\"x\":{\"a\":3,\"b\":2},\"y\":1}}"
+
+// Lists keep their order, and the structs in them are sorted.
+lists: "{\"k\":[],\"l\":[{\"a\":2,\"b\":1},[{\"c\":4,\"d\":3}],\"x\"]}"
+
+// The result is the same for any order of declarations, in one struct or
+// across unified structs and files: the fields of s and t are declared in
+// opposite orders, here and in b.cue.
+#Base: {
+	id:      string
+	labels?: {}
+	o?:      {}
+}
+s: {
+	id: "x"
+	labels: {
+		b: "2"
+		z: "1"
+	}
+	o: {
+		y: 1
+		x: 2
+	}
+}
+t: {
+	id: "x"
+	labels: {
+		b: "2"
+		z: "1"
+	}
+	o: {
+		x: 2
+		y: 1
+	}
+}
+sameAcrossFiles: true
+unsortedDiffers: true
+sortedBytes:     "{\"id\":\"x\",\"labels\":{\"b\":\"2\",\"z\":\"1\"},\"o\":{\"x\":2,\"y\":1}}"
+
+// Keys sort by their unquoted bytes, not by their JSON encoding: '"' encoded
+// is \", and so would sort after 'Z', and \u0001 is encoded with a letter.
+keys: "{\"\":10,\"\\u0001\":8,\"\\\"\":7,\"10\":4,\"9\":5,\"<a>\":9,\"Z\":3,\"a b\":6,\"z\":2,\"é\":1}"
+
+// A struct reached through a definition is sorted as any other.
+#Embed: {
+	b: {
+		y: 1
+		x: 2
+	}
+	a: 1
+}
+embedded: "{\"a\":1,\"b\":{\"x\":2,\"y\":1},\"c\":{\"a\":1,\"b\":{\"x\":2,\"y\":1},\"d\":2}}"
+
+// Only the key order differs from json.Marshal: for a value whose keys are
+// in order, the two are equal, including how values are encoded.
+scalars: {
+	a: """
+		<&>\u2028
+		"é
+		"""
+	b:  1.0
+	c:  1e+3
+	d:  123456789012345678901234567890
+	e:  0.1
+	f:  'bytes'
+	g:  null
+	h:  false
+	i:  [1, "2", 3.5]
+	j:  *"default" | string
+	#k: 1
+	m?: 3
+}
+scalarsSame:  true
+scalarsBytes: "{\"a\":\"<&>\\u2028\\n\\\"é\",\"b\":1.0,\"c\":1E+3,\"d\":123456789012345678901234567890,\"e\":0.1,\"f\":\"Ynl0ZXM=\",\"g\":null,\"h\":false,\"i\":[1,\"2\",3.5],\"j\":\"default\"}"
+
+// A non-struct argument encodes as json.Marshal does.
+top: {
+	string: "\"<a>\""
+	number: "1.50"
+	list:   "[{\"a\":2,\"b\":1}]"
+	null:   "null"
+}
+
+// json.Indent composes with it.
+indented: """
+	{
+	  "a": 2,
+	  "b": {
+	    "c": [
+	      {
+	        "e": 2,
+	        "f": 1
+	      }
+	    ],
+	    "d": 1
+	  }
+	}
+	"""
+
+// Non-concrete values and invalid JSON fail as they do in json.Marshal.
+#Open: a: int
+incomplete: {
+	struct: json.MarshalSorted({
+		b: 1
+		a: int
+	})
+	structPlain: json.Marshal({
+		b: 1
+		a: int
+	})
+	nested:      json.MarshalSorted({a: [{b: string}]})
+	nestedPlain: json.Marshal({a: [{b: string}]})
+	reference:   json.MarshalSorted(#Open)
+}
+invalid: {
+	conflict:       _|_ // invalid.conflict: error in call to encoding/json.MarshalSorted: a: conflicting values 2 and 1
+	conflictPlain:  _|_ // invalid.conflictPlain: error in call to encoding/json.Marshal: a: conflicting values 2 and 1
+	nonFinite:      _|_ // invalid.nonFinite: error in call to encoding/json.MarshalSorted: invalid character 'I' looking for beginning of value
+	nonFinitePlain: _|_ // invalid.nonFinitePlain: error in call to encoding/json.Marshal: invalid character 'I' looking for beginning of value
+}

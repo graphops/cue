@@ -144,8 +144,14 @@ func (o *hiddenStructValue) Lookup(key string) Value {
 }
 
 // appendJSON appends a valid JSON encoding or reports an error if any of the
-// fields is invalid.
-func (o *structValue) appendJSON(b []byte) ([]byte, error) {
+// fields is invalid. If sorted is true, fields are ordered by key, here and
+// in every value nested within.
+func (o *structValue) appendJSON(b []byte, sorted bool) ([]byte, error) {
+	if sorted {
+		slices.SortFunc(o.arcs, func(x, y *adt.Vertex) int {
+			return strings.Compare(o.v.idx.LabelStr(x.Label), o.v.idx.LabelStr(y.Label))
+		})
+	}
 	b = append(b, '{')
 	n := o.Len()
 	for i := range n {
@@ -157,7 +163,7 @@ func (o *structValue) appendJSON(b []byte) ([]byte, error) {
 		}
 		b = append(b, s...)
 		b = append(b, ':')
-		b, err = v.appendJSON(o.ctx, b)
+		b, err = v.appendJSON(o.ctx, b, sorted)
 		if err != nil {
 			return nil, err
 		}
@@ -327,12 +333,12 @@ func (i *Iterator) FieldType() SelectorType {
 
 // listAppendJSON iterates over the list and generates JSON output. HasNext
 // will return false after this operation.
-func listAppendJSON(b []byte, l *Iterator) ([]byte, error) {
+func listAppendJSON(b []byte, l *Iterator, sorted bool) ([]byte, error) {
 	b = append(b, '[')
 	if l.Next() {
 		for i := 0; ; i++ {
 			var err error
-			b, err = l.Value().appendJSON(l.ctx, b)
+			b, err = l.Value().appendJSON(l.ctx, b, sorted)
 			if err != nil {
 				return nil, err
 			}
@@ -833,19 +839,31 @@ func (v Value) IncompleteKind() Kind {
 
 // MarshalJSON marshalls this value into valid JSON.
 func (v Value) MarshalJSON() (b []byte, err error) {
+	return v.marshalJSON(false)
+}
+
+// MarshalJSONSorted is like [Value.MarshalJSON], except that the fields of
+// every struct are ordered by key, comparing the unquoted keys byte by byte,
+// instead of by the order of their declarations. The result therefore does
+// not change when declarations move. The order of list elements is kept.
+func (v Value) MarshalJSONSorted() (b []byte, err error) {
+	return v.marshalJSON(true)
+}
+
+func (v Value) marshalJSON(sorted bool) (b []byte, err error) {
 	if v.v == nil {
 		return []byte("null"), nil
 	}
 	ctx := v.ctx()
 	defer adt.AddStats(ctx)
-	b, err = v.appendJSON(ctx, nil)
+	b, err = v.appendJSON(ctx, nil, sorted)
 	if err != nil {
 		return nil, unwrapJSONError(err)
 	}
 	return b, nil
 }
 
-func (v Value) appendJSON(ctx *adt.OpContext, b []byte) ([]byte, error) {
+func (v Value) appendJSON(ctx *adt.OpContext, b []byte, sorted bool) ([]byte, error) {
 	v, _ = v.Default()
 	if v.v == nil {
 		return append(b, "null"...), nil
@@ -884,13 +902,13 @@ func (v Value) appendJSON(ctx *adt.OpContext, b []byte) ([]byte, error) {
 		return append(b, b2...), err
 	case adt.ListKind:
 		i := v.mustList(ctx)
-		return listAppendJSON(b, &i)
+		return listAppendJSON(b, &i, sorted)
 	case adt.StructKind:
 		obj, err := v.structValData(ctx)
 		if err != nil {
 			return nil, toMarshalErr(v, err)
 		}
-		return obj.appendJSON(b)
+		return obj.appendJSON(b, sorted)
 	case adt.BottomKind:
 		return nil, toMarshalErr(v, x.(*adt.Bottom))
 	default:
