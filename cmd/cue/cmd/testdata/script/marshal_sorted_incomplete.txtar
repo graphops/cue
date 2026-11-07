@@ -1,0 +1,24 @@
+# json.MarshalSorted of a value that is not concrete fails as json.Marshal
+# does, naming the same field.
+
+! exec cue export ./plain/json.cue
+cmp stderr plain.golden
+! exec cue export ./sorted/json.cue
+cmp stderr sorted.golden
+
+-- plain/json.cue --
+import "encoding/json"
+
+x: json.Marshal({a: {b: int}})
+-- sorted/json.cue --
+import "encoding/json"
+
+x: json.MarshalSorted({a: {b: int}})
+-- plain.golden --
+x: error in call to encoding/json.Marshal: cannot convert incomplete value "int" to JSON:
+    ./plain/json.cue:3:4
+    ./plain/json.cue:3:25
+-- sorted.golden --
+x: error in call to encoding/json.MarshalSorted: cannot convert incomplete value "int" to JSON:
+    ./sorted/json.cue:3:4
+    ./sorted/json.cue:3:31

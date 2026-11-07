@@ -52,6 +52,13 @@ HTMLEscape: func(src: bytes | string) -> string
 // Marshal returns the JSON encoding of v.
 Marshal: func(v: _) -> string
 
+// MarshalSorted is like Marshal, except that the fields of every struct,
+// at any depth, are ordered by key, comparing the unquoted keys byte by byte,
+// instead of by the order of their declarations. Lists keep their order.
+// The result does not change when declarations move, so it is suited to
+// content that is hashed.
+MarshalSorted: func(v: _) -> string
+
 // MarshalStream turns a list into a stream of JSON objects.
 MarshalStream: func(v: _) -> string
 
