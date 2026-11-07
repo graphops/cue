@@ -1,10 +1,15 @@
-# json.MarshalSorted of a value that is not concrete fails as json.Marshal
-# does, naming the same field.
+# json.MarshalSorted and yaml.MarshalSorted of a value that is not concrete
+# fail as json.Marshal and yaml.Marshal do, naming the same field.
 
 ! exec cue export ./plain/json.cue
 cmp stderr plain.golden
 ! exec cue export ./sorted/json.cue
 cmp stderr sorted.golden
+
+! exec cue export ./plain/yaml.cue
+cmp stderr plain-yaml.golden
+! exec cue export ./sorted/yaml.cue
+cmp stderr sorted-yaml.golden
 
 -- plain/json.cue --
 import "encoding/json"
@@ -14,6 +19,14 @@ x: json.Marshal({a: {b: int}})
 import "encoding/json"
 
 x: json.MarshalSorted({a: {b: int}})
+-- plain/yaml.cue --
+import "encoding/yaml"
+
+x: yaml.Marshal({a: {b: int}})
+-- sorted/yaml.cue --
+import "encoding/yaml"
+
+x: yaml.MarshalSorted({a: {b: int}})
 -- plain.golden --
 x: error in call to encoding/json.Marshal: cannot convert incomplete value "int" to JSON:
     ./plain/json.cue:3:4
@@ -22,3 +35,11 @@ x: error in call to encoding/json.Marshal: cannot convert incomplete value "int"
 x: error in call to encoding/json.MarshalSorted: cannot convert incomplete value "int" to JSON:
     ./sorted/json.cue:3:4
     ./sorted/json.cue:3:31
+-- plain-yaml.golden --
+x: error in call to encoding/yaml.Marshal: incomplete value int:
+    ./plain/yaml.cue:3:4
+    ./plain/yaml.cue:3:25
+-- sorted-yaml.golden --
+x: error in call to encoding/yaml.MarshalSorted: incomplete value int:
+    ./sorted/yaml.cue:3:4
+    ./sorted/yaml.cue:3:31

@@ -25,6 +25,13 @@ package yaml
 // Marshal returns the YAML encoding of v.
 Marshal: func(v: _) -> string
 
+// MarshalSorted is like Marshal, except that the fields of every struct,
+// at any depth, are ordered by key, comparing the unquoted keys byte by byte,
+// instead of by the order of their declarations. Lists keep their order.
+// The result does not change when declarations move, so it is suited to
+// content that is hashed.
+MarshalSorted: func(v: _) -> string
+
 // MarshalStream returns the YAML encoding of v.
 MarshalStream: func(v: _) -> string
 

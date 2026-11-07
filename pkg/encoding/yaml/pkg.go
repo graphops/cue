@@ -27,6 +27,18 @@ var p = &pkg.Package{
 			}
 		},
 	}, {
+		Name: "MarshalSorted",
+		Params: []pkg.Param{
+			{Kind: adt.TopKind},
+		},
+		Result: adt.StringKind,
+		Func: func(c *pkg.CallCtxt) {
+			v := c.Value(0)
+			if c.Do() {
+				c.Ret, c.Err = MarshalSorted(v)
+			}
+		},
+	}, {
 		Name: "MarshalStream",
 		Params: []pkg.Param{
 			{Kind: adt.TopKind},
@@ -95,6 +107,7 @@ var p = &pkg.Package{
 @experiment(functions)
 @pure()
 Marshal:         func(v: _) -> string
+MarshalSorted:   func(v: _) -> string
 MarshalStream:   func(v: _) -> string
 Unmarshal:       func(data: bytes | string) -> _
 UnmarshalStream: func(data: bytes | string) -> _
