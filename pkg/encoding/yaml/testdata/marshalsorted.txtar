@@ -1,0 +1,254 @@
+# yaml.MarshalSorted orders the fields of every struct by key, whatever the
+# order of their declarations, and otherwise encodes as yaml.Marshal does.
+-- in.cue --
+import "encoding/yaml"
+
+nested: yaml.MarshalSorted({
+	z: {y: 1, x: {b: 2, a: 3}}
+	a: true
+})
+
+// Lists keep their order, and the structs in them are sorted.
+lists: yaml.MarshalSorted({
+	l: [{b: 1, a: 2}, [{d: 3, c: 4}], "x"]
+	k: []
+})
+
+// The result is the same for any order of declarations, in one struct or
+// across unified structs and files: the fields of s and t are declared in
+// opposite orders, here and in b.cue.
+#Base: {
+	id:      string
+	labels?: [string]: string
+	o?: [string]: int
+}
+s: labels: {z: "1"}
+t: labels: {b: "2"}
+s: {#Base, id: "x", o: {y: 1, x: 2}}
+t: {o: {x: 2, y: 1}, id: "x", #Base}
+sameAcrossFiles: yaml.MarshalSorted(s) == yaml.MarshalSorted(t)
+unsortedDiffers: yaml.Marshal(s) != yaml.Marshal(t)
+sortedBytes:     yaml.MarshalSorted(s)
+
+// Keys sort by their unquoted bytes.
+keys: yaml.MarshalSorted({
+	"é":   1
+	z:     2
+	Z:     3
+	"10":  4
+	"9":   5
+	"a b": 6
+	"\"":  7
+	"y":   8
+	"":    9
+})
+
+// A struct reached through a definition is sorted as any other.
+#Embed: {
+	b: {y: 1, x: 2}
+	a: 1
+}
+embedded: yaml.MarshalSorted({
+	#Embed
+	c: {#Embed, d: 2}
+})
+
+// Only the key order differs from yaml.Marshal: for a value whose keys are
+// in order, the two are equal, including how values are encoded.
+scalars: {
+	a: "multi\nline\n"
+	b: 1.0
+	c: "1"
+	d: "yes"
+	e: 'bytes'
+	f: null
+	g: false
+	h: [1, "2", 3.5]
+	i: *"default" | string
+	#j: 1
+	_k: 2
+	l?: 3
+}
+scalarsSame:  yaml.MarshalSorted(scalars) == yaml.Marshal(scalars)
+scalarsBytes: yaml.MarshalSorted(scalars)
+
+// A non-struct argument encodes as yaml.Marshal does.
+top: {
+	string: yaml.MarshalSorted("a")
+	list:   yaml.MarshalSorted([{b: 1, a: 2}])
+}
+
+// Non-concrete values fail as they do in yaml.Marshal.
+incomplete: {
+	struct:      yaml.MarshalSorted({b: 1, a: int})
+	structPlain: yaml.Marshal({b: 1, a: int})
+}
+-- b.cue --
+s: labels: {b: "2"}
+t: labels: {z: "1"}
+-- out/yaml-v3 --
+import "encoding/yaml"
+
+nested: """
+	a: true
+	z:
+	  x:
+	    a: 3
+	    b: 2
+	  "y": 1
+
+	"""
+
+// Lists keep their order, and the structs in them are sorted.
+lists: """
+	k: []
+	l:
+	  - a: 2
+	    b: 1
+	  - - c: 4
+	      d: 3
+	  - x
+
+	"""
+
+// The result is the same for any order of declarations, in one struct or
+// across unified structs and files: the fields of s and t are declared in
+// opposite orders, here and in b.cue.
+#Base: {
+	id:      string
+	labels?: {}
+	o?:      {}
+}
+s: {
+	id: "x"
+	labels: {
+		b: "2"
+		z: "1"
+	}
+	o: {
+		y: 1
+		x: 2
+	}
+}
+t: {
+	id: "x"
+	labels: {
+		b: "2"
+		z: "1"
+	}
+	o: {
+		x: 2
+		y: 1
+	}
+}
+sameAcrossFiles: true
+unsortedDiffers: true
+sortedBytes: """
+	id: x
+	labels:
+	  b: "2"
+	  z: "1"
+	o:
+	  x: 2
+	  "y": 1
+
+	"""
+
+// Keys sort by their unquoted bytes.
+keys: """
+	"": 9
+	'"': 7
+	"10": 4
+	"9": 5
+	Z: 3
+	a b: 6
+	"y": 8
+	z: 2
+	é: 1
+
+	"""
+
+// A struct reached through a definition is sorted as any other.
+#Embed: {
+	b: {
+		y: 1
+		x: 2
+	}
+	a: 1
+}
+embedded: """
+	a: 1
+	b:
+	  x: 2
+	  "y": 1
+	c:
+	  a: 1
+	  b:
+	    x: 2
+	    "y": 1
+	  d: 2
+
+	"""
+
+// Only the key order differs from yaml.Marshal: for a value whose keys are
+// in order, the two are equal, including how values are encoded.
+scalars: {
+	a: """
+		multi
+		line
+
+		"""
+	b:  1.0
+	c:  "1"
+	d:  "yes"
+	e:  'bytes'
+	f:  null
+	g:  false
+	h:  [1, "2", 3.5]
+	i:  *"default" | string
+	#j: 1
+	l?: 3
+}
+scalarsSame: true
+scalarsBytes: """
+	a: |
+	  multi
+	  line
+	b: 1.0
+	c: "1"
+	d: "yes"
+	e: !!binary Ynl0ZXM=
+	"f": null
+	g: false
+	h:
+	  - 1
+	  - "2"
+	  - 3.5
+	i: default
+
+	"""
+
+// A non-struct argument encodes as yaml.Marshal does.
+top: {
+	string: """
+		a
+
+		"""
+	list: """
+		- a: 2
+		  b: 1
+
+		"""
+}
+
+// Non-concrete values fail as they do in yaml.Marshal.
+incomplete: {
+	struct: yaml.MarshalSorted({
+		b: 1
+		a: int
+	})
+	structPlain: yaml.Marshal({
+		b: 1
+		a: int
+	})
+}
