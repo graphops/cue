@@ -46,12 +46,13 @@ Each fix also exists on its own branch, isolated on the `v0.18.0-rc.3` tag.
 
 Not bug fixes: features configurations built on this fork rely on. They exist
 only on this branch and, with the fix based on each, on the fix branches noted
-above.
+above, or on the `feat/` branch a row names.
 
 | Addition | What it adds | Test |
 |---|---|---|
 | `struct.Data(v)` | `v` as concrete data (regular fields, defaults resolved, no closedness, definitions, hidden or optional fields), built as fresh CUE literals. An in-CUE replacement for `json.Unmarshal(json.Marshal(v))`, about 2.7× cheaper, which keeps CUE kinds such as bytes. An incomplete argument makes the call incomplete, as with the JSON round trip. | `pkg/struct/testdata/data.txtar`, `cmd/cue/cmd/testdata/script/struct_data_incomplete.txtar` |
 | Sharing past a repeated definition | Structure sharing is kept when a conjunct refers to a definition the shared value already applied (plainly, or opened for an opened repeat); the repeated conjunct is held and applied as usual if the node is unshared. A schema-checked value can then be passed to many places that also declare the schema. Upstream keeps sharing since `1c287ec21` when the shared value holds the definition as a direct conjunct; this extends it to definitions applied any other way (such as through a field of an opened definition), to a definition arriving before the value, and to opened definitions. Not applied to a plain definition re-closing an opened reference (`x... & #D`). | `cue/testdata/eval/sharedefs.txtar`, `cue/testdata/functions/sharedefs_reapply.txtar` |
+| `json.MarshalSorted(v)`, `yaml.MarshalSorted(v)`, `Value.MarshalJSONSorted` | `json.Marshal` and `yaml.Marshal` with the fields of every struct ordered by key, at every depth, comparing the unquoted keys byte by byte, so that content hashed from the result, as for the name of an immutable ConfigMap, does not change when a declaration moves. List order, the encoding of keys and values, and errors are those of the plain functions. On branch `feat/rc3-marshal-sorted`. | `pkg/encoding/json/testdata/marshalsorted.txtar`, `pkg/encoding/yaml/testdata/marshalsorted.txtar`, `cmd/cue/cmd/testdata/script/marshal_sorted_incomplete.txtar` |
 
 ## Moving from v0.18.0-rc.2
 
