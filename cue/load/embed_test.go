@@ -93,3 +93,89 @@ all: _ @embed(glob=*.yaml)
 		})
 	})
 }
+
+// TestEmbedOverlayWithinRoot verifies that files held only in
+// load.Config.Overlay can be embedded while embedding is confined to the
+// module root on disk, and that the confinement still refuses a link on
+// disk leading outside of the module.
+func TestEmbedOverlayWithinRoot(t *testing.T) {
+	const moduleCue = `module: "test.local"
+language: version: "v0.14.0"
+`
+	const pkgCue = `@extern(embed)
+package pkg
+
+single: _ @embed(file=data.yaml)
+all: _ @embed(glob=*.yaml)
+`
+	build := func(t *testing.T, cfg *load.Config) cue.Value {
+		t.Helper()
+		ctx := cuecontext.New(cuecontext.WithInjection(embed.New()))
+		insts := load.Instances([]string{"./pkg"}, cfg)
+		qt.Assert(t, qt.HasLen(insts, 1))
+		qt.Assert(t, qt.IsNil(insts[0].Err))
+		return ctx.BuildInstance(insts[0])
+	}
+	lookup := func(t *testing.T, v cue.Value, sels ...cue.Selector) int64 {
+		t.Helper()
+		i, err := v.LookupPath(cue.MakePath(sels...)).Int64()
+		qt.Assert(t, qt.IsNil(err))
+		return i
+	}
+
+	t.Run("OnDiskModule", func(t *testing.T) {
+		// The module and package directories exist on disk;
+		// the embedded files exist only in the overlay.
+		dir := t.TempDir()
+		qt.Assert(t, qt.IsNil(os.MkdirAll(filepath.Join(dir, "cue.mod"), 0o777)))
+		qt.Assert(t, qt.IsNil(os.MkdirAll(filepath.Join(dir, "pkg"), 0o777)))
+		qt.Assert(t, qt.IsNil(os.WriteFile(filepath.Join(dir, "cue.mod", "module.cue"), []byte(moduleCue), 0o666)))
+		qt.Assert(t, qt.IsNil(os.WriteFile(filepath.Join(dir, "pkg", "x.cue"), []byte(pkgCue), 0o666)))
+		v := build(t, &load.Config{
+			Dir: dir,
+			Overlay: map[string]load.Source{
+				filepath.Join(dir, "pkg", "data.yaml"):  load.FromString("k: 42\n"),
+				filepath.Join(dir, "pkg", "other.yaml"): load.FromString("k: 7\n"),
+			},
+		})
+		qt.Assert(t, qt.Equals(lookup(t, v, cue.Str("single"), cue.Str("k")), 42))
+		qt.Assert(t, qt.Equals(lookup(t, v, cue.Str("all"), cue.Str("other.yaml"), cue.Str("k")), 7))
+	})
+
+	t.Run("OverlayOnlyModule", func(t *testing.T) {
+		// Nothing of the module exists on disk.
+		dir := filepath.Join(t.TempDir(), "absent")
+		v := build(t, &load.Config{
+			Dir: dir,
+			Overlay: map[string]load.Source{
+				filepath.Join(dir, "cue.mod", "module.cue"): load.FromString(moduleCue),
+				filepath.Join(dir, "pkg", "x.cue"):          load.FromString(pkgCue),
+				filepath.Join(dir, "pkg", "data.yaml"):      load.FromString("k: 42\n"),
+			},
+		})
+		qt.Assert(t, qt.Equals(lookup(t, v, cue.Str("single"), cue.Str("k")), 42))
+		qt.Assert(t, qt.Equals(lookup(t, v, cue.Str("all"), cue.Str("data.yaml"), cue.Str("k")), 42))
+	})
+
+	t.Run("LinkOutsideNextToOverlay", func(t *testing.T) {
+		// A glob matching an overlay file and a link on disk leading outside
+		// of the module: the link is refused.
+		base := t.TempDir()
+		dir := filepath.Join(base, "mod")
+		qt.Assert(t, qt.IsNil(os.MkdirAll(filepath.Join(dir, "pkg"), 0o777)))
+		qt.Assert(t, qt.IsNil(os.WriteFile(filepath.Join(base, "secret.yaml"), []byte("k: 1\n"), 0o666)))
+		if err := os.Symlink(filepath.Join("..", "..", "secret.yaml"), filepath.Join(dir, "pkg", "other.yaml")); err != nil {
+			t.Skipf("cannot create a symbolic link: %v", err)
+		}
+		v := build(t, &load.Config{
+			Dir: dir,
+			Overlay: map[string]load.Source{
+				filepath.Join(dir, "cue.mod", "module.cue"): load.FromString(moduleCue),
+				filepath.Join(dir, "pkg", "x.cue"):          load.FromString(pkgCue),
+				filepath.Join(dir, "pkg", "data.yaml"):      load.FromString("k: 42\n"),
+			},
+		})
+		err := v.Err()
+		qt.Assert(t, qt.ErrorMatches(err, `.*cannot embed glob "\*\.yaml": "other\.yaml" goes through a symbolic link that is absolute or leads outside the module root.*`))
+	})
+}
