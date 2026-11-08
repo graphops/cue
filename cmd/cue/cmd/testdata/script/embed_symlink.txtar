@@ -1,0 +1,163 @@
+# Symbolic links are followed when embedding files only as long as they are
+# relative and resolve within the module root. The module lives in mod; the
+# files outside of it, in outside, must never be embedded.
+
+[!symlink] skip 'no symbolic link support'
+
+symlink mod/x/inmodule.json -> ../data.json
+symlink mod/x/indir -> ../sub
+symlink mod/outfile/secret.json -> ../../outside/secret.json
+symlink mod/outdir/link -> ../../outside
+symlink mod/outabs/secret.json -> $WORK/outside/secret.json
+symlink mod/inabs/data.json -> $WORK/mod/data.json
+symlink mod/outglob/link -> ../../outside
+symlink mod/outmatch/secret.json -> ../../outside/secret.json
+symlink mod/dangling/d/secret.json -> ../../../outside/missing.json
+
+cd mod
+
+# Links that stay within the module root keep working,
+# also when they go up to a parent directory of the embedding file.
+exec cue export ./x
+cmp stdout ../want/x
+
+# A link to a file outside the module.
+! exec cue export ./outfile
+cmp stderr ../want/outfile
+
+# A link to a directory outside the module, for a file and a glob.
+! exec cue export ./outdir
+cmp stderr ../want/outdir
+
+# An absolute link is refused even though it leads within the module,
+# as is an absolute link to a file outside of it.
+! exec cue export ./outabs
+cmp stderr ../want/outabs
+! exec cue export ./inabs
+cmp stderr ../want/inabs
+
+# A glob whose directory part reads a linked directory outside the module
+# fails, although that directory's entries are dropped while matching.
+! exec cue export ./outglob
+cmp stderr ../want/outglob
+
+# A glob matching a link to a file outside the module.
+! exec cue export ./outmatch
+cmp stderr ../want/outmatch
+
+# A dangling link to outside the module is refused too, rather than reported
+# as a missing file. It sits in a directory of its own, as the loader fails
+# on one among a package's files.
+! exec cue export ./dangling
+cmp stderr ../want/dangling
+
+-- outside/secret.json --
+{"secret": true}
+-- outside/other.json --
+{"other": true}
+-- mod/cue.mod/module.cue --
+module: "test.example"
+language: version: "v0.11.0"
+-- mod/data.json --
+{"data": 1}
+-- mod/sub/a.json --
+{"a": 2}
+-- mod/x/x.cue --
+@extern(embed)
+
+package x
+
+file: _ @embed(file=inmodule.json)
+dirFile: _ @embed(file=indir/a.json)
+glob: _ @embed(glob="*.json")
+dirGlob: _ @embed(glob="*/*.json")
+-- mod/outfile/x.cue --
+@extern(embed)
+
+package x
+
+file: _ @embed(file=secret.json)
+-- mod/outdir/x.cue --
+@extern(embed)
+
+package x
+
+file: _ @embed(file=link/secret.json)
+glob: _ @embed(glob="link/*.json")
+-- mod/outabs/x.cue --
+@extern(embed)
+
+package x
+
+file: _ @embed(file=secret.json)
+-- mod/inabs/x.cue --
+@extern(embed)
+
+package x
+
+file: _ @embed(file=data.json)
+-- mod/outglob/x.cue --
+@extern(embed)
+
+package x
+
+glob: _ @embed(glob="*/*.json", allowEmptyGlob)
+-- mod/outglob/in/ok.json --
+{"ok": true}
+-- mod/outmatch/x.cue --
+@extern(embed)
+
+package x
+
+glob: _ @embed(glob="*.json")
+-- mod/outmatch/ok.json --
+{"ok": true}
+-- mod/dangling/x.cue --
+@extern(embed)
+
+package x
+
+file: _ @embed(file=d/secret.json)
+-- mod/dangling/d/other.txt --
+-- want/x --
+{
+    "file": {
+        "data": 1
+    },
+    "dirFile": {
+        "a": 2
+    },
+    "glob": {
+        "inmodule.json": {
+            "data": 1
+        }
+    },
+    "dirGlob": {
+        "indir/a.json": {
+            "a": 2
+        }
+    }
+}
+-- want/outfile --
+@embed: cannot embed file "secret.json": "secret.json" goes through a symbolic link that is absolute or leads outside the module root:
+    ./outfile/x.cue:5:9
+-- want/outdir --
+@embed: cannot embed file "link/secret.json": "link/secret.json" goes through a symbolic link that is absolute or leads outside the module root:
+    ./outdir/x.cue:5:9
+@embed: cannot embed glob "link/*.json": "link" goes through a symbolic link that is absolute or leads outside the module root:
+    ./outdir/x.cue:6:9
+-- want/outabs --
+@embed: cannot embed file "secret.json": "secret.json" goes through a symbolic link that is absolute or leads outside the module root:
+    ./outabs/x.cue:5:9
+-- want/inabs --
+@embed: cannot embed file "data.json": "data.json" goes through a symbolic link that is absolute or leads outside the module root:
+    ./inabs/x.cue:5:9
+-- want/outglob --
+@embed: cannot embed glob "*/*.json": "link" goes through a symbolic link that is absolute or leads outside the module root:
+    ./outglob/x.cue:5:9
+-- want/outmatch --
+@embed: cannot embed glob "*.json": "secret.json" goes through a symbolic link that is absolute or leads outside the module root:
+    ./outmatch/x.cue:5:9
+-- want/dangling --
+@embed: cannot embed file "d/secret.json": "d/secret.json" goes through a symbolic link that is absolute or leads outside the module root:
+    ./dangling/x.cue:5:9

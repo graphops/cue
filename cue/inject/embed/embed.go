@@ -27,6 +27,9 @@
 // References to files are always relative to the directory in which the
 // referring file resides. Only files in the same module containing the CUE
 // file can be embedded, and parent directory references are not allowed.
+// Symbolic links are followed as long as they are relative and resolve
+// within the module root; a file or directory reached through an absolute
+// link, or a link leading outside of the module root, cannot be embedded.
 //
 // # The @embed attribute
 //
@@ -93,8 +96,11 @@
 package embed
 
 import (
+	"fmt"
 	iofs "io/fs"
+	"os"
 	"path"
+	"path/filepath"
 	"strings"
 
 	"cuelang.org/go/cue"
@@ -108,6 +114,7 @@ import (
 	"cuelang.org/go/internal/encoding"
 	"cuelang.org/go/internal/filetypes"
 	"cuelang.org/go/internal/value"
+	"cuelang.org/go/mod/module"
 	pkgpath "cuelang.org/go/pkg/path"
 )
 
@@ -153,8 +160,13 @@ type injector struct {
 
 	// file system cache
 	dir string
-	fs  iofs.FS
-	pos token.Pos
+	sub iofs.FS // the directory dir of the embedding file
+
+	// for the attribute being processed
+	fs     iofs.FS   // sub, confined to the module root when it is on disk
+	rooted *rootedFS // fs, if it is confined
+	what   string    // the attribute's argument, for errors
+	pos    token.Pos
 }
 
 // validateAttr performs logical validation of the attr. It does not
@@ -258,13 +270,28 @@ func (c *injector) InjectedValue(attr *runtime.ExternAttr, scope *adt.Vertex) (a
 		if err != nil {
 			return nil, errors.Newf(pos, "cannot embed: %v", err)
 		}
-		c.fs = fsys
+		c.sub = fsys
 		c.dir = dir
 	}
 
 	file, glob, typ, allowEmptyGlob, err := validateAttr(a)
 	if err != nil {
 		return nil, err
+	}
+	if file != "" {
+		c.what = fmt.Sprintf("file %q", file)
+	} else {
+		c.what = fmt.Sprintf("glob %q", glob)
+	}
+
+	c.fs, c.rooted = c.sub, nil
+	rooted, err := c.openRooted(loc)
+	if err != nil {
+		return nil, err
+	}
+	if rooted != nil {
+		defer rooted.root.Close()
+		c.fs, c.rooted = rooted, rooted
 	}
 
 	if file != "" {
@@ -278,12 +305,52 @@ func (c *injector) InjectedValue(attr *runtime.ExternAttr, scope *adt.Vertex) (a
 	return c.processGlob(glob, typ, allowEmptyGlob)
 }
 
+// openRooted returns the directory of the embedding file confined to the
+// module root, if the file is on the OS file system and the module root
+// exists on disk. Otherwise it returns nil: a module root held only in an
+// overlay has no links to follow, and other file systems are used as given.
+func (c *injector) openRooted(loc token.FSLoc) (*rootedFS, errors.Error) {
+	osfs, ok := loc.FS.(module.OSRootFS)
+	if !ok || osfs.OSRoot() == "" {
+		return nil, nil
+	}
+	root := c.b.RootLoc.Path
+	r, err := os.OpenRoot(filepath.Join(osfs.OSRoot(), filepath.FromSlash(root)))
+	if errors.Is(err, iofs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, errors.Newf(c.pos, "cannot embed: %v", err)
+	}
+	// InjectedValue checked that the embedding file is within the root.
+	dir := c.dir
+	switch {
+	case dir == root:
+		dir = "."
+	case root != "":
+		dir = strings.TrimPrefix(dir, root+"/")
+	}
+	return &rootedFS{fsys: c.sub, root: r, dir: dir}, nil
+}
+
+// rootError returns the error for err if it reports
+// a path resolving outside the module root.
+func (c *injector) rootError(err error) errors.Error {
+	if e := (*escapeError)(nil); errors.As(err, &e) {
+		return errors.Newf(c.pos, "cannot embed %s: %v", c.what, e)
+	}
+	return nil
+}
+
 func (c *injector) processGlob(glob, scope string, allowEmptyGlob bool) (adt.Expr, errors.Error) {
 	m := &adt.StructLit{}
 
 	matches, err := fsGlob(c.fs, glob)
 	if err != nil {
 		return nil, errors.Promote(err, "failed to match glob")
+	}
+	if c.rooted != nil && c.rooted.escaped != nil {
+		return nil, c.rootError(c.rooted.escaped)
 	}
 	if len(matches) == 0 && !allowEmptyGlob {
 		return nil, errors.Newf(c.pos, "no matches for glob pattern %q", glob)
@@ -295,6 +362,9 @@ func (c *injector) processGlob(glob, scope string, allowEmptyGlob bool) (adt.Exp
 		// We don't support '**' initially, and '*' only matches files, so skip
 		// any directories.
 		if fi, err := iofs.Stat(c.fs, f); err != nil {
+			if err := c.rootError(err); err != nil {
+				return nil, err
+			}
 			return nil, errors.Newf(c.pos, "failed to stat %s: %v", f, err)
 		} else if fi.IsDir() {
 			continue
@@ -392,6 +462,9 @@ func (c *injector) decodeFile(file, scope string) (adt.Expr, errors.Error) {
 	// Open and pre-load the file system using iofs.FS.
 	r, err := c.fs.Open(file)
 	if err != nil {
+		if err := c.rootError(err); err != nil {
+			return nil, err
+		}
 		return nil, errors.Newf(c.pos, "open %v: no such file or directory", file)
 	}
 	defer r.Close()
