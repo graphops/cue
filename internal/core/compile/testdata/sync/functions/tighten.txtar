@@ -979,7 +979,7 @@ admission: {
 	empNX:   len([empN])
 	empBad:  (func(x: int | <"b") -> int) & (func(x: int) -> int: x)
 
-	// A value that a comprehension refines is pending behind a call too.
+	// A value that a comprehension refines is pending behind a call too. The call has read it by then, so the refinement is reported as late.
 	#PC: number
 	getPC: func() -> _: #PC
 	pcall: {

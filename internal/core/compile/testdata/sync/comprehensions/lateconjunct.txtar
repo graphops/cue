@@ -1,0 +1,1454 @@
+# Tests that a conjunct a comprehension adds to a field that was already
+# finalized is not lost.
+#
+# In each test the guard of the first comprehension reads n.a, which finalizes
+# it. The second comprehension iterates over r, so it runs once the first has
+# finished with r, and only then adds to n.a. A finalized field takes no more
+# conjuncts, so the conjunct was dropped. That is harmless if the field already
+# has it, but otherwise the field is not the unification of its conjuncts: a
+# conflict was not reported, and a value that narrows the field was not applied.
+# Both are reported now, as the field cannot be evaluated again.
+-- cue.mod/module.cue --
+module: "mod.test"
+language: version: "v0.18.0"
+-- in.cue --
+@experiment(try)
+package lateconjunct
+
+import "mod.test/dep"
+
+// The second comprehension adds a field to n.a, a struct the guard read.
+field: {
+	n: a: enabled: false
+	r: a:          1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: enabled: true
+	}
+}
+
+// The second comprehension adds a pattern constraint, matching the arcs that
+// were finalized.
+pattern: {
+	nodes: reth: "reth-1": enabled: false
+	rpc: "reth-1": "reth"
+	for Node, Client in rpc {
+		if nodes[Client][Node] == _|_ {rpc: (Node): "x"}
+	}
+	for _, _ in rpc {
+		nodes: [string]: [string]: enabled: true
+	}
+}
+
+// The first comprehension is a try with an else clause.
+tryElse: {
+	nodes: reth: "reth-1": enabled: false
+	rpc: "reth-1": "reth"
+	for Node, Client in rpc {
+		try _ = nodes[Client][Node]? {} else {rpc: (Node): "x"}
+	}
+	for _, _ in rpc {
+		nodes: [string]: [string]: enabled: true
+	}
+}
+
+// The comprehension that reads n.a is not affected by one that does not wait
+// for r: it runs first, and the conflict is reported as usual.
+independent: {
+	n: a: enabled: false
+	r: a:          1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _ in [1] {
+		n: a: enabled: true
+	}
+}
+
+// A conjunct that conflicts is reported whatever its value is: a list, a
+// bound, a regular expression, a field of a closed struct, or a value from
+// another package.
+conflictList: {
+	n: a: [1, 2]
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: [1, 3]
+	}
+}
+
+conflictBound: {
+	n: a: v: 5
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: v: >10
+	}
+}
+
+conflictRegex: {
+	n: a: v: "x"
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: v: =~"^y"
+	}
+}
+
+conflictClosed: {
+	#N: a: {b: int}
+	n: #N & {a: b: 1}
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: b: 2
+	}
+}
+
+conflictImported: {
+	n: a: v: 1
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: v: dep.two
+	}
+}
+
+// The conflict is found one level down, from a comprehension that is nested.
+conflictNested: {
+	n: a: b: c: 1
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		for _ in [1] {n: a: b: c: 2}
+	}
+}
+
+// A conjunct that is dropped for an arc that fails makes the disjunct fail,
+// and the other disjunct remains.
+disjunct: {
+	out: {
+		n: a: enabled: false
+		r: a:          1
+		for _, _ in r {
+			if n.a == _|_ {r: x: 2}
+		}
+		for _, _ in r {
+			n: a: enabled: true
+		}
+	} | {z: 1}
+}
+
+// A conjunct that does not conflict but narrows the field was dropped as well,
+// leaving the value the field had.
+narrowType: {
+	n: a: enabled: bool
+	r: z: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: enabled: true
+	}
+}
+
+narrowDefault: {
+	n: a: size: *"4k" | "32k"
+	r: z:       1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: size: "32k"
+	}
+}
+
+narrowStructDefault: {
+	n: a: *{x: 1} | {x: 2}
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {x: 2}
+	}
+}
+
+narrowInt: {
+	n: a: v: int
+	r: z: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: v: 1
+	}
+}
+
+// A field that was optional is present with a value.
+narrowOptional: {
+	n: a: {b: int, c?: int}
+	r: z: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: c: 2
+	}
+}
+
+// A new field is reported like a field added to a struct that was already
+// referenced.
+newField: {
+	n: a: enabled: false
+	r: a: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: extra: 1
+	}
+}
+
+// A conjunct that agrees with the finalized value adds nothing.
+agree: {
+	n: a: enabled: false
+	r: a:          1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: enabled: false
+	}
+}
+
+agreeScalar: {
+	n: a: v: 1
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: v: 1
+	}
+}
+
+agreeList: {
+	n: a: [1, 2]
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: [1, 2]
+	}
+}
+
+agreeBytes: {
+	n: a: v: '\x01'
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: v: '\x01'
+	}
+}
+
+agreeRegex: {
+	n: a: v: "x"
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: v: =~"^x"
+	}
+}
+
+agreeBound: {
+	n: a: v: 5
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: v: <10
+	}
+}
+
+agreeType: {
+	n: a: v: 5
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: v: int & >=0
+	}
+}
+
+// The default is the value that is yielded again.
+agreeDefault: {
+	n: a: size: *"4k" | "32k"
+	r: z:       1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: size: "4k"
+	}
+}
+
+// The conjunct is a disjunction that contains the value of the field.
+agreeDisjunct: {
+	n: a: v: "a"
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: v: "a" | "b"
+	}
+}
+
+agreePattern: {
+	n: reth: a: enabled: true
+	r: a: 1
+	for _, _ in r {
+		if n.reth.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: [string]: [string]: enabled: true
+	}
+}
+
+agreeReference: {
+	m: 1
+	n: a: v: 1
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: v: m
+	}
+}
+
+agreeImported: {
+	n: a: v: 2
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: v: dep.two
+	}
+}
+
+// The same conjunct is yielded for several keys.
+agreeRepeated: {
+	n: a: b: 1
+	r: x: 1
+	r: y: 1
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: w: 2}
+	}
+	for _, _ in r {
+		n: a: b: 1
+	}
+}
+
+// A conjunct that adds nothing to a field of a closed struct is not a
+// violation of the closedness of the struct, whatever kind of struct it is.
+#ClosedNestedN: a: {b: int}
+closedNested: {
+	n: #ClosedNestedN & {a: b: 1}
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: b: 1
+	}
+}
+
+#ClosedPatternM: a: [string]: {x: int}
+closedPattern: {
+	n: #ClosedPatternM & {a: foo: x: 1}
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: foo: x: 1
+	}
+}
+
+#ClosedEmbedN: {a: {b: int}}
+closedEmbed: {
+	n: {#ClosedEmbedN, a: b: 1}
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: b: 1
+	}
+}
+
+#ClosedDefInDefIn: {b: int}
+#ClosedDefInDefN: a: #ClosedDefInDefIn
+closedDefInDef: {
+	n: #ClosedDefInDefN & {a: b: 1}
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: b: 1
+	}
+}
+
+#ClosedListN: a: [...{b: int}]
+closedList: {
+	n: #ClosedListN & {a: [{b: 1}]}
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: [{b: 1}]
+	}
+}
+
+#ClosedOptionalN: a: {b: int, c?: int}
+closedOptional: {
+	n: #ClosedOptionalN & {a: b: 1}
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: b: 1
+	}
+}
+
+// A field that the closed struct does not allow is reported as such.
+#ClosedFieldN: a: {b: int}
+closedField: {
+	n: #ClosedFieldN & {a: b: 1}
+	r: z: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: extra: 1
+	}
+}
+-- dep/dep.cue --
+package dep
+
+two: 2
+-- out/compile --
+--- in.cue
+{
+  field: {
+    n: {
+      a: {
+        enabled: false
+      }
+    }
+    r: {
+      a: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == _|_(explicit error (_|_ literal) in source)) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          enabled: true
+        }
+      }
+    }
+  }
+  pattern: {
+    nodes: {
+      reth: {
+        "reth-1": {
+          enabled: false
+        }
+      }
+    }
+    rpc: {
+      "reth-1": "reth"
+    }
+    for Node, Client in 〈0;rpc〉 {
+      if (〈2;nodes〉[〈1;Client〉][〈1;Node〉] == _|_(explicit error (_|_ literal) in source)) {
+        rpc: {
+          〈3;Node〉: "x"
+        }
+      }
+    }
+    for _, _ in 〈0;rpc〉 {
+      nodes: {
+        [string]: {
+          [string]: {
+            enabled: true
+          }
+        }
+      }
+    }
+  }
+  tryElse: {
+    nodes: {
+      reth: {
+        "reth-1": {
+          enabled: false
+        }
+      }
+    }
+    rpc: {
+      "reth-1": "reth"
+    }
+    for Node, Client in 〈0;rpc〉 {
+      try {} else {
+        rpc: {
+          〈3;Node〉: "x"
+        }
+      }
+    }
+    for _, _ in 〈0;rpc〉 {
+      nodes: {
+        [string]: {
+          [string]: {
+            enabled: true
+          }
+        }
+      }
+    }
+  }
+  independent: {
+    n: {
+      a: {
+        enabled: false
+      }
+    }
+    r: {
+      a: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == _|_(explicit error (_|_ literal) in source)) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in [
+      1,
+    ] {
+      n: {
+        a: {
+          enabled: true
+        }
+      }
+    }
+  }
+  conflictList: {
+    n: {
+      a: [
+        1,
+        2,
+      ]
+    }
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == 99) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: [
+          1,
+          3,
+        ]
+      }
+    }
+  }
+  conflictBound: {
+    n: {
+      a: {
+        v: 5
+      }
+    }
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == 99) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          v: >10
+        }
+      }
+    }
+  }
+  conflictRegex: {
+    n: {
+      a: {
+        v: "x"
+      }
+    }
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == 99) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          v: =~"^y"
+        }
+      }
+    }
+  }
+  conflictClosed: {
+    #N: {
+      a: {
+        b: int
+      }
+    }
+    n: (〈0;#N〉 & {
+      a: {
+        b: 1
+      }
+    })
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == 99) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          b: 2
+        }
+      }
+    }
+  }
+  conflictImported: {
+    n: {
+      a: {
+        v: 1
+      }
+    }
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == 99) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          v: 〈import;"mod.test/dep"〉.two
+        }
+      }
+    }
+  }
+  conflictNested: {
+    n: {
+      a: {
+        b: {
+          c: 1
+        }
+      }
+    }
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == 99) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      for _, _ in [
+        1,
+      ] {
+        n: {
+          a: {
+            b: {
+              c: 2
+            }
+          }
+        }
+      }
+    }
+  }
+  disjunct: {
+    out: ({
+      n: {
+        a: {
+          enabled: false
+        }
+      }
+      r: {
+        a: 1
+      }
+      for _, _ in 〈0;r〉 {
+        if (〈2;n〉.a == _|_(explicit error (_|_ literal) in source)) {
+          r: {
+            x: 2
+          }
+        }
+      }
+      for _, _ in 〈0;r〉 {
+        n: {
+          a: {
+            enabled: true
+          }
+        }
+      }
+    }|{
+      z: 1
+    })
+  }
+  narrowType: {
+    n: {
+      a: {
+        enabled: bool
+      }
+    }
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == _|_(explicit error (_|_ literal) in source)) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          enabled: true
+        }
+      }
+    }
+  }
+  narrowDefault: {
+    n: {
+      a: {
+        size: (*"4k"|"32k")
+      }
+    }
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == 99) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          size: "32k"
+        }
+      }
+    }
+  }
+  narrowStructDefault: {
+    n: {
+      a: (*{
+        x: 1
+      }|{
+        x: 2
+      })
+    }
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == 99) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          x: 2
+        }
+      }
+    }
+  }
+  narrowInt: {
+    n: {
+      a: {
+        v: int
+      }
+    }
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == _|_(explicit error (_|_ literal) in source)) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          v: 1
+        }
+      }
+    }
+  }
+  narrowOptional: {
+    n: {
+      a: {
+        b: int
+        c?: int
+      }
+    }
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == _|_(explicit error (_|_ literal) in source)) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          c: 2
+        }
+      }
+    }
+  }
+  newField: {
+    n: {
+      a: {
+        enabled: false
+      }
+    }
+    r: {
+      a: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == _|_(explicit error (_|_ literal) in source)) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          extra: 1
+        }
+      }
+    }
+  }
+  agree: {
+    n: {
+      a: {
+        enabled: false
+      }
+    }
+    r: {
+      a: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == _|_(explicit error (_|_ literal) in source)) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          enabled: false
+        }
+      }
+    }
+  }
+  agreeScalar: {
+    n: {
+      a: {
+        v: 1
+      }
+    }
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == 99) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          v: 1
+        }
+      }
+    }
+  }
+  agreeList: {
+    n: {
+      a: [
+        1,
+        2,
+      ]
+    }
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == 99) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: [
+          1,
+          2,
+        ]
+      }
+    }
+  }
+  agreeBytes: {
+    n: {
+      a: {
+        v: '\x01'
+      }
+    }
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == 99) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          v: '\x01'
+        }
+      }
+    }
+  }
+  agreeRegex: {
+    n: {
+      a: {
+        v: "x"
+      }
+    }
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == 99) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          v: =~"^x"
+        }
+      }
+    }
+  }
+  agreeBound: {
+    n: {
+      a: {
+        v: 5
+      }
+    }
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == 99) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          v: <10
+        }
+      }
+    }
+  }
+  agreeType: {
+    n: {
+      a: {
+        v: 5
+      }
+    }
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == 99) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          v: (int & >=0)
+        }
+      }
+    }
+  }
+  agreeDefault: {
+    n: {
+      a: {
+        size: (*"4k"|"32k")
+      }
+    }
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == 99) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          size: "4k"
+        }
+      }
+    }
+  }
+  agreeDisjunct: {
+    n: {
+      a: {
+        v: "a"
+      }
+    }
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == 99) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          v: ("a"|"b")
+        }
+      }
+    }
+  }
+  agreePattern: {
+    n: {
+      reth: {
+        a: {
+          enabled: true
+        }
+      }
+    }
+    r: {
+      a: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.reth.a == _|_(explicit error (_|_ literal) in source)) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        [string]: {
+          [string]: {
+            enabled: true
+          }
+        }
+      }
+    }
+  }
+  agreeReference: {
+    m: 1
+    n: {
+      a: {
+        v: 1
+      }
+    }
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == 99) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          v: 〈4;m〉
+        }
+      }
+    }
+  }
+  agreeImported: {
+    n: {
+      a: {
+        v: 2
+      }
+    }
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == 99) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          v: 〈import;"mod.test/dep"〉.two
+        }
+      }
+    }
+  }
+  agreeRepeated: {
+    n: {
+      a: {
+        b: 1
+      }
+    }
+    r: {
+      x: 1
+    }
+    r: {
+      y: 1
+    }
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == 99) {
+        r: {
+          w: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          b: 1
+        }
+      }
+    }
+  }
+  #ClosedNestedN: {
+    a: {
+      b: int
+    }
+  }
+  closedNested: {
+    n: (〈1;#ClosedNestedN〉 & {
+      a: {
+        b: 1
+      }
+    })
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == 99) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          b: 1
+        }
+      }
+    }
+  }
+  #ClosedPatternM: {
+    a: {
+      [string]: {
+        x: int
+      }
+    }
+  }
+  closedPattern: {
+    n: (〈1;#ClosedPatternM〉 & {
+      a: {
+        foo: {
+          x: 1
+        }
+      }
+    })
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == 99) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          foo: {
+            x: 1
+          }
+        }
+      }
+    }
+  }
+  #ClosedEmbedN: {
+    a: {
+      b: int
+    }
+  }
+  closedEmbed: {
+    n: {
+      〈2;#ClosedEmbedN〉
+      a: {
+        b: 1
+      }
+    }
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == 99) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          b: 1
+        }
+      }
+    }
+  }
+  #ClosedDefInDefIn: {
+    b: int
+  }
+  #ClosedDefInDefN: {
+    a: 〈1;#ClosedDefInDefIn〉
+  }
+  closedDefInDef: {
+    n: (〈1;#ClosedDefInDefN〉 & {
+      a: {
+        b: 1
+      }
+    })
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == 99) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          b: 1
+        }
+      }
+    }
+  }
+  #ClosedListN: {
+    a: [
+      ...{
+        b: int
+      },
+    ]
+  }
+  closedList: {
+    n: (〈1;#ClosedListN〉 & {
+      a: [
+        {
+          b: 1
+        },
+      ]
+    })
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == 99) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: [
+          {
+            b: 1
+          },
+        ]
+      }
+    }
+  }
+  #ClosedOptionalN: {
+    a: {
+      b: int
+      c?: int
+    }
+  }
+  closedOptional: {
+    n: (〈1;#ClosedOptionalN〉 & {
+      a: {
+        b: 1
+      }
+    })
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == 99) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          b: 1
+        }
+      }
+    }
+  }
+  #ClosedFieldN: {
+    a: {
+      b: int
+    }
+  }
+  closedField: {
+    n: (〈1;#ClosedFieldN〉 & {
+      a: {
+        b: 1
+      }
+    })
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == _|_(explicit error (_|_ literal) in source)) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          extra: 1
+        }
+      }
+    }
+  }
+}
