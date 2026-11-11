@@ -127,14 +127,18 @@ func (n *nodeContext) checkLateConjunct(l lateConjuncts) {
 	if b.IsIncomplete() {
 		return // the conjuncts may be completed later.
 	}
-	if b == nil && Equal(ctx, arc, w, 0) {
+	// The values are compared as evaluation gives them. The arc and w are not
+	// evaluated alike: the arguments of a validator in the arc, for instance,
+	// were not needed yet, while those in w were, and a function type that
+	// the conjunct restates is composed with itself in w.
+	if b == nil && Equal(ctx, arc, w, evaluated) {
 		return
 	}
 
 	// Compare with the result without the dropped conjuncts, so as not to
 	// report a difference that has another cause.
 	w0 := arc.reevaluate(ctx, nil)
-	if w0.Bottom() != nil || b == nil && Equal(ctx, w0, w, 0) {
+	if w0.Bottom() != nil || b == nil && Equal(ctx, w0, w, evaluated) {
 		return
 	}
 

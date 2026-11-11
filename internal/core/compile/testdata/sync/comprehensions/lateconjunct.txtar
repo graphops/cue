@@ -12,7 +12,7 @@
 module: "mod.test"
 language: version: "v0.18.0"
 -- in.cue --
-@experiment(try)
+@experiment(try,functions)
 package lateconjunct
 
 import "mod.test/dep"
@@ -459,6 +459,286 @@ closedField: {
 	}
 	for _, _ in r {
 		n: a: extra: 1
+	}
+}
+
+// A conjunct that restates a validator agrees with the field, however far the
+// arguments of the validator were evaluated in the field and in the conjunct.
+// The arguments of the validator in the field are not evaluated until needed,
+// those of the validator the conjunct evaluates again are.
+validatorStruct: {
+	n: a: {x: matchN(1, [int])}
+	r: z: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {x: matchN(1, [int])}
+	}
+}
+
+validatorArc: {
+	n: a: matchN(1, [int])
+	r: z: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: matchN(1, [int])
+	}
+}
+
+validatorSibling: {
+	n: a: {v: matchN(1, [int, string]), w: 1}
+	r: z: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {v: matchN(1, [int, string]), w: 1}
+	}
+}
+
+validatorOrNull: {
+	n: a: {x: matchN(1, [int]) | null}
+	r: z: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {x: matchN(1, [int]) | null}
+	}
+}
+
+validatorStructArgs: {
+	n: a: {x: matchN(1, [{a: int}, {b: string}])}
+	r: z: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {x: matchN(1, [{a: int}, {b: string}])}
+	}
+}
+
+validatorIf: {
+	n: a: {x: matchIf({a: int}, {b: string}, {c: bool})}
+	r: z: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {x: matchIf({a: int}, {b: string}, {c: bool})}
+	}
+}
+
+validatorNested: {
+	n: a: {y: {x: matchN(1, [int])}, z: [matchN(1, [int])]}
+	r: z: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {y: {x: matchN(1, [int])}, z: [matchN(1, [int])]}
+	}
+}
+
+// The validator is the same when it is reached through a reference.
+#ValidatorV: matchN(1, [int])
+validatorReference: {
+	n: a: {x: #ValidatorV}
+	r: z: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {x: #ValidatorV}
+	}
+	got: n.a.x != _|_
+}
+
+// A validator in a disjunct that restates it leaves the disjunct as it is: the
+// other disjunct is not selected.
+validatorDisjunct: {
+	out: *{
+		n: a: {x: matchN(1, [int])}
+		r: a: 1
+		for _, _ in r {
+			if n.a == _|_ {r: x: 2}
+		}
+		for _, _ in r {
+			n: a: {x: matchN(1, [int])}
+		}
+		probe: 1
+	} | {x: 1}
+	got: out.probe
+}
+
+// A validator that differs from that of the field is not the same: the field
+// would be another one.
+validatorOtherArg: {
+	n: a: {x: matchN(1, [int])}
+	r: z: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {x: matchN(1, [string])}
+	}
+}
+
+validatorOtherCount: {
+	n: a: {x: matchN(1, [int, string])}
+	r: z: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {x: matchN(2, [int, string])}
+	}
+}
+
+validatorOtherStructArg: {
+	n: a: {x: matchN(1, [{a: int}])}
+	r: z: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {x: matchN(1, [{a: string}])}
+	}
+}
+
+validatorOtherElements: {
+	n: a: {x: matchN(1, [int, string])}
+	r: z: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {x: matchN(1, [int])}
+	}
+}
+
+validatorOtherBuiltin: {
+	n: a: {x: matchN(1, [int])}
+	r: z: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {x: matchIf(int, int, int)}
+	}
+}
+
+validatorOtherInDisjunct: {
+	n: a: {x: matchN(1, [int]) | null}
+	r: z: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {x: matchN(1, [string]) | null}
+	}
+}
+
+// A validator and a value for it narrows the field.
+validatorNarrowed: {
+	n: a: {x: matchN(1, [int])}
+	r: z: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {x: 1}
+	}
+}
+
+// A function type that a conjunct restates agrees with the field, whether the
+// field holds it directly or within a struct.
+functionTypeStruct: {
+	n: a: {f: func(x: int) -> int}
+	r: a: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {f: func(x: int) -> int}
+	}
+	got: n.a.f != _|_
+}
+
+functionTypeArc: {
+	n: a: func(x: int) -> int
+	r: a: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: func(x: int) -> int
+	}
+	got: n.a != _|_
+}
+
+functionTypeOpen: {
+	n: a: {f: func(x: int, ...) -> int}
+	r: a: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {f: func(x: int, ...) -> int}
+	}
+	got: n.a.f != _|_
+}
+
+functionTypeDisjunct: {
+	out: *{
+		n: a: {f: func(x: int) -> int}
+		r: a: 1
+		for _, _ in r {
+			if n.a == _|_ {r: x: 2}
+		}
+		for _, _ in r {
+			n: a: {f: func(x: int) -> int}
+		}
+		probe: 1
+	} | {x: 1}
+	got: out.probe
+}
+
+// A function type that narrows the one of the field is not the same.
+functionTypeNarrowed: {
+	n: a: {f: func(x: int) -> int}
+	r: a: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {f: func(x: 1) -> int}
+	}
+}
+
+// An open signature is not the closed one.
+functionTypeOpenClosed: {
+	n: a: {f: func(x: int, ...) -> int}
+	r: a: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {f: func(x: int) -> int}
+	}
+}
+
+functionTypeResult: {
+	n: a: {f: func(x: int) -> int}
+	r: a: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {f: func(x: int) -> 1}
 	}
 }
 -- dep/dep.cue --
@@ -1447,6 +1727,668 @@ two: 2
       n: {
         a: {
           extra: 1
+        }
+      }
+    }
+  }
+  validatorStruct: {
+    n: {
+      a: {
+        x: matchN(1, [
+          int,
+        ])
+      }
+    }
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == _|_(explicit error (_|_ literal) in source)) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          x: matchN(1, [
+            int,
+          ])
+        }
+      }
+    }
+  }
+  validatorArc: {
+    n: {
+      a: matchN(1, [
+        int,
+      ])
+    }
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == _|_(explicit error (_|_ literal) in source)) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: matchN(1, [
+          int,
+        ])
+      }
+    }
+  }
+  validatorSibling: {
+    n: {
+      a: {
+        v: matchN(1, [
+          int,
+          string,
+        ])
+        w: 1
+      }
+    }
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == _|_(explicit error (_|_ literal) in source)) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          v: matchN(1, [
+            int,
+            string,
+          ])
+          w: 1
+        }
+      }
+    }
+  }
+  validatorOrNull: {
+    n: {
+      a: {
+        x: (matchN(1, [
+          int,
+        ])|null)
+      }
+    }
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == _|_(explicit error (_|_ literal) in source)) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          x: (matchN(1, [
+            int,
+          ])|null)
+        }
+      }
+    }
+  }
+  validatorStructArgs: {
+    n: {
+      a: {
+        x: matchN(1, [
+          {
+            a: int
+          },
+          {
+            b: string
+          },
+        ])
+      }
+    }
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == _|_(explicit error (_|_ literal) in source)) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          x: matchN(1, [
+            {
+              a: int
+            },
+            {
+              b: string
+            },
+          ])
+        }
+      }
+    }
+  }
+  validatorIf: {
+    n: {
+      a: {
+        x: matchIf({
+          a: int
+        }, {
+          b: string
+        }, {
+          c: bool
+        })
+      }
+    }
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == _|_(explicit error (_|_ literal) in source)) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          x: matchIf({
+            a: int
+          }, {
+            b: string
+          }, {
+            c: bool
+          })
+        }
+      }
+    }
+  }
+  validatorNested: {
+    n: {
+      a: {
+        y: {
+          x: matchN(1, [
+            int,
+          ])
+        }
+        z: [
+          matchN(1, [
+            int,
+          ]),
+        ]
+      }
+    }
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == _|_(explicit error (_|_ literal) in source)) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          y: {
+            x: matchN(1, [
+              int,
+            ])
+          }
+          z: [
+            matchN(1, [
+              int,
+            ]),
+          ]
+        }
+      }
+    }
+  }
+  #ValidatorV: matchN(1, [
+    int,
+  ])
+  validatorReference: {
+    n: {
+      a: {
+        x: 〈3;#ValidatorV〉
+      }
+    }
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == _|_(explicit error (_|_ literal) in source)) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          x: 〈5;#ValidatorV〉
+        }
+      }
+    }
+    got: (〈0;n〉.a.x != _|_(explicit error (_|_ literal) in source))
+  }
+  validatorDisjunct: {
+    out: (*{
+      n: {
+        a: {
+          x: matchN(1, [
+            int,
+          ])
+        }
+      }
+      r: {
+        a: 1
+      }
+      for _, _ in 〈0;r〉 {
+        if (〈2;n〉.a == _|_(explicit error (_|_ literal) in source)) {
+          r: {
+            x: 2
+          }
+        }
+      }
+      for _, _ in 〈0;r〉 {
+        n: {
+          a: {
+            x: matchN(1, [
+              int,
+            ])
+          }
+        }
+      }
+      probe: 1
+    }|{
+      x: 1
+    })
+    got: 〈0;out〉.probe
+  }
+  validatorOtherArg: {
+    n: {
+      a: {
+        x: matchN(1, [
+          int,
+        ])
+      }
+    }
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == _|_(explicit error (_|_ literal) in source)) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          x: matchN(1, [
+            string,
+          ])
+        }
+      }
+    }
+  }
+  validatorOtherCount: {
+    n: {
+      a: {
+        x: matchN(1, [
+          int,
+          string,
+        ])
+      }
+    }
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == _|_(explicit error (_|_ literal) in source)) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          x: matchN(2, [
+            int,
+            string,
+          ])
+        }
+      }
+    }
+  }
+  validatorOtherStructArg: {
+    n: {
+      a: {
+        x: matchN(1, [
+          {
+            a: int
+          },
+        ])
+      }
+    }
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == _|_(explicit error (_|_ literal) in source)) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          x: matchN(1, [
+            {
+              a: string
+            },
+          ])
+        }
+      }
+    }
+  }
+  validatorOtherElements: {
+    n: {
+      a: {
+        x: matchN(1, [
+          int,
+          string,
+        ])
+      }
+    }
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == _|_(explicit error (_|_ literal) in source)) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          x: matchN(1, [
+            int,
+          ])
+        }
+      }
+    }
+  }
+  validatorOtherBuiltin: {
+    n: {
+      a: {
+        x: matchN(1, [
+          int,
+        ])
+      }
+    }
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == _|_(explicit error (_|_ literal) in source)) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          x: matchIf(int, int, int)
+        }
+      }
+    }
+  }
+  validatorOtherInDisjunct: {
+    n: {
+      a: {
+        x: (matchN(1, [
+          int,
+        ])|null)
+      }
+    }
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == _|_(explicit error (_|_ literal) in source)) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          x: (matchN(1, [
+            string,
+          ])|null)
+        }
+      }
+    }
+  }
+  validatorNarrowed: {
+    n: {
+      a: {
+        x: matchN(1, [
+          int,
+        ])
+      }
+    }
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == _|_(explicit error (_|_ literal) in source)) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          x: 1
+        }
+      }
+    }
+  }
+  functionTypeStruct: {
+    n: {
+      a: {
+        f: func(x: int) -> int
+      }
+    }
+    r: {
+      a: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == _|_(explicit error (_|_ literal) in source)) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          f: func(x: int) -> int
+        }
+      }
+    }
+    got: (〈0;n〉.a.f != _|_(explicit error (_|_ literal) in source))
+  }
+  functionTypeArc: {
+    n: {
+      a: func(x: int) -> int
+    }
+    r: {
+      a: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == _|_(explicit error (_|_ literal) in source)) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: func(x: int) -> int
+      }
+    }
+    got: (〈0;n〉.a != _|_(explicit error (_|_ literal) in source))
+  }
+  functionTypeOpen: {
+    n: {
+      a: {
+        f: func(x: int, ...) -> int
+      }
+    }
+    r: {
+      a: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == _|_(explicit error (_|_ literal) in source)) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          f: func(x: int, ...) -> int
+        }
+      }
+    }
+    got: (〈0;n〉.a.f != _|_(explicit error (_|_ literal) in source))
+  }
+  functionTypeDisjunct: {
+    out: (*{
+      n: {
+        a: {
+          f: func(x: int) -> int
+        }
+      }
+      r: {
+        a: 1
+      }
+      for _, _ in 〈0;r〉 {
+        if (〈2;n〉.a == _|_(explicit error (_|_ literal) in source)) {
+          r: {
+            x: 2
+          }
+        }
+      }
+      for _, _ in 〈0;r〉 {
+        n: {
+          a: {
+            f: func(x: int) -> int
+          }
+        }
+      }
+      probe: 1
+    }|{
+      x: 1
+    })
+    got: 〈0;out〉.probe
+  }
+  functionTypeNarrowed: {
+    n: {
+      a: {
+        f: func(x: int) -> int
+      }
+    }
+    r: {
+      a: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == _|_(explicit error (_|_ literal) in source)) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          f: func(x: 1) -> int
+        }
+      }
+    }
+  }
+  functionTypeOpenClosed: {
+    n: {
+      a: {
+        f: func(x: int, ...) -> int
+      }
+    }
+    r: {
+      a: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == _|_(explicit error (_|_ literal) in source)) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          f: func(x: int) -> int
+        }
+      }
+    }
+  }
+  functionTypeResult: {
+    n: {
+      a: {
+        f: func(x: int) -> int
+      }
+    }
+    r: {
+      a: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == _|_(explicit error (_|_ literal) in source)) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          f: func(x: int) -> 1
         }
       }
     }
