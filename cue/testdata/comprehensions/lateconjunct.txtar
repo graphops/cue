@@ -12,7 +12,7 @@
 module: "mod.test"
 language: version: "v0.18.0"
 -- in.cue --
-@experiment(try)
+@experiment(try,functions)
 package lateconjunct
 
 import "mod.test/dep"
@@ -481,6 +481,344 @@ closedField: {
 		n: a: extra: 1
 	}
 } @test(err, code=eval, path=n.a.extra, contains="field not allowed")
+
+// A conjunct that restates a validator agrees with the field, however far the
+// arguments of the validator were evaluated in the field and in the conjunct.
+// The arguments of the validator in the field are not evaluated until needed,
+// those of the validator the conjunct evaluates again are.
+validatorStruct: {
+	n: a: {x: matchN(1, [int])} @test(debugCheck, """
+		(struct){
+		  x: (_){ matchN(1, (#list){
+		      0: (int){ int }
+		    }) }
+		}
+		""")
+	r: z: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {x: matchN(1, [int])}
+	}
+}
+
+validatorArc: {
+	n: a: matchN(1, [int]) @test(debugCheck, """
+		(_){ matchN(1, (#list){
+		    0: (int){ int }
+		  }) }
+		""")
+	r: z: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: matchN(1, [int])
+	}
+}
+
+validatorSibling: {
+	n: a: {v: matchN(1, [int, string]), w: 1} @test(debugCheck, """
+		(struct){
+		  v: (_){ matchN(1, (#list){
+		      0: (int){ int }
+		      1: (string){ string }
+		    }) }
+		  w: (int){ 1 }
+		}
+		""")
+	r: z: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {v: matchN(1, [int, string]), w: 1}
+	}
+}
+
+validatorOrNull: {
+	n: a: {x: matchN(1, [int]) | null} @test(debugCheck, """
+		(struct){
+		  x: (_){ |((_){ matchN(1, (#list){
+		        0: (int){ int }
+		      }) }, (null){ null }) }
+		}
+		""")
+	r: z: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {x: matchN(1, [int]) | null}
+	}
+}
+
+validatorStructArgs: {
+	n: a: {x: matchN(1, [{a: int}, {b: string}])} @test(debugCheck, """
+		(struct){
+		  x: (_){ matchN(1, (#list){
+		      0: (struct){
+		        a: (int){ int }
+		      }
+		      1: (struct){
+		        b: (string){ string }
+		      }
+		    }) }
+		}
+		""")
+	r: z: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {x: matchN(1, [{a: int}, {b: string}])}
+	}
+}
+
+validatorIf: {
+	n: a: {x: matchIf({a: int}, {b: string}, {c: bool})} @test(debugCheck, """
+		(struct){
+		  x: (_){ matchIf((struct){
+		      a: (int){ int }
+		    }, (struct){
+		      b: (string){ string }
+		    }, (struct){
+		      c: (bool){ bool }
+		    }) }
+		}
+		""")
+	r: z: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {x: matchIf({a: int}, {b: string}, {c: bool})}
+	}
+}
+
+validatorNested: {
+	n: a: {y: {x: matchN(1, [int])}, z: [matchN(1, [int])]} @test(debugCheck, """
+		(struct){
+		  y: (struct){
+		    x: (_){ matchN(1, (#list){
+		        0: (int){ int }
+		      }) }
+		  }
+		  z: (#list){
+		    0: (_){ matchN(1, (#list){
+		        0: (int){ int }
+		      }) }
+		  }
+		}
+		""")
+	r: z: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {y: {x: matchN(1, [int])}, z: [matchN(1, [int])]}
+	}
+}
+
+// The validator is the same when it is reached through a reference.
+#ValidatorV: matchN(1, [int])
+validatorReference: {
+	n: a: {x: #ValidatorV}
+	r: z: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {x: #ValidatorV}
+	}
+	got: n.a.x != _|_ @test(eq, true)
+}
+
+// A validator in a disjunct that restates it leaves the disjunct as it is: the
+// other disjunct is not selected.
+validatorDisjunct: {
+	out: *{
+		n: a: {x: matchN(1, [int])}
+		r: a: 1
+		for _, _ in r {
+			if n.a == _|_ {r: x: 2}
+		}
+		for _, _ in r {
+			n: a: {x: matchN(1, [int])}
+		}
+		probe: 1
+	} | {x: 1}
+	got: out.probe @test(eq, 1)
+}
+
+// A validator that differs from that of the field is not the same: the field
+// would be another one.
+validatorOtherArg: {
+	n: a: {x: matchN(1, [int])}
+	r: z: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {x: matchN(1, [string])}
+	}
+} @test(err, code=eval, path=n.a, contains="changed after evaluation")
+
+validatorOtherCount: {
+	n: a: {x: matchN(1, [int, string])}
+	r: z: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {x: matchN(2, [int, string])}
+	}
+} @test(err, code=eval, path=n.a, contains="changed after evaluation")
+
+validatorOtherStructArg: {
+	n: a: {x: matchN(1, [{a: int}])}
+	r: z: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {x: matchN(1, [{a: string}])}
+	}
+} @test(err, code=eval, path=n.a, contains="changed after evaluation")
+
+validatorOtherElements: {
+	n: a: {x: matchN(1, [int, string])}
+	r: z: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {x: matchN(1, [int])}
+	}
+} @test(err, code=eval, path=n.a, contains="changed after evaluation")
+
+validatorOtherBuiltin: {
+	n: a: {x: matchN(1, [int])}
+	r: z: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {x: matchIf(int, int, int)}
+	}
+} @test(err, code=eval, path=n.a, contains="changed after evaluation")
+
+validatorOtherInDisjunct: {
+	n: a: {x: matchN(1, [int]) | null}
+	r: z: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {x: matchN(1, [string]) | null}
+	}
+} @test(err, code=eval, path=n.a, contains="changed after evaluation")
+
+// A validator and a value for it narrows the field.
+validatorNarrowed: {
+	n: a: {x: matchN(1, [int])}
+	r: z: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {x: 1}
+	}
+} @test(err, code=eval, path=n.a, contains="changed after evaluation")
+
+// A function type that a conjunct restates agrees with the field, whether the
+// field holds it directly or within a struct.
+functionTypeStruct: {
+	n: a: {f: func(x: int) -> int}
+	r: a: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {f: func(x: int) -> int}
+	}
+	got: n.a.f != _|_ @test(eq, true)
+}
+
+functionTypeArc: {
+	n: a: func(x: int) -> int
+	r: a: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: func(x: int) -> int
+	}
+	got: n.a != _|_ @test(eq, true)
+}
+
+functionTypeOpen: {
+	n: a: {f: func(x: int, ...) -> int}
+	r: a: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {f: func(x: int, ...) -> int}
+	}
+	got: n.a.f != _|_ @test(eq, true)
+}
+
+functionTypeDisjunct: {
+	out: *{
+		n: a: {f: func(x: int) -> int}
+		r: a: 1
+		for _, _ in r {
+			if n.a == _|_ {r: x: 2}
+		}
+		for _, _ in r {
+			n: a: {f: func(x: int) -> int}
+		}
+		probe: 1
+	} | {x: 1}
+	got: out.probe @test(eq, 1)
+}
+
+// A function type that narrows the one of the field is not the same.
+functionTypeNarrowed: {
+	n: a: {f: func(x: int) -> int}
+	r: a: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {f: func(x: 1) -> int}
+	}
+} @test(err, code=eval, path=n.a, contains="changed after evaluation")
+
+// An open signature is not the closed one.
+functionTypeOpenClosed: {
+	n: a: {f: func(x: int, ...) -> int}
+	r: a: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {f: func(x: int) -> int}
+	}
+} @test(err, code=eval, path=n.a, contains="changed after evaluation")
+
+functionTypeResult: {
+	n: a: {f: func(x: int) -> int}
+	r: a: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {f: func(x: int) -> 1}
+	}
+} @test(err, code=eval, path=n.a, contains="changed after evaluation")
 -- dep/dep.cue --
 package dep
 
@@ -535,15 +873,35 @@ two: 2
     ./in.cue:464:6
     ./in.cue:459:16
     ./in.cue:461:22
+[eval] validatorOtherArg.n.a: circular dependency in evaluation: the value changed after evaluation by a later conjunct:
+    ./in.cue:650:9
+[eval] validatorOtherCount.n.a: circular dependency in evaluation: the value changed after evaluation by a later conjunct:
+    ./in.cue:661:9
+[eval] validatorOtherStructArg.n.a: circular dependency in evaluation: the value changed after evaluation by a later conjunct:
+    ./in.cue:672:9
+[eval] validatorOtherElements.n.a: circular dependency in evaluation: the value changed after evaluation by a later conjunct:
+    ./in.cue:683:9
+[eval] validatorOtherBuiltin.n.a: circular dependency in evaluation: the value changed after evaluation by a later conjunct:
+    ./in.cue:694:9
+[eval] validatorOtherInDisjunct.n.a: circular dependency in evaluation: the value changed after evaluation by a later conjunct:
+    ./in.cue:705:9
+[eval] validatorNarrowed.n.a: circular dependency in evaluation: the value changed after evaluation by a later conjunct:
+    ./in.cue:717:9
+[eval] functionTypeNarrowed.n.a: circular dependency in evaluation: the value changed after evaluation by a later conjunct:
+    ./in.cue:782:9
+[eval] functionTypeOpenClosed.n.a: circular dependency in evaluation: the value changed after evaluation by a later conjunct:
+    ./in.cue:794:9
+[eval] functionTypeResult.n.a: circular dependency in evaluation: the value changed after evaluation by a later conjunct:
+    ./in.cue:805:9
 -- out/eval/stats --
-Leaks:  60
-Freed:  446
-Reused: 394
-Allocs: 112
+Leaks:  96
+Freed:  925
+Reused: 850
+Allocs: 171
 Retain: 0
 
-Unifications: 480
-Conjuncts:    695
-Disjuncts:    22
+Unifications: 913
+Conjuncts:    1255
+Disjuncts:    48
 
-NumCloseIDs: 10
+NumCloseIDs: 25
