@@ -1,0 +1,174 @@
+# A function called with a value whose schema calls the function again.
+#
+# The argument of the second call is a field of a value that applied a
+# definition, and the parameter constraint applies that definition again.
+# Keeping a node structure shared past a repeated definition must not apply
+# to a node that shares a function argument. Kept is called from the body of
+# Names, and looks up a field of the shared argument. The field holds a call
+# of Names, from the schema of the entry, and the lookup schedules its
+# conjuncts, with the call of the body in the cycle-reference chain. The call
+# of the schema is then taken for a structural cycle, although it does not
+# depend on the call of the body.
+#inlinetest:exclude golden output records function values and lets
+-- in.cue --
+@experiment(try,functions)
+
+#LiveNames: [string]: string
+
+Id: func(args: {s: string}) -> string: args.s
+
+Kept: func(args: {liveNames: #LiveNames, name: string}) -> string: [try L = args.liveNames[args.name]? {L}, args.name][0]
+
+LiveName: func(args: {key: string, conventional: [...string]}) -> string: [
+	for C in args.conventional if C == args.key {string & !=""},
+][0]
+
+Names: func(args: {name: string, roles: [...string], liveNames: #LiveNames}) -> {...}: {
+	// secrets is not read below, but it holds a call.
+	let Conv = {
+		secrets: {for R in args.roles {(R): Id({s: R})}}
+		paths:   {for R in args.roles {(R): "clusters/\(args.name)/\(R)"}}
+	}
+	conventional: [args.name, for _, Pa in Conv.paths {Pa}]
+	object:       Kept({liveNames: args.liveNames, name: args.name})
+}
+
+#Entry: {
+	engine!: string
+	roles!: [string]: _
+	liveNames: *{} | #LiveNames
+}
+
+// A liveNames key must be a name Names gives: the schema calls Names itself.
+entries: [string]~(N, _): #Entry & {
+	engine~(_, Engine)!: _
+	roles~(_, Roles)!:   _
+	liveNames: [string]~(Key, _): LiveName({key: Key, conventional: Names({name: N, engine: Engine, roles: [for R, _ in Roles {R}]}).conventional})
+}
+entries: "db": {
+	engine: "x"
+	roles: a: {}
+	liveNames: "db": "db-v1"
+}
+
+// The consumer's config: a default shape, or the entries. The default
+// disjunct fails once the entry pattern constrains its fields.
+database: *{
+	bootstrap: mode: *"initdb" | _
+} | {[string]: _}
+database: entries
+
+// A second call of Names, with the entry's own liveNames.
+for N, E in database {
+	probe: (N): Names({name: N, roles: [for R, _ in E.roles {R}], liveNames: E.liveNames})
+}
+-- out/evalalpha --
+(struct){
+  #LiveNames: (#struct){
+  }
+  Id: (func){ func(args: {
+      s: string
+    }) -> string: 〈0;args〉.s }
+  Kept: (func){ func(args: {
+      liveNames: 〈1;#LiveNames〉
+      name: string
+    }) -> string: [
+      try L = 〈1;args〉.liveNames[〈1;args〉.name]? {
+        〈1;L〉
+      },
+      〈1;args〉.name,
+    ][0] }
+  LiveName: (func){ func(args: {
+      key: string
+      conventional: [
+        ...string,
+      ]
+    }) -> string: [
+      for _, C in 〈1;args〉.conventional if (〈0;C〉 == 〈2;args〉.key) {
+        (string & !="")
+      },
+    ][0] }
+  Names: (func){ func(args: {
+      name: string
+      roles: [
+        ...string,
+      ]
+      liveNames: 〈1;#LiveNames〉
+    }) -> {
+      ...
+    }: {
+      let Conv#1multi = {
+        secrets: {
+          for _, R in 〈3;args〉.roles {
+            〈1;R〉: 〈6;Id〉({
+              s: 〈2;R〉
+            })
+          }
+        }
+        paths: {
+          for _, R in 〈3;args〉.roles {
+            〈1;R〉: "clusters/\(〈5;args〉.name)/\(〈1;R〉)"
+          }
+        }
+      }
+      conventional: [
+        〈2;args〉.name,
+        for _, Pa in 〈1;let Conv#1〉.paths {
+          〈1;Pa〉
+        },
+      ]
+      object: 〈2;Kept〉({
+        liveNames: 〈2;args〉.liveNames
+        name: 〈2;args〉.name
+      })
+    } }
+  #Entry: (#struct){
+    engine!: (string){ string }
+    roles!: (#struct){
+    }
+    liveNames: (#struct){ |(*(#struct){
+      }, (#struct){
+      }) }
+  }
+  entries: (struct){
+    db: (#struct){
+      engine: (string){ "x" }
+      roles: (#struct){
+        a: (#struct){
+        }
+      }
+      liveNames: (#struct){
+        db: (string){ "db-v1" }
+      }
+    }
+  }
+  database: (struct){
+    db: (#struct){
+      engine: (string){ "x" }
+      roles: (#struct){
+        a: (#struct){
+        }
+      }
+      liveNames: (#struct){
+        db: (string){ "db-v1" }
+      }
+    }
+  }
+  probe: (struct){
+    db: (struct){
+      let Conv#1 = (struct){
+        secrets: (struct){
+          a: (string){ "a" }
+        }
+        paths: (struct){
+          a: (string){ "clusters/db/a" }
+        }
+      }
+      conventional: (#list){
+        0: (string){ "db" }
+        1: (string){ "clusters/db/a" }
+      }
+      object: (string){ "db-v1" }
+    }
+  }
+}

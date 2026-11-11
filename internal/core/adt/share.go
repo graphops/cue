@@ -138,8 +138,19 @@ func (v *Vertex) appliesDef(def *Vertex, needClosed bool) bool {
 // A plain definition closes a node that shares an opened reference
 // (x... & #D), so it is not redundant then, and the node stops sharing as
 // usual.
+//
+// A node within a function argument is left as before. A reference that
+// looks up a field of a parameter sharing its argument reaches the field of
+// the shared value, whose conjuncts are then scheduled with the
+// cycle-reference chain of the callee's body, not the one pinned by the
+// argument (see [CycleInfo.IsFuncArg]). If such a conjunct calls the
+// function in progress, which is nesting, the call is taken for recursion
+// and reported as a structural cycle. Not skipping the definition unshares
+// the node, so the field is evaluated within the argument, under the
+// caller's chain, as for a node that shares nothing.
 func (n *nodeContext) skipRedundantDef(c Conjunct, arc *Vertex, id CloseInfo) bool {
-	if !n.isShared || !notEmbedded(id) {
+	if !n.isShared || !notEmbedded(id) ||
+		inFuncArg(n.node) {
 		return false
 	}
 	cur, ok := n.node.BaseValue.(*Vertex)
@@ -173,6 +184,19 @@ func (n *nodeContext) skipRedundantDef(c Conjunct, arc *Vertex, id CloseInfo) bo
 		arc.getState(n.ctx)
 		n.addShared(prev.c, prev.arc, prev.id)
 		return true
+	}
+	return false
+}
+
+// inFuncArg reports whether v is a parameter of a function call, or a node
+// within one, whose argument conjunct pins the caller's cycle-reference chain.
+// The fields of an argument that is a struct are scheduled without the mark
+// that the argument itself carries, so it is found on the parameter.
+func inFuncArg(v *Vertex) bool {
+	for ; v != nil; v = v.Parent {
+		if v.IsDynamic && len(v.Conjuncts) > 0 && v.Conjuncts[0].CloseInfo.IsFuncArg {
+			return true
+		}
 	}
 	return false
 }
