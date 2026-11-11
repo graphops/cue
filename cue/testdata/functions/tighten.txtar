@@ -1660,12 +1660,16 @@ admission.rxC: invalid value "c" (out of bound =~"b"):
 [eval] admission.empBad: parameter x of function accepts int, but its signature requires (int|<"b"):
     ./in.cue:967:43
     ./in.cue:967:12
+[eval] admission.#PC: circular dependency in evaluation: the value changed after evaluation by a later conjunct:
+    ./in.cue:977:8
 [eval] admission.late: parameter x of function accepts string, but its signature requires #Late:
     ./in.cue:983:37
     ./in.cue:983:11
 [eval] admission.early: parameter x of function accepts string, but its signature requires #Early:
     ./in.cue:986:38
     ./in.cue:986:11
+[eval] admission.#LT: circular dependency in evaluation: the value changed after evaluation by a later conjunct:
+    ./in.cue:1004:8
 [eval] parameter x of function accepts {a:0,...}, but its signature requires #CorrTryAs:
     ./in.cue:926:13
     ./try.cue:25:16
@@ -1801,14 +1805,14 @@ argumentPaths.closed: x.d: field not allowed:
     ./in.cue:1260:11
     ./in.cue:1260:23
 -- out/eval/stats --
-Leaks:  165
-Freed:  3066
-Reused: 2828
+Leaks:  169
+Freed:  3068
+Reused: 2834
 Allocs: 403
 Retain: 0
 
-Unifications: 3039
-Conjuncts:    8353
+Unifications: 3045
+Conjuncts:    8361
 Disjuncts:    135
 Notifications: 8
 

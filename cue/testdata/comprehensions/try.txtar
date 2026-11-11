@@ -1072,9 +1072,8 @@ issue4483.guards: cannot reference optional field: b:
 [eval] tryOwnFields.constraint.x.a: invalid value 5 (out of bound <=2):
     ./in.cue:982:21
     ./in.cue:981:9
-[incomplete] tryOwnFields.guardAfterTry.x: cyclic reference to field b:
-    ./in.cue:1005:17
-    ./in.cue:1004:3
+[eval] tryOwnFields.guardAfterTry.x: adding field b not allowed as field set was already referenced:
+    ./in.cue:1005:30
 -- out/todo.txt --
 In v2, the try mechanism does not exist and many operations that succeed in v3
 produce errors in v2 (type errors, index out of range on open lists, etc.).
