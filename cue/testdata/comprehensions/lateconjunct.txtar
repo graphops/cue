@@ -1,0 +1,549 @@
+# Tests that a conjunct a comprehension adds to a field that was already
+# finalized is not lost.
+#
+# In each test the guard of the first comprehension reads n.a, which finalizes
+# it. The second comprehension iterates over r, so it runs once the first has
+# finished with r, and only then adds to n.a. A finalized field takes no more
+# conjuncts, so the conjunct was dropped. That is harmless if the field already
+# has it, but otherwise the field is not the unification of its conjuncts: a
+# conflict was not reported, and a value that narrows the field was not applied.
+# Both are reported now, as the field cannot be evaluated again.
+-- cue.mod/module.cue --
+module: "mod.test"
+language: version: "v0.18.0"
+-- in.cue --
+@experiment(try)
+package lateconjunct
+
+import "mod.test/dep"
+
+// The second comprehension adds a field to n.a, a struct the guard read.
+field: {
+	n: a: enabled: false
+	r: a:          1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: enabled: true
+	}
+} @test(err, code=eval, path=n.a.enabled, contains="conflicting values true and false")
+
+// The second comprehension adds a pattern constraint, matching the arcs that
+// were finalized.
+pattern: {
+	nodes: reth: "reth-1": enabled: false
+	rpc: "reth-1": "reth"
+	for Node, Client in rpc {
+		if nodes[Client][Node] == _|_ {rpc: (Node): "x"}
+	}
+	for _, _ in rpc {
+		nodes: [string]: [string]: enabled: true
+	}
+} @test(err, code=eval, path=nodes.reth."reth-1".enabled, contains="conflicting values true and false")
+
+// The first comprehension is a try with an else clause.
+tryElse: {
+	nodes: reth: "reth-1": enabled: false
+	rpc: "reth-1": "reth"
+	for Node, Client in rpc {
+		try _ = nodes[Client][Node]? {} else {rpc: (Node): "x"}
+	}
+	for _, _ in rpc {
+		nodes: [string]: [string]: enabled: true
+	}
+} @test(err, code=eval, path=nodes.reth."reth-1".enabled, contains="conflicting values true and false")
+
+// The comprehension that reads n.a is not affected by one that does not wait
+// for r: it runs first, and the conflict is reported as usual.
+independent: {
+	n: a: enabled: false
+	r: a:          1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _ in [1] {
+		n: a: enabled: true
+	}
+} @test(err, code=eval, path=n.a.enabled, contains="conflicting values true and false")
+
+// A conjunct that conflicts is reported whatever its value is: a list, a
+// bound, a regular expression, a field of a closed struct, or a value from
+// another package.
+conflictList: {
+	n: a: [1, 2]
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: [1, 3]
+	}
+} @test(err, code=eval, contains="conflicting values 3 and 2")
+
+conflictBound: {
+	n: a: v: 5
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: v: >10
+	}
+} @test(err, code=eval, contains="invalid value 5")
+
+conflictRegex: {
+	n: a: v: "x"
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: v: =~"^y"
+	}
+} @test(err, code=eval, contains="invalid value")
+
+conflictClosed: {
+	#N: a: {b: int}
+	n: #N & {a: b: 1}
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: b: 2
+	}
+} @test(err, code=eval, path=n.a.b, contains="conflicting values 2 and 1")
+
+conflictImported: {
+	n: a: v: 1
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: v: dep.two
+	}
+} @test(err, code=eval, contains="conflicting values 2 and 1")
+
+// The conflict is found one level down, from a comprehension that is nested.
+conflictNested: {
+	n: a: b: c: 1
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		for _ in [1] {n: a: b: c: 2}
+	}
+} @test(err, code=eval, path=n.a.b.c, contains="conflicting values 2 and 1")
+
+// A conjunct that is dropped for an arc that fails makes the disjunct fail,
+// and the other disjunct remains.
+disjunct: {
+	out: {
+		n: a: enabled: false
+		r: a:          1
+		for _, _ in r {
+			if n.a == _|_ {r: x: 2}
+		}
+		for _, _ in r {
+			n: a: enabled: true
+		}
+	} | {z: 1}
+	@test(eq, {out: {z: 1}})
+}
+
+// A conjunct that does not conflict but narrows the field was dropped as well,
+// leaving the value the field had.
+narrowType: {
+	n: a: enabled: bool
+	r: z: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: enabled: true
+	}
+} @test(err, code=eval, path=n.a, contains="changed after evaluation")
+
+narrowDefault: {
+	n: a: size: *"4k" | "32k"
+	r: z:       1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: size: "32k"
+	}
+} @test(err, code=eval, path=n.a, contains="changed after evaluation")
+
+narrowStructDefault: {
+	n: a: *{x: 1} | {x: 2}
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {x: 2}
+	}
+} @test(err, code=eval, path=n.a, contains="changed after evaluation")
+
+narrowInt: {
+	n: a: v: int
+	r: z: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: v: 1
+	}
+} @test(err, code=eval, path=n.a, contains="changed after evaluation")
+
+// A field that was optional is present with a value.
+narrowOptional: {
+	n: a: {b: int, c?: int}
+	r: z: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: c: 2
+	}
+} @test(err, code=eval, path=n.a, contains="changed after evaluation")
+
+// A new field is reported like a field added to a struct that was already
+// referenced.
+newField: {
+	n: a: enabled: false
+	r: a: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: extra: 1
+	}
+} @test(err, code=eval, path=n.a, contains="adding field extra not allowed as field set was already referenced")
+
+// A conjunct that agrees with the finalized value adds nothing.
+agree: {
+	n: a: enabled: false
+	r: a:          1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: enabled: false
+	}
+	@test(eq, {n: {a: {enabled: false}}, r: {a: 1}})
+}
+
+agreeScalar: {
+	n: a: v: 1
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: v: 1
+	}
+	@test(eq, {n: a: v: 1, r: z: 1})
+}
+
+agreeList: {
+	n: a: [1, 2]
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: [1, 2]
+	}
+	@test(eq, {n: a: [1, 2], r: z: 1})
+}
+
+agreeBytes: {
+	n: a: v: '\x01'
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: v: '\x01'
+	}
+	@test(eq, {n: a: v: '\x01', r: z: 1})
+}
+
+agreeRegex: {
+	n: a: v: "x"
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: v: =~"^x"
+	}
+	@test(eq, {n: a: v: "x", r: z: 1})
+}
+
+agreeBound: {
+	n: a: v: 5
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: v: <10
+	}
+	@test(eq, {n: a: v: 5, r: z: 1})
+}
+
+agreeType: {
+	n: a: v: 5
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: v: int & >=0
+	}
+	@test(eq, {n: a: v: 5, r: z: 1})
+}
+
+// The default is the value that is yielded again.
+agreeDefault: {
+	n: a: size: *"4k" | "32k"
+	r: z:       1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: size: "4k"
+	}
+	@test(eq, {n: a: size: *"4k" | "32k", r: z: 1})
+}
+
+// The conjunct is a disjunction that contains the value of the field.
+agreeDisjunct: {
+	n: a: v: "a"
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: v: "a" | "b"
+	}
+	@test(eq, {n: a: v: "a", r: z: 1})
+}
+
+agreePattern: {
+	n: reth: a: enabled: true
+	r: a: 1
+	for _, _ in r {
+		if n.reth.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: [string]: [string]: enabled: true
+	}
+	@test(eq, {n: reth: a: enabled: true, r: a: 1})
+}
+
+agreeReference: {
+	m: 1
+	n: a: v: 1
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: v: m
+	}
+	@test(eq, {m: 1, n: a: v: 1, r: z: 1})
+}
+
+agreeImported: {
+	n: a: v: 2
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: v: dep.two
+	}
+	@test(eq, {n: a: v: 2, r: z: 1})
+}
+
+// The same conjunct is yielded for several keys.
+agreeRepeated: {
+	n: a: b: 1
+	r: x: 1
+	r: y: 1
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: w: 2}
+	}
+	for _, _ in r {
+		n: a: b: 1
+	}
+	@test(eq, {n: a: b: 1, r: {x: 1, y: 1, z: 1}})
+}
+
+// A conjunct that adds nothing to a field of a closed struct is not a
+// violation of the closedness of the struct, whatever kind of struct it is.
+#ClosedNestedN: a: {b: int}
+closedNested: {
+	n: #ClosedNestedN & {a: b: 1}
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: b: 1
+	}
+	@test(eq, {n: a: b: 1, r: z: 1})
+}
+
+#ClosedPatternM: a: [string]: {x: int}
+closedPattern: {
+	n: #ClosedPatternM & {a: foo: x: 1}
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: foo: x: 1
+	}
+	@test(eq, {n: a: foo: x: 1, r: z: 1})
+}
+
+#ClosedEmbedN: {a: {b: int}}
+closedEmbed: {
+	n: {#ClosedEmbedN, a: b: 1}
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: b: 1
+	}
+	@test(eq, {n: a: b: 1, r: z: 1})
+}
+
+#ClosedDefInDefIn: {b: int}
+#ClosedDefInDefN: a: #ClosedDefInDefIn
+closedDefInDef: {
+	n: #ClosedDefInDefN & {a: b: 1}
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: b: 1
+	}
+	@test(eq, {n: a: b: 1, r: z: 1})
+}
+
+#ClosedListN: a: [...{b: int}]
+closedList: {
+	n: #ClosedListN & {a: [{b: 1}]}
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: [{b: 1}]
+	}
+	@test(eq, {n: a: [{b: 1}], r: z: 1})
+}
+
+#ClosedOptionalN: a: {b: int, c?: int}
+closedOptional: {
+	n: #ClosedOptionalN & {a: b: 1}
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: b: 1
+	}
+	@test(eq, {n: a: {b: 1, c?: int}, r: z: 1})
+}
+
+// A field that the closed struct does not allow is reported as such.
+#ClosedFieldN: a: {b: int}
+closedField: {
+	n: #ClosedFieldN & {a: b: 1}
+	r: z: 1
+	for _, _ in r {
+		if n.a == _|_ {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: extra: 1
+	}
+} @test(err, code=eval, path=n.a.extra, contains="field not allowed")
+-- dep/dep.cue --
+package dep
+
+two: 2
+-- out/errors.txt --
+[eval] field.n.a.enabled: conflicting values true and false:
+    ./in.cue:8:17
+    ./in.cue:14:18
+[eval] pattern.nodes.reth."reth-1".enabled: conflicting values true and false:
+    ./in.cue:21:34
+    ./in.cue:27:39
+[eval] tryElse.nodes.reth."reth-1".enabled: conflicting values true and false:
+    ./in.cue:33:34
+    ./in.cue:39:39
+[eval] independent.n.a.enabled: conflicting values true and false:
+    ./in.cue:46:17
+    ./in.cue:52:18
+[eval] conflictList.n.a.1: conflicting values 3 and 2:
+    ./in.cue:60:12
+    ./in.cue:66:13
+[eval] conflictBound.n.a.v: invalid value 5 (out of bound >10):
+    ./in.cue:77:12
+    ./in.cue:71:11
+[eval] conflictRegex.n.a.v: invalid value "x" (out of bound =~"^y"):
+    ./in.cue:88:12
+    ./in.cue:82:11
+[eval] conflictClosed.n.a.b: conflicting values 2 and 1:
+    ./in.cue:94:17
+    ./in.cue:100:12
+[eval] conflictImported.n.a.v: conflicting values 2 and 1:
+    ./dep/dep.cue:3:6
+    ./in.cue:105:11
+    ./in.cue:111:12
+[eval] conflictNested.n.a.b.c: conflicting values 2 and 1:
+    ./in.cue:117:14
+    ./in.cue:123:29
+[eval] narrowType.n.a: circular dependency in evaluation: the value changed after evaluation by a later conjunct:
+    ./in.cue:152:9
+[eval] narrowDefault.n.a: circular dependency in evaluation: the value changed after evaluation by a later conjunct:
+    ./in.cue:163:9
+[eval] narrowStructDefault.n.a: circular dependency in evaluation: the value changed after evaluation by a later conjunct:
+    ./in.cue:174:9
+[eval] narrowInt.n.a: circular dependency in evaluation: the value changed after evaluation by a later conjunct:
+    ./in.cue:185:9
+[eval] narrowOptional.n.a: circular dependency in evaluation: the value changed after evaluation by a later conjunct:
+    ./in.cue:197:9
+[eval] newField.n.a: adding field extra not allowed as field set was already referenced:
+    ./in.cue:210:9
+[eval] closedField.n.a.extra: field not allowed:
+    ./in.cue:467:9
+[incomplete] closedField.n.a: cyclic reference to field extra:
+    ./in.cue:464:6
+    ./in.cue:459:16
+    ./in.cue:461:22
+-- out/eval/stats --
+Leaks:  60
+Freed:  446
+Reused: 394
+Allocs: 112
+Retain: 0
+
+Unifications: 480
+Conjuncts:    695
+Disjuncts:    22
+
+NumCloseIDs: 10

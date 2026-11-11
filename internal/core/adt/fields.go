@@ -259,10 +259,13 @@ func allowedInClosed(f Feature) bool {
 }
 
 // insertConjunct inserts conjunct c into cc.
-func (v *Vertex) insertConjunct(ctx *OpContext, c Conjunct, id CloseInfo, mode ArcType, check, checkClosed bool) (pos int, added bool) {
+//
+// A vertex that was already finalized takes no more conjuncts: c is dropped,
+// and late reports that it was. See [nodeContext.addLateConjunct].
+func (v *Vertex) insertConjunct(ctx *OpContext, c Conjunct, id CloseInfo, mode ArcType, check, checkClosed bool) (pos int, added, late bool) {
 	n := v.getBareState(ctx)
 	if n == nil {
-		return 0, false
+		return 0, false, true
 	}
 
 	n.markNonCyclic(id)
@@ -362,7 +365,10 @@ func (n *nodeContext) insertArc(f Feature, mode ArcType, c Conjunct, id CloseInf
 
 	defer n.ctx.PopArc(n.ctx.PushArc(v))
 
-	_, added := v.insertConjunct(n.ctx, c, id, mode, check, true)
+	_, added, late := v.insertConjunct(n.ctx, c, id, mode, check, true)
+	if late {
+		n.addLateConjunct(v, c)
+	}
 	if !added {
 		return v
 	}
@@ -420,7 +426,9 @@ func (n *nodeContext) addConstraint(arc *Vertex, mode ArcType, c Conjunct, check
 	bulkEnv.DynamicLabel = f
 	c.Env = &bulkEnv
 
-	arc.insertConjunct(n.ctx, c, c.CloseInfo, mode, check, false)
+	if _, _, late := arc.insertConjunct(n.ctx, c, c.CloseInfo, mode, check, false); late {
+		n.addLateConjunct(arc, c)
+	}
 }
 
 // completePatternValue evaluates any vertices held by a pattern value before
