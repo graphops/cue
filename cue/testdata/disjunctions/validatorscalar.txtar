@@ -1,0 +1,426 @@
+# Tests that a scalar disjunct survives the unification of copies of a
+# disjunction whose other disjunct is a validator that the scalar violates.
+#
+# When a value is a scalar, its validators are checked as soon as its conjuncts
+# are in. matchN records the errors of the schemas that failed in the context
+# besides the error it returns. Left there, they made the next comparison of two
+# scalars in the same evaluation, such as the null of one copy against the null
+# of another, report that error instead of its result: the disjunct was
+# eliminated, so the unification of three copies of
+#
+#	matchN(1, [int]) | null
+#
+# was matchN(1, [int]), and a null written next to two copies was an error.
+# v0.17.1 and v0.18.0-rc.1 give the right value; the checks of a scalar ran
+# early from v0.18.0-rc.2.
+-- in.cue --
+import "strings"
+
+// Each test probes the unified field by unifying it with a value of each
+// disjunct, rather than comparing it with a disjunction of validators.
+
+// Three copies. The null disjunct of the copies is a scalar that fails the
+// validator of the other disjunct, then meets itself.
+three: {
+	a:   matchN(1, [int]) | null
+	a:   matchN(1, [int]) | null
+	a:   matchN(1, [int]) | null
+	n:   a & null @test(eq, null)
+	i:   a & 5    @test(eq, 5)
+	bad: a & "x"  @test(err, code=eval)
+}
+
+// The same by unification of struct literals, and with more copies.
+amp: {
+	a:   ({matchN(1, [int])} | null) & ({matchN(1, [int])} | null) & ({matchN(1, [int])} | null)
+	n:   a & null @test(eq, null)
+	i:   a & 5    @test(eq, 5)
+	bad: a & "x"  @test(err, code=eval)
+}
+four: {
+	a:   matchN(1, [int]) | null
+	a:   matchN(1, [int]) | null
+	a:   matchN(1, [int]) | null
+	a:   matchN(1, [int]) | null
+	n:   a & null @test(eq, null)
+	i:   a & 5    @test(eq, 5)
+	bad: a & "x"  @test(err, code=eval)
+}
+nested: {
+	a: x: matchN(1, [int]) | null
+	a: x: matchN(1, [int]) | null
+	a: x: matchN(1, [int]) | null
+	n:   a.x & null @test(eq, null)
+	i:   a.x & 5    @test(eq, 5)
+	bad: a.x & "x"  @test(err, code=eval)
+}
+
+// The order of the disjuncts does not matter.
+nullFirst: {
+	a:   null | matchN(1, [int])
+	a:   null | matchN(1, [int])
+	a:   null | matchN(1, [int])
+	n:   a & null @test(eq, null)
+	i:   a & 5    @test(eq, 5)
+	bad: a & "x"  @test(err, code=eval)
+}
+
+// Any scalar kind that the validator rejects is affected, not only null.
+strScalar: {
+	a:   matchN(1, [int]) | "x"
+	a:   matchN(1, [int]) | "x"
+	a:   matchN(1, [int]) | "x"
+	s:   a & "x" @test(eq, "x")
+	i:   a & 5   @test(eq, 5)
+	bad: a & "y" @test(err, code=eval)
+}
+boolScalar: {
+	a:   matchN(1, [int]) | true
+	a:   matchN(1, [int]) | true
+	a:   matchN(1, [int]) | true
+	b:   a & true @test(eq, true)
+	i:   a & 5    @test(eq, 5)
+	bad: a & "y"  @test(err, code=eval)
+}
+numScalar: {
+	a:   matchN(1, [string]) | 5
+	a:   matchN(1, [string]) | 5
+	a:   matchN(1, [string]) | 5
+	m:   a & 5   @test(eq, 5)
+	s:   a & "x" @test(eq, "x")
+	bad: a & 6   @test(err, code=eval)
+}
+
+// Schemas and counts other than the simplest.
+manySchemas: {
+	a:   matchN(1, [int, string]) | null
+	a:   matchN(1, [int, string]) | null
+	a:   matchN(1, [int, string]) | null
+	n:   a & null @test(eq, null)
+	i:   a & 5    @test(eq, 5)
+	bad: a & true @test(err, code=eval)
+}
+structSchema: {
+	a:   matchN(1, [{x: int}]) | null
+	a:   matchN(1, [{x: int}]) | null
+	a:   matchN(1, [{x: int}]) | null
+	n:   a & null   @test(eq, null)
+	s:   a & {x: 1} @test(eq, {x: 1})
+	bad: a & "x"    @test(err, code=eval)
+}
+
+// A concrete scalar next to copies of the disjunction. Two copies were
+// enough: the value met the scalar of the disjunct after the validator failed
+// for the other.
+concreteNull: {
+	a: matchN(1, [int]) | null
+	a: matchN(1, [int]) | null
+	a: null
+	@test(eq, {a: null})
+}
+concreteString: {
+	a: matchN(1, [int]) | "x"
+	a: matchN(1, [int]) | "x"
+	a: "x"
+	@test(eq, {a: "x"})
+}
+
+// In a pattern constraint and in a list, where each element repeats.
+pattern: {
+	a: [string]: matchN(1, [int]) | null
+	a: [string]: matchN(1, [int]) | null
+	a: [string]: matchN(1, [int]) | null
+	a: x:        null
+	@test(eq, {a: x: null})
+}
+listElems: {
+	a: [...matchN(1, [int]) | null]
+	a: [...matchN(1, [int]) | null]
+	a: [...matchN(1, [int]) | null]
+	a: [null, 1]
+	@test(eq, {a: [null, 1]})
+}
+
+// Controls. Two copies were right before.
+two: {
+	a:   matchN(1, [int]) | null
+	a:   matchN(1, [int]) | null
+	n:   a & null @test(eq, null)
+	i:   a & 5    @test(eq, 5)
+	bad: a & "x"  @test(err, code=eval)
+}
+
+// A value that satisfies the validator is not affected.
+satisfied: {
+	a: matchN(1, [int]) | null
+	a: matchN(1, [int]) | null
+	a: matchN(1, [int]) | null
+	a: 5
+	@test(eq, {a: 5})
+}
+
+// Validators that record no errors of their own are not affected.
+minRunes: {
+	a:   strings.MinRunes(2) | null
+	a:   strings.MinRunes(2) | null
+	a:   strings.MinRunes(2) | null
+	n:   a & null @test(eq, null)
+	s:   a & "ab" @test(eq, "ab")
+	bad: a & "a"  @test(err, code=eval)
+}
+
+// Identical disjuncts of the copies are still merged: there is one of each
+// in the result.
+merged: {
+	a: 1 | 2
+	a: 1 | 2
+	a: 1 | 2
+	@test(eq, {a: 1 | 2})
+}
+mergedDefault: {
+	a: *1 | 2
+	a: *1 | 2
+	a: *1 | 2
+	@test(eq, {a: *1 | 2})
+}
+mergedNull: {
+	a: int | null
+	a: int | null
+	a: int | null
+	@test(eq, {a: int | null})
+}
+
+// A scalar that is not one of the disjuncts is an error, and the error still
+// lists why the schemas failed.
+rejected: {
+	a: matchN(1, [int]) | null
+	a: matchN(1, [int]) | null
+	a: matchN(1, [int]) | null
+	a: "x"
+	@test(err, code=eval, contains="empty disjunction")
+}
+// A validator that records an error without returning one, such as a builtin
+// validator given an argument of the wrong type, has failed. The error is the
+// validator's own, so it must neither be dropped nor, in the validator of a
+// disjunction, be taken for the error of another operation.
+badArgument: {
+	a: strings.MinRunes("x") & "abc" @test(err, code=eval, contains="argument 2 to strings.MinRunes")
+}
+badArgumentInMatchN: {
+	a: matchN(1, [strings.MinRunes("x")]) & "abc" @test(err, code=eval, contains="does not satisfy matchN")
+}
+badArgumentDisjunct: {
+	a: strings.MinRunes("x") | null
+	a: strings.MinRunes("x") | null
+	a: strings.MinRunes("x") | null
+	a: "abc"
+	@test(err, code=eval, contains="empty disjunction")
+}
+-- out/errors.txt --
+[eval] three.bad: 3 errors in empty disjunction:
+three.bad: conflicting values "x" and int (mismatched types string and int):
+    ./in.cue:9:18
+    ./in.cue:14:7
+    ./in.cue:14:11
+three.bad: conflicting values "x" and null (mismatched types string and null):
+    ./in.cue:9:26
+    ./in.cue:14:7
+    ./in.cue:14:11
+three.bad: invalid value "x" (does not satisfy matchN): 0 matched, expected 1:
+    ./in.cue:9:7
+    ./in.cue:9:14
+    ./in.cue:14:7
+    ./in.cue:14:11
+[eval] amp.bad: 3 errors in empty disjunction:
+amp.bad: conflicting values "x" and int (mismatched types string and int):
+    ./in.cue:19:20
+    ./in.cue:22:7
+    ./in.cue:22:11
+amp.bad: conflicting values "x" and null (mismatched types string and null):
+    ./in.cue:19:29
+    ./in.cue:22:7
+    ./in.cue:22:11
+amp.bad: invalid value "x" (does not satisfy matchN): 0 matched, expected 1:
+    ./in.cue:19:9
+    ./in.cue:19:16
+    ./in.cue:22:7
+    ./in.cue:22:11
+[eval] four.bad: 3 errors in empty disjunction:
+four.bad: conflicting values "x" and int (mismatched types string and int):
+    ./in.cue:25:18
+    ./in.cue:31:7
+    ./in.cue:31:11
+four.bad: conflicting values "x" and null (mismatched types string and null):
+    ./in.cue:25:26
+    ./in.cue:31:7
+    ./in.cue:31:11
+four.bad: invalid value "x" (does not satisfy matchN): 0 matched, expected 1:
+    ./in.cue:25:7
+    ./in.cue:25:14
+    ./in.cue:31:7
+    ./in.cue:31:11
+[eval] nested.bad: 3 errors in empty disjunction:
+nested.bad: conflicting values "x" and int (mismatched types string and int):
+    ./in.cue:34:19
+    ./in.cue:39:7
+    ./in.cue:39:13
+nested.bad: conflicting values "x" and null (mismatched types string and null):
+    ./in.cue:34:27
+    ./in.cue:39:7
+    ./in.cue:39:13
+nested.bad: invalid value "x" (does not satisfy matchN): 0 matched, expected 1:
+    ./in.cue:34:8
+    ./in.cue:34:15
+    ./in.cue:39:7
+    ./in.cue:39:13
+[eval] nullFirst.bad: 3 errors in empty disjunction:
+nullFirst.bad: conflicting values "x" and int (mismatched types string and int):
+    ./in.cue:44:25
+    ./in.cue:49:7
+    ./in.cue:49:11
+nullFirst.bad: conflicting values "x" and null (mismatched types string and null):
+    ./in.cue:44:7
+    ./in.cue:49:7
+    ./in.cue:49:11
+nullFirst.bad: invalid value "x" (does not satisfy matchN): 0 matched, expected 1:
+    ./in.cue:44:14
+    ./in.cue:44:21
+    ./in.cue:49:7
+    ./in.cue:49:11
+[eval] strScalar.bad: 3 errors in empty disjunction:
+strScalar.bad: conflicting values "x" and "y":
+    ./in.cue:54:26
+    ./in.cue:59:7
+    ./in.cue:59:11
+strScalar.bad: conflicting values "y" and int (mismatched types string and int):
+    ./in.cue:54:18
+    ./in.cue:59:7
+    ./in.cue:59:11
+strScalar.bad: invalid value "y" (does not satisfy matchN): 0 matched, expected 1:
+    ./in.cue:54:7
+    ./in.cue:54:14
+    ./in.cue:59:7
+    ./in.cue:59:11
+[eval] boolScalar.bad: 3 errors in empty disjunction:
+boolScalar.bad: conflicting values "y" and int (mismatched types string and int):
+    ./in.cue:62:18
+    ./in.cue:67:7
+    ./in.cue:67:11
+boolScalar.bad: conflicting values "y" and true (mismatched types string and bool):
+    ./in.cue:62:26
+    ./in.cue:67:7
+    ./in.cue:67:11
+boolScalar.bad: invalid value "y" (does not satisfy matchN): 0 matched, expected 1:
+    ./in.cue:62:7
+    ./in.cue:62:14
+    ./in.cue:67:7
+    ./in.cue:67:11
+[eval] numScalar.bad: 3 errors in empty disjunction:
+numScalar.bad: conflicting values 5 and 6:
+    ./in.cue:70:29
+    ./in.cue:75:7
+    ./in.cue:75:11
+numScalar.bad: conflicting values 6 and string (mismatched types int and string):
+    ./in.cue:70:18
+    ./in.cue:75:7
+    ./in.cue:75:11
+numScalar.bad: invalid value 6 (does not satisfy matchN): 0 matched, expected 1:
+    ./in.cue:70:7
+    ./in.cue:70:14
+    ./in.cue:75:7
+    ./in.cue:75:11
+[eval] manySchemas.bad: 4 errors in empty disjunction:
+manySchemas.bad: conflicting values true and int (mismatched types bool and int):
+    ./in.cue:80:18
+    ./in.cue:85:7
+    ./in.cue:85:11
+manySchemas.bad: conflicting values true and null (mismatched types bool and null):
+    ./in.cue:80:34
+    ./in.cue:85:7
+    ./in.cue:85:11
+manySchemas.bad: conflicting values true and string (mismatched types bool and string):
+    ./in.cue:80:23
+    ./in.cue:85:7
+    ./in.cue:85:11
+manySchemas.bad: invalid value true (does not satisfy matchN): 0 matched, expected 1:
+    ./in.cue:80:7
+    ./in.cue:80:14
+    ./in.cue:85:7
+    ./in.cue:85:11
+[eval] structSchema.bad: 3 errors in empty disjunction:
+structSchema.bad: conflicting values "x" and null (mismatched types string and null):
+    ./in.cue:88:31
+    ./in.cue:93:7
+    ./in.cue:93:11
+structSchema.bad: conflicting values "x" and {x:int} (mismatched types string and struct):
+    ./in.cue:88:18
+    ./in.cue:93:7
+    ./in.cue:93:11
+structSchema.bad: invalid value "x" (does not satisfy matchN): 0 matched, expected 1:
+    ./in.cue:88:7
+    ./in.cue:88:14
+    ./in.cue:93:7
+    ./in.cue:93:11
+[eval] two.bad: 3 errors in empty disjunction:
+two.bad: conflicting values "x" and int (mismatched types string and int):
+    ./in.cue:130:18
+    ./in.cue:134:7
+    ./in.cue:134:11
+two.bad: conflicting values "x" and null (mismatched types string and null):
+    ./in.cue:130:26
+    ./in.cue:134:7
+    ./in.cue:134:11
+two.bad: invalid value "x" (does not satisfy matchN): 0 matched, expected 1:
+    ./in.cue:130:7
+    ./in.cue:130:14
+    ./in.cue:134:7
+    ./in.cue:134:11
+[eval] minRunes.bad: 2 errors in empty disjunction:
+minRunes.bad: conflicting values "a" and null (mismatched types string and null):
+    ./in.cue:148:29
+    ./in.cue:153:7
+    ./in.cue:153:11
+minRunes.bad: invalid value "a" (does not satisfy strings.MinRunes(2)):
+    ./in.cue:148:7
+    ./in.cue:148:24
+    ./in.cue:153:7
+    ./in.cue:153:11
+[eval] rejected.a: 3 errors in empty disjunction:
+rejected.a: conflicting values "x" and int (mismatched types string and int):
+    ./in.cue:180:16
+    ./in.cue:183:5
+rejected.a: conflicting values "x" and null (mismatched types string and null):
+    ./in.cue:180:24
+    ./in.cue:183:5
+rejected.a: invalid value "x" (does not satisfy matchN): 0 matched, expected 1:
+    ./in.cue:180:5
+    ./in.cue:180:12
+    ./in.cue:181:5
+    ./in.cue:182:5
+    ./in.cue:183:5
+[eval] badArgument.a: cannot use "x" (type string) as int in argument 2 to strings.MinRunes:
+    ./in.cue:191:22
+[eval] badArgumentInMatchN.a: invalid value "abc" (does not satisfy matchN): 0 matched, expected 1:
+    ./in.cue:194:5
+    ./in.cue:194:12
+    ./in.cue:194:42
+badArgumentInMatchN.a: cannot use "x" (type string) as int in argument 2 to strings.MinRunes:
+    ./in.cue:194:33
+[eval] badArgumentDisjunct.a: 2 errors in empty disjunction:
+badArgumentDisjunct.a: conflicting values "abc" and null (mismatched types string and null):
+    ./in.cue:197:29
+    ./in.cue:200:5
+badArgumentDisjunct.a: cannot use "x" (type string) as int in argument 2 to strings.MinRunes:
+    ./in.cue:197:22
+-- out/eval/stats --
+Leaks:  179
+Freed:  889
+Reused: 860
+Allocs: 208
+Retain: 0
+
+Unifications: 700
+Conjuncts:    1706
+Disjuncts:    354
+
+NumCloseIDs: 480

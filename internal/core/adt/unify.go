@@ -581,11 +581,33 @@ func (n *nodeContext) runChecks(c *OpContext) {
 		return
 	}
 	for _, check := range checks {
+		// A validator may record errors in c besides the one it returns, such
+		// as matchN, which records why each of its schemas failed. They
+		// explain the returned error, so they go to the node with it. Left in
+		// c they would be taken for the failure of the next operation of the
+		// evaluation in progress that looks for one, such as the comparison of
+		// two scalars. When c is not the node's own context, as when a
+		// builtin finalizes its argument, they are not part of the node's
+		// errors, as before.
+		saved := c.errs
+		c.errs = nil
 		// TODO(errors): make Validate return bottom and generate
 		// optimized conflict message. Also track and inject IDs
 		// to determine origin location.s
-		if b := c.Validate(check, n.node); b != nil {
+		b := c.Validate(check, n.node)
+		causes := c.errs
+		c.errs = saved
+		if b == nil {
+			// A validator that records an error without returning one has
+			// failed too, as a builtin validator does when called with an
+			// argument of the wrong type. What it recorded is its error.
+			b, causes = causes, nil
+		}
+		if b != nil {
 			n.addBottom(b)
+			if causes != nil && c == n.ctx {
+				n.addBottom(causes)
+			}
 		}
 	}
 }
