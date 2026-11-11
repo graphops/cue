@@ -1,0 +1,228 @@
+# Tests that a reference to a required field next to an equal scalar is
+# incomplete, not a conflict.
+#
+# A reference to a required field records the incomplete error "required field
+# missing" in the context and returns the field, so that the node of the
+# reference takes the error with its conjuncts when the task that resolved the
+# reference ends. Unifying the scalar the field holds with an equal scalar of
+# the node compares the two with BinOpBool, which asks the context to create
+# the boolean result; a context that holds an error returns that error instead,
+# which is not a boolean, so equal values compared unequal and the incomplete
+# error was reported as "conflicting values" with the same value on both sides.
+# Both v0.17.1 and v0.18.0-rc.4 do so.
+#
+# The error is incomplete and must stay incomplete: a conflict is final, an
+# incomplete error is not, which is visible wherever the two are told apart.
+-- in.cue --
+// Each scalar kind. The reference is incomplete whichever of the two conjuncts
+// comes first, and with more copies of the value.
+str: {
+	a!: "x"
+	b:  a @test(err, code=incomplete, contains="required field missing: a")
+	b:  "x"
+}
+int: {
+	a!: 5
+	b:  a @test(err, code=incomplete, contains="required field missing: a")
+	b:  5
+}
+float: {
+	a!: 1.5
+	b:  a @test(err, code=incomplete, contains="required field missing: a")
+	b:  1.5
+}
+bool: {
+	a!: true
+	b:  a @test(err, code=incomplete, contains="required field missing: a")
+	b:  true
+}
+nullValue: {
+	a!: null
+	b:  a @test(err, code=incomplete, contains="required field missing: a")
+	b:  null
+}
+bytes: {
+	a!: 'ab'
+	b:  a @test(err, code=incomplete, contains="required field missing: a")
+	b:  'ab'
+}
+valueFirst: {
+	a!: "x"
+	b:  "x"
+	b:  a @test(err, code=incomplete, contains="required field missing: a")
+}
+copies: {
+	a!: "x"
+	b:  a @test(err, code=incomplete, contains="required field missing: a")
+	b:  "x"
+	b:  "x"
+}
+twoRefs: {
+	a!: "x"
+	b:  a @test(err, code=incomplete, contains="required field missing: a")
+	b:  a
+	b:  "x"
+}
+
+// The required field may be reached through a selector, a definition or a
+// pattern constraint.
+nested: {
+	s: a!: "x"
+	b: s.a @test(err, code=incomplete, contains="required field missing: a")
+	b: "x"
+}
+definition: {
+	#D: a!: "x"
+	d: #D
+	b: d.a @test(err, code=incomplete, contains="required field missing: a")
+	b: "x"
+}
+pattern: {
+	s: [string]: "x"
+	s: z!:       "x"
+	b: s.z @test(err, code=incomplete, contains="required field missing: z")
+	b: "x"
+}
+list: {
+	s: a!: "x"
+	l: [s.a]
+	l: ["x"]
+	@test(err, at=l.0, code=incomplete, contains="required field missing: a")
+}
+let: {
+	a!: "x"
+	let L = a
+	b: L @test(err, code=incomplete, contains="required field missing: a")
+	b: "x"
+}
+
+// The incomplete error reaches whatever asks about the field. Comprehensions
+// that depend on it stay unresolved, and an error is not a value that can be
+// compared or defaulted away.
+consumers: {
+	a!: "x"
+	b:  a @test(err, code=incomplete, contains="required field missing: a")
+	b:  "x"
+	guard: [if b == "x" {1}] @test(err, code=incomplete)
+	loop: [for x in [1] if b == "x" {x}] @test(err, code=incomplete)
+}
+
+// A disjunct that references the field next to an equal scalar is incomplete,
+// not conflicting: with the other disjunct failing too, the disjunction as a
+// whole is incomplete.
+disjunction: {
+	a!: "x"
+	c: {b: a} | {b: "o"}
+	c: b: "x"
+	@test(err, at=c, code=incomplete, contains="2 errors in empty disjunction")
+}
+disjunctionStruct: {
+	a!: "x"
+	c: {b: a, b: "x"} | {b: "o", z: 1}
+	c: z: 2
+	@test(err, at=c, code=incomplete, contains="2 errors in empty disjunction")
+}
+
+// A disjunct that fails for another reason is eliminated, as before.
+survivor: {
+	a!: "x"
+	c: {b: a} | {b: "x"}
+	c: b: "x"
+	@test(eq, at=c, {b: "x"})
+}
+
+// Values that differ are a conflict, as before. So are numbers of different
+// kinds, whose comparison is not what the error is about.
+differ: {
+	a!:  "x"
+	b:   a @test(err, code=eval, contains="conflicting values \"x\" and \"y\"")
+	b:   "y"
+	i!:  1.0
+	n:   i @test(err, code=eval, contains="conflicting values 1 and 1.0")
+	n:   1
+}
+
+// Referencing an optional field next to an equal scalar is incomplete too.
+optional: {
+	a?: "x"
+	b:  a @test(err, code=incomplete, contains="cannot reference optional field: a")
+	b:  "x"
+}
+
+// Controls: a regular field is a plain reference.
+regular: {
+	a: "x"
+	b: a   @test(eq, "x")
+	b: "x"
+}
+-- out/errors.txt --
+[incomplete] str.b: required field missing: a:
+    ./in.cue:5:6
+[incomplete] int.b: required field missing: a:
+    ./in.cue:10:6
+[incomplete] float.b: required field missing: a:
+    ./in.cue:15:6
+[incomplete] bool.b: required field missing: a:
+    ./in.cue:20:6
+[incomplete] nullValue.b: required field missing: a:
+    ./in.cue:25:6
+[incomplete] bytes.b: required field missing: a:
+    ./in.cue:30:6
+[incomplete] valueFirst.b: required field missing: a:
+    ./in.cue:36:6
+[incomplete] copies.b: required field missing: a:
+    ./in.cue:40:6
+[incomplete] twoRefs.b: required field missing: a:
+    ./in.cue:46:6
+twoRefs.b: required field missing: a:
+    ./in.cue:47:6
+[incomplete] nested.b: required field missing: a:
+    ./in.cue:55:7
+[incomplete] definition.b: required field missing: a:
+    ./in.cue:61:7
+[incomplete] pattern.b: required field missing: z:
+    ./in.cue:67:7
+[incomplete] list.l.0: required field missing: a:
+    ./in.cue:72:8
+[incomplete] let.b: required field missing: a:
+    ./in.cue:78:10
+[incomplete] consumers.b: required field missing: a:
+    ./in.cue:88:6
+[incomplete] consumers.b: required field missing: a:
+    ./in.cue:88:6
+[incomplete] consumers.b: required field missing: a:
+    ./in.cue:88:6
+[incomplete] disjunction.c: 2 errors in empty disjunction:
+disjunction.c.b: conflicting values "o" and "x":
+    ./in.cue:99:18
+    ./in.cue:100:8
+disjunction.c.b: required field missing: a:
+    ./in.cue:99:9
+[incomplete] disjunctionStruct.c: 2 errors in empty disjunction:
+disjunctionStruct.c.z: conflicting values 1 and 2:
+    ./in.cue:105:34
+    ./in.cue:106:8
+disjunctionStruct.c.b: required field missing: a:
+    ./in.cue:105:9
+[eval] differ.b: conflicting values "x" and "y":
+    ./in.cue:121:7
+    ./in.cue:122:7
+    ./in.cue:123:7
+[eval] differ.n: conflicting values 1 and 1.0 (mismatched types int and float):
+    ./in.cue:124:7
+    ./in.cue:125:7
+    ./in.cue:126:7
+[incomplete] optional.b: cannot reference optional field: a:
+    ./in.cue:132:6
+-- out/eval/stats --
+Leaks:  5
+Freed:  90
+Reused: 64
+Allocs: 31
+Retain: 0
+
+Unifications: 81
+Conjuncts:    144
+Disjuncts:    6
+
+NumCloseIDs: 23

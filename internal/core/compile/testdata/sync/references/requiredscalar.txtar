@@ -1,0 +1,316 @@
+# Tests that a reference to a required field next to an equal scalar is
+# incomplete, not a conflict.
+#
+# A reference to a required field records the incomplete error "required field
+# missing" in the context and returns the field, so that the node of the
+# reference takes the error with its conjuncts when the task that resolved the
+# reference ends. Unifying the scalar the field holds with an equal scalar of
+# the node compares the two with BinOpBool, which asks the context to create
+# the boolean result; a context that holds an error returns that error instead,
+# which is not a boolean, so equal values compared unequal and the incomplete
+# error was reported as "conflicting values" with the same value on both sides.
+# Both v0.17.1 and v0.18.0-rc.4 do so.
+#
+# The error is incomplete and must stay incomplete: a conflict is final, an
+# incomplete error is not, which is visible wherever the two are told apart.
+-- in.cue --
+// Each scalar kind. The reference is incomplete whichever of the two conjuncts
+// comes first, and with more copies of the value.
+str: {
+	a!: "x"
+	b:  a
+	b:  "x"
+}
+int: {
+	a!: 5
+	b:  a
+	b:  5
+}
+float: {
+	a!: 1.5
+	b:  a
+	b:  1.5
+}
+bool: {
+	a!: true
+	b:  a
+	b:  true
+}
+nullValue: {
+	a!: null
+	b:  a
+	b:  null
+}
+bytes: {
+	a!: 'ab'
+	b:  a
+	b:  'ab'
+}
+valueFirst: {
+	a!: "x"
+	b:  "x"
+	b:  a
+}
+copies: {
+	a!: "x"
+	b:  a
+	b:  "x"
+	b:  "x"
+}
+twoRefs: {
+	a!: "x"
+	b:  a
+	b:  a
+	b:  "x"
+}
+
+// The required field may be reached through a selector, a definition or a
+// pattern constraint.
+nested: {
+	s: a!: "x"
+	b: s.a
+	b: "x"
+}
+definition: {
+	#D: a!: "x"
+	d: #D
+	b: d.a
+	b: "x"
+}
+pattern: {
+	s: [string]: "x"
+	s: z!:       "x"
+	b: s.z
+	b: "x"
+}
+list: {
+	s: a!: "x"
+	l: [s.a]
+	l: ["x"]
+}
+let: {
+	a!: "x"
+	let L = a
+	b: L
+	b: "x"
+}
+
+// The incomplete error reaches whatever asks about the field. Comprehensions
+// that depend on it stay unresolved, and an error is not a value that can be
+// compared or defaulted away.
+consumers: {
+	a!: "x"
+	b:  a
+	b:  "x"
+	guard: [if b == "x" {1}]
+	loop: [for x in [1] if b == "x" {x}]
+}
+
+// A disjunct that references the field next to an equal scalar is incomplete,
+// not conflicting: with the other disjunct failing too, the disjunction as a
+// whole is incomplete.
+disjunction: {
+	a!: "x"
+	c: {b: a} | {b: "o"}
+	c: b: "x"
+}
+disjunctionStruct: {
+	a!: "x"
+	c: {b: a, b: "x"} | {b: "o", z: 1}
+	c: z: 2
+}
+
+// A disjunct that fails for another reason is eliminated, as before.
+survivor: {
+	a!: "x"
+	c: {b: a} | {b: "x"}
+	c: b: "x"
+}
+
+// Values that differ are a conflict, as before. So are numbers of different
+// kinds, whose comparison is not what the error is about.
+differ: {
+	a!:  "x"
+	b:   a
+	b:   "y"
+	i!:  1.0
+	n:   i
+	n:   1
+}
+
+// Referencing an optional field next to an equal scalar is incomplete too.
+optional: {
+	a?: "x"
+	b:  a
+	b:  "x"
+}
+
+// Controls: a regular field is a plain reference.
+regular: {
+	a: "x"
+	b: a
+	b: "x"
+}
+-- out/compile --
+--- in.cue
+{
+  str: {
+    a!: "x"
+    b: 〈0;a〉
+    b: "x"
+  }
+  int: {
+    a!: 5
+    b: 〈0;a〉
+    b: 5
+  }
+  float: {
+    a!: 1.5
+    b: 〈0;a〉
+    b: 1.5
+  }
+  bool: {
+    a!: true
+    b: 〈0;a〉
+    b: true
+  }
+  nullValue: {
+    a!: null
+    b: 〈0;a〉
+    b: null
+  }
+  bytes: {
+    a!: 'ab'
+    b: 〈0;a〉
+    b: 'ab'
+  }
+  valueFirst: {
+    a!: "x"
+    b: "x"
+    b: 〈0;a〉
+  }
+  copies: {
+    a!: "x"
+    b: 〈0;a〉
+    b: "x"
+    b: "x"
+  }
+  twoRefs: {
+    a!: "x"
+    b: 〈0;a〉
+    b: 〈0;a〉
+    b: "x"
+  }
+  nested: {
+    s: {
+      a!: "x"
+    }
+    b: 〈0;s〉.a
+    b: "x"
+  }
+  definition: {
+    #D: {
+      a!: "x"
+    }
+    d: 〈0;#D〉
+    b: 〈0;d〉.a
+    b: "x"
+  }
+  pattern: {
+    s: {
+      [string]: "x"
+    }
+    s: {
+      z!: "x"
+    }
+    b: 〈0;s〉.z
+    b: "x"
+  }
+  list: {
+    s: {
+      a!: "x"
+    }
+    l: [
+      〈1;s〉.a,
+    ]
+    l: [
+      "x",
+    ]
+  }
+  let: {
+    a!: "x"
+    let L#1 = 〈0;a〉
+    b: 〈0;let L#1〉
+    b: "x"
+  }
+  consumers: {
+    a!: "x"
+    b: 〈0;a〉
+    b: "x"
+    guard: [
+      if (〈1;b〉 == "x") {
+        1
+      },
+    ]
+    loop: [
+      for _, x in [
+        1,
+      ] if (〈2;b〉 == "x") {
+        〈1;x〉
+      },
+    ]
+  }
+  disjunction: {
+    a!: "x"
+    c: ({
+      b: 〈1;a〉
+    }|{
+      b: "o"
+    })
+    c: {
+      b: "x"
+    }
+  }
+  disjunctionStruct: {
+    a!: "x"
+    c: ({
+      b: 〈1;a〉
+      b: "x"
+    }|{
+      b: "o"
+      z: 1
+    })
+    c: {
+      z: 2
+    }
+  }
+  survivor: {
+    a!: "x"
+    c: ({
+      b: 〈1;a〉
+    }|{
+      b: "x"
+    })
+    c: {
+      b: "x"
+    }
+  }
+  differ: {
+    a!: "x"
+    b: 〈0;a〉
+    b: "y"
+    i!: 1.0
+    n: 〈0;i〉
+    n: 1
+  }
+  optional: {
+    a?: "x"
+    b: 〈0;a〉
+    b: "x"
+  }
+  regular: {
+    a: "x"
+    b: 〈0;a〉
+    b: "x"
+  }
+}
