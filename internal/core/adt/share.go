@@ -398,6 +398,19 @@ func (n *nodeContext) shareIfPossible(c Conjunct, arc *Vertex, id CloseInfo) boo
 		return false
 	}
 
+	// The inline vertex pre-evaluating a try clause body does not share a
+	// vertex the clause has yet to yield into, as in
+	//
+	//     x: r: "4k" | "32k"
+	//     try _ = x.r? {x: r: "zz"}
+	//
+	// Evaluating the shared vertex resolves its disjunction, and a conjunct
+	// arriving at a node that has done so is lost. The inline vertex
+	// evaluates the conjuncts of the vertex instead, leaving it untouched.
+	if n.inTryBody() && arc.state != nil && arc.state.hasPreEvaluatingParentTask() {
+		return false
+	}
+
 	// An open value is not shared into a recursively closed node, as in
 	//
 	//     reg: {}

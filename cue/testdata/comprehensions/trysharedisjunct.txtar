@@ -1,0 +1,121 @@
+# Tests that a try clause reading a field with a disjunction still yields its
+# body into that field.
+#
+# The try clause pre-evaluates its body, here starting with x.r?, whose inline
+# vertex shared x.r. Evaluating it resolved the disjunction of x.r without the
+# conjunct the try clause, a pushed-down parent task of x.r, was yet to yield,
+# and a conjunct arriving at a node that has resolved its disjunction is lost.
+# The constraint, or error(), the body adds was then dropped without an error.
+# The inline vertex now evaluates the conjuncts of such a field instead of
+# sharing it.
+-- in.cue --
+@experiment(try)
+
+// The body adds a value that matches none of the disjuncts.
+conflict: {
+	x: r: "4k" | "32k"
+	x: r: "32k"
+	try _ = x.r? {x: r: "zz"}
+} @test(err, code=eval, path=x.r, contains="conflicting values \"zz\" and \"32k\"")
+
+// The body adds a value that matches the remaining disjunct.
+compatible: {
+	x: r: "4k" | "32k"
+	x: r: "32k"
+	try _ = x.r? {x: r: "32k"}
+	@test(eq, {x: r: "32k"})
+}
+
+// The body adds a value that selects one of two disjuncts, the first a default.
+default: {
+	x: r: *"4k" | "32k"
+	try _ = x.r? {x: r: "32k"}
+	@test(eq, {x: r: "32k"})
+}
+
+// The body fails explicitly, as when it states that the field is not allowed.
+explicit: {
+	x: r: "4k" | "32k"
+	x: r: "32k"
+	try _ = x.r? {x: r: error("r is not allowed")}
+} @test(err, code=eval, path=x.r, contains="r is not allowed")
+
+// The disjunction is of structs.
+structs: {
+	x: r: {a: 1} | {a: 2}
+	x: r: a: 2
+	try _ = x.r? {x: r: a: 3}
+} @test(err, code=eval, path=x.r.a, contains="conflicting values 3 and 2")
+
+// The field is optional in a definition, as when a schema allows a set of
+// values for a field only some configurations may set.
+optional: {
+	#S: {r?: "4k" | "32k"}
+	x: #S & {r: "32k"}
+	try _ = x.r? {x: r: error("r is not allowed")}
+} @test(err, code=eval, path=x.r, contains="r is not allowed")
+
+// The try clause is skipped, as the field is absent: nothing is yielded.
+absent: {
+	#S: {r?: "4k" | "32k", s?: int}
+	x: #S & {s: 1} @test(eq, {s: 1, r?: "4k" | "32k"})
+	try _ = x.r? {x: r: error("r is not allowed")}
+}
+
+// A guard and an alias, as in a schema that rejects a field depending on
+// another, applied to every entry of a map.
+guarded: {
+	#Z: {
+		fstype!:     "zfs" | "ext4"
+		recordSize?: "4k" | "32k"
+	}
+	entries: [string]: {
+		zfs~(_, Z): #Z
+		if Z.fstype != "zfs" {
+			try _ = Z.recordSize? {zfs: recordSize: error("recordSize is for zfs datasets")}
+		}
+	}
+	entries: ok: zfs: {fstype: "zfs", recordSize: "32k"} @test(eq, {fstype: "zfs", recordSize: "32k"})
+	entries: none: zfs: {fstype: "ext4"} @test(eq, {fstype: "ext4", recordSize?: "4k" | "32k"})
+	entries: bad: zfs: {fstype: "ext4", recordSize: "32k"} @test(err, code=eval, path=recordSize, contains="recordSize is for zfs datasets")
+}
+-- out/errors.txt --
+[eval] conflict.x.r: 2 errors in empty disjunction:
+conflict.x.r: conflicting values "4k" and "32k":
+    ./in.cue:5:8
+    ./in.cue:6:8
+conflict.x.r: conflicting values "zz" and "32k":
+    ./in.cue:6:8
+    ./in.cue:7:22
+[eval] explicit.x.r: r is not allowed:
+    ./in.cue:29:22
+    ./in.cue:27:8
+    ./in.cue:28:8
+[eval] structs.x.r.a: conflicting values 3 and 2:
+    ./in.cue:35:11
+    ./in.cue:36:25
+[eval] optional.x.r: r is not allowed:
+    ./in.cue:44:22
+    ./in.cue:42:11
+    ./in.cue:43:5
+    ./in.cue:43:14
+[eval] guarded.entries.bad.zfs.recordSize: recordSize is for zfs datasets:
+    ./in.cue:64:44
+    ./in.cue:59:16
+    ./in.cue:62:15
+    ./in.cue:69:50
+-- out/eval/stats --
+Leaks:  13
+Freed:  93
+Reused: 76
+Allocs: 30
+Retain: 0
+
+Unifications: 58
+Conjuncts:    174
+Disjuncts:    46
+Notifications: 7
+
+SkippedNotification: 7
+
+NumCloseIDs: 12
