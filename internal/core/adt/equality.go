@@ -47,6 +47,15 @@ const (
 	// sharedByIdentity is set by [equalPatterns] to require that vertices
 	// reached via structure sharing are the same vertex.
 	sharedByIdentity
+
+	// evaluated compares values by what their evaluation gives, which does not
+	// depend on how far each of them was evaluated or on the form in which
+	// they were composed: every vertex that is compared is finalized first,
+	// including the arguments of validators and the members of disjunctions,
+	// which are evaluated when needed, and function types are equal if they
+	// are mutually admitted, as a function type unified with an equivalent
+	// one is. See [equivalentFuncValues].
+	evaluated
 )
 
 func Equal(ctx *OpContext, v, w Value, flags Flag) bool {
@@ -67,6 +76,10 @@ func equalVertex(ctx *OpContext, x *Vertex, v Value, flags Flag) bool {
 	y, ok := v.(*Vertex)
 	if !ok {
 		return false
+	}
+	if flags&evaluated != 0 {
+		x.Finalize(ctx)
+		y.Finalize(ctx)
 	}
 
 	// Note that the arc type of an originating node may be different than
@@ -317,6 +330,9 @@ func equalTerminal(ctx *OpContext, v, w Value, flags Flag) bool {
 
 	case *FuncValue:
 		if y, ok := w.(*FuncValue); ok {
+			if flags&evaluated != 0 {
+				return equivalentFuncValues(ctx, x, y)
+			}
 			return equalFuncValues(ctx, x, y)
 		}
 

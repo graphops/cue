@@ -1386,9 +1386,19 @@ const maxFuncTypeDepth = 8
 // in other instances, is taken to admit, so that recursive types compare in
 // time proportional to the pairs of literals they reach.
 func (c *OpContext) funcTypeAdmits(a, b *FuncValue) (ok, decided bool) {
+	return c.funcTypeAdmitsOpen(a, b, false)
+}
+
+// funcTypeAdmitsOpen is [OpContext.funcTypeAdmits], which with sameOpen also
+// decides for two open signatures. Two open signatures of the same
+// parameters, which admit the same additional ones, are compared as closed.
+func (c *OpContext) funcTypeAdmitsOpen(a, b *FuncValue, sameOpen bool) (ok, decided bool) {
 	sa, oka := plainFuncType(a)
 	sb, okb := plainFuncType(b)
-	if !oka || !okb || sa.Fn.Open || sb.Fn.Open || len(sa.Fn.Params) != len(sb.Fn.Params) {
+	if !oka || !okb || len(sa.Fn.Params) != len(sb.Fn.Params) {
+		return false, false
+	}
+	if (sa.Fn.Open || sb.Fn.Open) && !(sameOpen && sa.Fn.Open == sb.Fn.Open) {
 		return false, false
 	}
 	if sa == sb {
@@ -3202,6 +3212,56 @@ func equalFuncTypes(a, b []FuncType) bool {
 		}
 	}
 	return true
+}
+
+// equivalentFuncValues reports whether x and y are the same function value up
+// to the equivalence of their signatures: they bound the same arguments, and
+// each signature of x, its own and the types it was met with, is equivalent to
+// one of y, and the reverse. A function type unified with another that admits
+// and is admitted by it, as when a type is restated, is therefore equivalent to
+// the type alone. Implementations are the same as [SameFunc] decides; types
+// whose equivalence is not decided, see [OpContext.funcTypeAdmitsOpen], are
+// taken to differ.
+func equivalentFuncValues(c *OpContext, x, y *FuncValue) bool {
+	if equalFuncValues(c, x, y) {
+		return true
+	}
+	if x.IsPartial() || y.IsPartial() || !equalFuncArgs(x.args, y.args) {
+		return false
+	}
+	sigs := func(v *FuncValue) []FuncType {
+		return append([]FuncType{{Fn: v.Fn, Env: v.Env}}, v.Types...)
+	}
+	sx, sy := sigs(x), sigs(y)
+	for _, p := range [2][2][]FuncType{{sx, sy}, {sy, sx}} {
+		for _, t := range p[0] {
+			if !slices.ContainsFunc(p[1], func(u FuncType) bool { return c.equivalentFuncType(t, u) }) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// equivalentFuncType reports whether the signatures a and b are the same
+// function, or function types that admit each other.
+func (c *OpContext) equivalentFuncType(a, b FuncType) bool {
+	if a == b {
+		return true
+	}
+	if a.Fn == nil || b.Fn == nil {
+		return false
+	}
+	if a.Fn.Body != nil || b.Fn.Body != nil {
+		return a.Fn.Body != nil && b.Fn.Body != nil && SameFunc(c, a, b)
+	}
+	x, y := &FuncValue{Fn: a.Fn, Env: a.Env}, &FuncValue{Fn: b.Fn, Env: b.Env}
+	ab, decided := c.funcTypeAdmitsOpen(x, y, true)
+	if !decided || !ab {
+		return false
+	}
+	ba, decided := c.funcTypeAdmitsOpen(y, x, true)
+	return decided && ba
 }
 
 // equalFuncValues reports whether x and y are the same function value: they
