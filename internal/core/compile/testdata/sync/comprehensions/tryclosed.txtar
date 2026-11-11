@@ -1,0 +1,664 @@
+# Tests that a ?-marked reference tests whether a field exists, whatever makes
+# it absent: a closed struct that does not declare a field simply has no such
+# field, so the try clause is discarded and its else clause runs.
+#
+# An absent field used to be a permanent error if the lookup found the struct
+# closed, but only an incomplete one if it had not been evaluated yet, as its
+# closedness is only recorded once its conjuncts are processed. The outcome of
+# a try clause thus depended on evaluation order, and with it on the order of
+# fields, as in plainClosed.valueFirst and plainClosed.valueLast. Selecting
+# from a disjunction always evaluates its disjuncts first, so a default branch
+# that does not declare the field always failed, as in defaultDisjunct.
+#
+# Only absence is forgiven: see stillErrors.
+-- in.cue --
+@experiment(try)
+
+plainClosed: {
+	// The two orders of the same fields must agree.
+	valueFirst: {
+		#D: {a: int}
+		d: #D & {a: 1}
+		out: {try {v: d.y?} else {w: 1}}
+	}
+
+	valueLast: {
+		out: {try {v: d.y?} else {w: 1}}
+		#D: {a: int}
+		d: #D & {a: 1}
+	}
+
+	noElse: {
+		#D: {a: int}
+		d: #D & {a: 1}
+		out: {try {v: d.y?}}
+	}
+	sameStruct: {
+		#D: {a: int}
+		out: {
+			d: #D & {a: 1}
+			try {v: d.y?} else {w: 1}
+		}
+	}
+	schema: {
+		#D: {a: int}
+		out: {try {v: #D.y?}}
+	}
+	shared: {
+		#D: {a: int}
+		e: #D & {a: 1}
+		d: e
+		out: {try {v: d.y?}}
+	}
+	closeBuiltin: {
+		d: close({a: 1})
+		out: {try x = d.y? {v: x}}
+	}
+	nestedField: {
+		#D: {a: b: int}
+		d: #D & {a: b: 1}
+		out: {try x = d.a.y? {v: x}}
+	}
+	indexedByString: {
+		#D: {a: int}
+		d: #D & {a: 1}
+		out: {try {v: d["y"]?}}
+	}
+	declaredOptional: {
+		#D: {a: int, y?: int}
+		d: #D & {a: 1}
+		out: {try {v: d.y?}}
+	}
+	present: {
+		#D: {a: int}
+		d: #D & {a: 1}
+		out: {try {v: d.a?}}
+	}
+}
+
+defaultDisjunct: {
+	#S: {k: *{t: "a"} | {t: "b", y?: int}}
+
+	default: {
+		d: #S
+		out: {try {v: d.k.y?}}
+	}
+	bound: {
+		d: #S
+		out: {try x = d.k.y? {v: x}}
+	}
+	elseClause: {
+		d: #S
+		out: {try x = d.k.y? {v: x} else {w: 1}}
+	}
+	inDefinition: {
+		#T: {
+			k: *{t: "a"} | {t: "b", y?: int}
+			try x = k.y? {v: x}
+		}
+		d: #T
+		out: len([for k, _ in d {k}])
+	}
+	definitionsAsBranches: {
+		#A: {t: "a"}
+		#B: {t: "b", y: int}
+		d: *#A | #B
+		out: {try x = d.y? {v: x}}
+	}
+	orNull: {
+		#A: {t: "a"}
+		d: *#A | null
+		out: {try x = d.y? {v: x}}
+	}
+	// Selecting the default branch leaves a plain closed struct.
+	defaultSelected: {
+		d: #S & {k: t: "a"}
+		out: {try {v: d.k.y?}}
+	}
+	otherSelectedWithField: {
+		d: #S & {k: {t: "b", y: 2}}
+		out: {try {v: d.k.y?}}
+	}
+	otherSelectedWithoutField: {
+		d: #S & {k: t: "b"}
+		out: {try {v: d.k.y?}}
+	}
+	noBranchDeclaresIt: {
+		d: #S
+		out: {try {v: d.k.z?}}
+	}
+}
+
+nested: {
+	#S: {k: *{t: "a"} | {t: "b", m?: {s?: {on: *true | bool}}}}
+
+	default: {
+		d: #S
+		out: {try x = d.k.m?.s? {v: x.on}}
+	}
+	otherSelected: {
+		d: #S & {k: {t: "b", m: s: on: true}}
+		out: {try x = d.k.m?.s? {v: x.on}}
+	}
+	otherSelectedInnerAbsent: {
+		d: #S & {k: {t: "b", m: {}}}
+		out: {try x = d.k.m?.s? {v: x.on}}
+	}
+	insideStruct: {
+		#T: {a: b: *{t: "a"} | {t: "b", y?: z: int}}
+		d: #T
+		out: {try {v: d.a.b.y?.z?}}
+	}
+}
+
+// A ?-marked reference only forgives its own field being absent.
+stillErrors: {
+	#D: {a: int}
+	#S: {k: *{t: "a"} | {t: "b", y?: int}}
+
+	notMarked: {
+		d: #D & {a: 1}
+		out: {try {v: d.y}}
+	}
+	notInTry: {
+		d: #D & {a: 1}
+		out: {v: d.y}
+	}
+	defaultNotMarked: {
+		d: #S
+		out: {try {v: d.k.y}}
+	}
+	defaultNotInTry: {
+		d: #S
+		out: {v: d.k.y}
+	}
+	// The unmarked y is not forgiven by the marked z behind it.
+	nestedUnmarked: {
+		d: #S
+		out: {try {v: d.k.y.z?}}
+	}
+	notAStruct: {
+		d: "a"
+		out: {try {v: d.y?} else {w: 1}}
+	}
+	fieldOfList: {
+		d: [1]
+		out: {try {v: d.y?} else {w: 1}}
+	}
+	closedListIndex: {
+		d: [1]
+		out: {try {v: d[1]?} else {w: 1}}
+	}
+	indexOfStruct: {
+		d: #D & {a: 1}
+		out: {try {v: d[0]?} else {w: 1}}
+	}
+	erroneousValue: {
+		d: {a: 1 / 0}
+		out: {try {v: d.y?} else {w: 1}}
+	}
+}
+-- out/compile --
+--- in.cue
+{
+  plainClosed: {
+    valueFirst: {
+      #D: {
+        a: int
+      }
+      d: (〈0;#D〉 & {
+        a: 1
+      })
+      out: {
+        try {
+          v: 〈2;d〉.y?
+        } else {
+          w: 1
+        }
+      }
+    }
+    valueLast: {
+      out: {
+        try {
+          v: 〈2;d〉.y?
+        } else {
+          w: 1
+        }
+      }
+      #D: {
+        a: int
+      }
+      d: (〈0;#D〉 & {
+        a: 1
+      })
+    }
+    noElse: {
+      #D: {
+        a: int
+      }
+      d: (〈0;#D〉 & {
+        a: 1
+      })
+      out: {
+        try {
+          v: 〈2;d〉.y?
+        }
+      }
+    }
+    sameStruct: {
+      #D: {
+        a: int
+      }
+      out: {
+        d: (〈1;#D〉 & {
+          a: 1
+        })
+        try {
+          v: 〈1;d〉.y?
+        } else {
+          w: 1
+        }
+      }
+    }
+    schema: {
+      #D: {
+        a: int
+      }
+      out: {
+        try {
+          v: 〈2;#D〉.y?
+        }
+      }
+    }
+    shared: {
+      #D: {
+        a: int
+      }
+      e: (〈0;#D〉 & {
+        a: 1
+      })
+      d: 〈0;e〉
+      out: {
+        try {
+          v: 〈2;d〉.y?
+        }
+      }
+    }
+    closeBuiltin: {
+      d: close({
+        a: 1
+      })
+      out: {
+        try x = 〈1;d〉.y? {
+          v: 〈1;x〉
+        }
+      }
+    }
+    nestedField: {
+      #D: {
+        a: {
+          b: int
+        }
+      }
+      d: (〈0;#D〉 & {
+        a: {
+          b: 1
+        }
+      })
+      out: {
+        try x = 〈1;d〉.a.y? {
+          v: 〈1;x〉
+        }
+      }
+    }
+    indexedByString: {
+      #D: {
+        a: int
+      }
+      d: (〈0;#D〉 & {
+        a: 1
+      })
+      out: {
+        try {
+          v: 〈2;d〉["y"]?
+        }
+      }
+    }
+    declaredOptional: {
+      #D: {
+        a: int
+        y?: int
+      }
+      d: (〈0;#D〉 & {
+        a: 1
+      })
+      out: {
+        try {
+          v: 〈2;d〉.y?
+        }
+      }
+    }
+    present: {
+      #D: {
+        a: int
+      }
+      d: (〈0;#D〉 & {
+        a: 1
+      })
+      out: {
+        try {
+          v: 〈2;d〉.a?
+        }
+      }
+    }
+  }
+  defaultDisjunct: {
+    #S: {
+      k: (*{
+        t: "a"
+      }|{
+        t: "b"
+        y?: int
+      })
+    }
+    default: {
+      d: 〈1;#S〉
+      out: {
+        try {
+          v: 〈2;d〉.k.y?
+        }
+      }
+    }
+    bound: {
+      d: 〈1;#S〉
+      out: {
+        try x = 〈1;d〉.k.y? {
+          v: 〈1;x〉
+        }
+      }
+    }
+    elseClause: {
+      d: 〈1;#S〉
+      out: {
+        try x = 〈1;d〉.k.y? {
+          v: 〈1;x〉
+        } else {
+          w: 1
+        }
+      }
+    }
+    inDefinition: {
+      #T: {
+        k: (*{
+          t: "a"
+        }|{
+          t: "b"
+          y?: int
+        })
+        try x = 〈0;k〉.y? {
+          v: 〈1;x〉
+        }
+      }
+      d: 〈0;#T〉
+      out: len([
+        for k, _ in 〈1;d〉 {
+          〈1;k〉
+        },
+      ])
+    }
+    definitionsAsBranches: {
+      #A: {
+        t: "a"
+      }
+      #B: {
+        t: "b"
+        y: int
+      }
+      d: (*〈0;#A〉|〈0;#B〉)
+      out: {
+        try x = 〈1;d〉.y? {
+          v: 〈1;x〉
+        }
+      }
+    }
+    orNull: {
+      #A: {
+        t: "a"
+      }
+      d: (*〈0;#A〉|null)
+      out: {
+        try x = 〈1;d〉.y? {
+          v: 〈1;x〉
+        }
+      }
+    }
+    defaultSelected: {
+      d: (〈1;#S〉 & {
+        k: {
+          t: "a"
+        }
+      })
+      out: {
+        try {
+          v: 〈2;d〉.k.y?
+        }
+      }
+    }
+    otherSelectedWithField: {
+      d: (〈1;#S〉 & {
+        k: {
+          t: "b"
+          y: 2
+        }
+      })
+      out: {
+        try {
+          v: 〈2;d〉.k.y?
+        }
+      }
+    }
+    otherSelectedWithoutField: {
+      d: (〈1;#S〉 & {
+        k: {
+          t: "b"
+        }
+      })
+      out: {
+        try {
+          v: 〈2;d〉.k.y?
+        }
+      }
+    }
+    noBranchDeclaresIt: {
+      d: 〈1;#S〉
+      out: {
+        try {
+          v: 〈2;d〉.k.z?
+        }
+      }
+    }
+  }
+  nested: {
+    #S: {
+      k: (*{
+        t: "a"
+      }|{
+        t: "b"
+        m?: {
+          s?: {
+            on: (*true|bool)
+          }
+        }
+      })
+    }
+    default: {
+      d: 〈1;#S〉
+      out: {
+        try x = 〈1;d〉.k.m?.s? {
+          v: 〈1;x〉.on
+        }
+      }
+    }
+    otherSelected: {
+      d: (〈1;#S〉 & {
+        k: {
+          t: "b"
+          m: {
+            s: {
+              on: true
+            }
+          }
+        }
+      })
+      out: {
+        try x = 〈1;d〉.k.m?.s? {
+          v: 〈1;x〉.on
+        }
+      }
+    }
+    otherSelectedInnerAbsent: {
+      d: (〈1;#S〉 & {
+        k: {
+          t: "b"
+          m: {}
+        }
+      })
+      out: {
+        try x = 〈1;d〉.k.m?.s? {
+          v: 〈1;x〉.on
+        }
+      }
+    }
+    insideStruct: {
+      #T: {
+        a: {
+          b: (*{
+            t: "a"
+          }|{
+            t: "b"
+            y?: {
+              z: int
+            }
+          })
+        }
+      }
+      d: 〈0;#T〉
+      out: {
+        try {
+          v: 〈2;d〉.a.b.y?.z?
+        }
+      }
+    }
+  }
+  stillErrors: {
+    #D: {
+      a: int
+    }
+    #S: {
+      k: (*{
+        t: "a"
+      }|{
+        t: "b"
+        y?: int
+      })
+    }
+    notMarked: {
+      d: (〈1;#D〉 & {
+        a: 1
+      })
+      out: {
+        try {
+          v: 〈2;d〉.y
+        }
+      }
+    }
+    notInTry: {
+      d: (〈1;#D〉 & {
+        a: 1
+      })
+      out: {
+        v: 〈1;d〉.y
+      }
+    }
+    defaultNotMarked: {
+      d: 〈1;#S〉
+      out: {
+        try {
+          v: 〈2;d〉.k.y
+        }
+      }
+    }
+    defaultNotInTry: {
+      d: 〈1;#S〉
+      out: {
+        v: 〈1;d〉.k.y
+      }
+    }
+    nestedUnmarked: {
+      d: 〈1;#S〉
+      out: {
+        try {
+          v: 〈2;d〉.k.y.z?
+        }
+      }
+    }
+    notAStruct: {
+      d: "a"
+      out: {
+        try {
+          v: 〈2;d〉.y?
+        } else {
+          w: 1
+        }
+      }
+    }
+    fieldOfList: {
+      d: [
+        1,
+      ]
+      out: {
+        try {
+          v: 〈2;d〉.y?
+        } else {
+          w: 1
+        }
+      }
+    }
+    closedListIndex: {
+      d: [
+        1,
+      ]
+      out: {
+        try {
+          v: 〈2;d〉[1]?
+        } else {
+          w: 1
+        }
+      }
+    }
+    indexOfStruct: {
+      d: (〈1;#D〉 & {
+        a: 1
+      })
+      out: {
+        try {
+          v: 〈2;d〉[0]?
+        } else {
+          w: 1
+        }
+      }
+    }
+    erroneousValue: {
+      d: {
+        a: (1 / 0)
+      }
+      out: {
+        try {
+          v: 〈2;d〉.y?
+        } else {
+          w: 1
+        }
+      }
+    }
+  }
+}
