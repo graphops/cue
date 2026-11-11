@@ -149,8 +149,7 @@ func (v *Vertex) appliesDef(def *Vertex, needClosed bool) bool {
 // the node, so the field is evaluated within the argument, under the
 // caller's chain, as for a node that shares nothing.
 func (n *nodeContext) skipRedundantDef(c Conjunct, arc *Vertex, id CloseInfo) bool {
-	if !n.isShared || !notEmbedded(id) ||
-		inFuncArg(n.node) {
+	if !n.isShared || !notEmbedded(id) {
 		return false
 	}
 	cur, ok := n.node.BaseValue.(*Vertex)
@@ -161,13 +160,17 @@ func (n *nodeContext) skipRedundantDef(c Conjunct, arc *Vertex, id CloseInfo) bo
 	switch {
 	case arc.Label.IsDef() && !(closes && n.node.OpenedShared) &&
 		cur.appliesDef(arc, closes):
+		if inFuncArg(n.node) {
+			return false
+		}
 		n.addShared(c, arc, id)
 		return true
 
 	case cur.Label.IsDef() && len(n.shared) == 1 && notEmbedded(n.shared[0].id):
 		prev := n.shared[0]
 		prevCloses := plainApplication(prev.c, prev.id)
-		if (prevCloses && !closes) || !arc.appliesDef(cur, prevCloses) {
+		if (prevCloses && !closes) || !arc.appliesDef(cur, prevCloses) ||
+			inFuncArg(n.node) {
 			return false
 		}
 		// Share arc, which includes the definition, rather than the
