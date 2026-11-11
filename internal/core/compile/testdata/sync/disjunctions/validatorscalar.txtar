@@ -1,0 +1,507 @@
+# Tests that a scalar disjunct survives the unification of copies of a
+# disjunction whose other disjunct is a validator that the scalar violates.
+#
+# When a value is a scalar, its validators are checked as soon as its conjuncts
+# are in. matchN records the errors of the schemas that failed in the context
+# besides the error it returns. Left there, they made the next comparison of two
+# scalars in the same evaluation, such as the null of one copy against the null
+# of another, report that error instead of its result: the disjunct was
+# eliminated, so the unification of three copies of
+#
+#	matchN(1, [int]) | null
+#
+# was matchN(1, [int]), and a null written next to two copies was an error.
+# v0.17.1 and v0.18.0-rc.1 give the right value; the checks of a scalar ran
+# early from v0.18.0-rc.2.
+-- in.cue --
+import "strings"
+
+// Each test probes the unified field by unifying it with a value of each
+// disjunct, rather than comparing it with a disjunction of validators.
+
+// Three copies. The null disjunct of the copies is a scalar that fails the
+// validator of the other disjunct, then meets itself.
+three: {
+	a:   matchN(1, [int]) | null
+	a:   matchN(1, [int]) | null
+	a:   matchN(1, [int]) | null
+	n:   a & null
+	i:   a & 5
+	bad: a & "x"
+}
+
+// The same by unification of struct literals, and with more copies.
+amp: {
+	a:   ({matchN(1, [int])} | null) & ({matchN(1, [int])} | null) & ({matchN(1, [int])} | null)
+	n:   a & null
+	i:   a & 5
+	bad: a & "x"
+}
+four: {
+	a:   matchN(1, [int]) | null
+	a:   matchN(1, [int]) | null
+	a:   matchN(1, [int]) | null
+	a:   matchN(1, [int]) | null
+	n:   a & null
+	i:   a & 5
+	bad: a & "x"
+}
+nested: {
+	a: x: matchN(1, [int]) | null
+	a: x: matchN(1, [int]) | null
+	a: x: matchN(1, [int]) | null
+	n:   a.x & null
+	i:   a.x & 5
+	bad: a.x & "x"
+}
+
+// The order of the disjuncts does not matter.
+nullFirst: {
+	a:   null | matchN(1, [int])
+	a:   null | matchN(1, [int])
+	a:   null | matchN(1, [int])
+	n:   a & null
+	i:   a & 5
+	bad: a & "x"
+}
+
+// Any scalar kind that the validator rejects is affected, not only null.
+strScalar: {
+	a:   matchN(1, [int]) | "x"
+	a:   matchN(1, [int]) | "x"
+	a:   matchN(1, [int]) | "x"
+	s:   a & "x"
+	i:   a & 5
+	bad: a & "y"
+}
+boolScalar: {
+	a:   matchN(1, [int]) | true
+	a:   matchN(1, [int]) | true
+	a:   matchN(1, [int]) | true
+	b:   a & true
+	i:   a & 5
+	bad: a & "y"
+}
+numScalar: {
+	a:   matchN(1, [string]) | 5
+	a:   matchN(1, [string]) | 5
+	a:   matchN(1, [string]) | 5
+	m:   a & 5
+	s:   a & "x"
+	bad: a & 6
+}
+
+// Schemas and counts other than the simplest.
+manySchemas: {
+	a:   matchN(1, [int, string]) | null
+	a:   matchN(1, [int, string]) | null
+	a:   matchN(1, [int, string]) | null
+	n:   a & null
+	i:   a & 5
+	bad: a & true
+}
+structSchema: {
+	a:   matchN(1, [{x: int}]) | null
+	a:   matchN(1, [{x: int}]) | null
+	a:   matchN(1, [{x: int}]) | null
+	n:   a & null
+	s:   a & {x: 1}
+	bad: a & "x"
+}
+
+// A concrete scalar next to copies of the disjunction. Two copies were
+// enough: the value met the scalar of the disjunct after the validator failed
+// for the other.
+concreteNull: {
+	a: matchN(1, [int]) | null
+	a: matchN(1, [int]) | null
+	a: null
+}
+concreteString: {
+	a: matchN(1, [int]) | "x"
+	a: matchN(1, [int]) | "x"
+	a: "x"
+}
+
+// In a pattern constraint and in a list, where each element repeats.
+pattern: {
+	a: [string]: matchN(1, [int]) | null
+	a: [string]: matchN(1, [int]) | null
+	a: [string]: matchN(1, [int]) | null
+	a: x:        null
+}
+listElems: {
+	a: [...matchN(1, [int]) | null]
+	a: [...matchN(1, [int]) | null]
+	a: [...matchN(1, [int]) | null]
+	a: [null, 1]
+}
+
+// Controls. Two copies were right before.
+two: {
+	a:   matchN(1, [int]) | null
+	a:   matchN(1, [int]) | null
+	n:   a & null
+	i:   a & 5
+	bad: a & "x"
+}
+
+// A value that satisfies the validator is not affected.
+satisfied: {
+	a: matchN(1, [int]) | null
+	a: matchN(1, [int]) | null
+	a: matchN(1, [int]) | null
+	a: 5
+}
+
+// Validators that record no errors of their own are not affected.
+minRunes: {
+	a:   strings.MinRunes(2) | null
+	a:   strings.MinRunes(2) | null
+	a:   strings.MinRunes(2) | null
+	n:   a & null
+	s:   a & "ab"
+	bad: a & "a"
+}
+
+// Identical disjuncts of the copies are still merged: there is one of each
+// in the result.
+merged: {
+	a: 1 | 2
+	a: 1 | 2
+	a: 1 | 2
+}
+mergedDefault: {
+	a: *1 | 2
+	a: *1 | 2
+	a: *1 | 2
+}
+mergedNull: {
+	a: int | null
+	a: int | null
+	a: int | null
+}
+
+// A scalar that is not one of the disjuncts is an error, and the error still
+// lists why the schemas failed.
+rejected: {
+	a: matchN(1, [int]) | null
+	a: matchN(1, [int]) | null
+	a: matchN(1, [int]) | null
+	a: "x"
+}
+// A validator that records an error without returning one, such as a builtin
+// validator given an argument of the wrong type, has failed. The error is the
+// validator's own, so it must neither be dropped nor, in the validator of a
+// disjunction, be taken for the error of another operation.
+badArgument: {
+	a: strings.MinRunes("x") & "abc"
+}
+badArgumentInMatchN: {
+	a: matchN(1, [strings.MinRunes("x")]) & "abc"
+}
+badArgumentDisjunct: {
+	a: strings.MinRunes("x") | null
+	a: strings.MinRunes("x") | null
+	a: strings.MinRunes("x") | null
+	a: "abc"
+}
+-- out/compile --
+--- in.cue
+{
+  three: {
+    a: (matchN(1, [
+      int,
+    ])|null)
+    a: (matchN(1, [
+      int,
+    ])|null)
+    a: (matchN(1, [
+      int,
+    ])|null)
+    n: (〈0;a〉 & null)
+    i: (〈0;a〉 & 5)
+    bad: (〈0;a〉 & "x")
+  }
+  amp: {
+    a: ((({
+      matchN(1, [
+        int,
+      ])
+    }|null) & ({
+      matchN(1, [
+        int,
+      ])
+    }|null)) & ({
+      matchN(1, [
+        int,
+      ])
+    }|null))
+    n: (〈0;a〉 & null)
+    i: (〈0;a〉 & 5)
+    bad: (〈0;a〉 & "x")
+  }
+  four: {
+    a: (matchN(1, [
+      int,
+    ])|null)
+    a: (matchN(1, [
+      int,
+    ])|null)
+    a: (matchN(1, [
+      int,
+    ])|null)
+    a: (matchN(1, [
+      int,
+    ])|null)
+    n: (〈0;a〉 & null)
+    i: (〈0;a〉 & 5)
+    bad: (〈0;a〉 & "x")
+  }
+  nested: {
+    a: {
+      x: (matchN(1, [
+        int,
+      ])|null)
+    }
+    a: {
+      x: (matchN(1, [
+        int,
+      ])|null)
+    }
+    a: {
+      x: (matchN(1, [
+        int,
+      ])|null)
+    }
+    n: (〈0;a〉.x & null)
+    i: (〈0;a〉.x & 5)
+    bad: (〈0;a〉.x & "x")
+  }
+  nullFirst: {
+    a: (null|matchN(1, [
+      int,
+    ]))
+    a: (null|matchN(1, [
+      int,
+    ]))
+    a: (null|matchN(1, [
+      int,
+    ]))
+    n: (〈0;a〉 & null)
+    i: (〈0;a〉 & 5)
+    bad: (〈0;a〉 & "x")
+  }
+  strScalar: {
+    a: (matchN(1, [
+      int,
+    ])|"x")
+    a: (matchN(1, [
+      int,
+    ])|"x")
+    a: (matchN(1, [
+      int,
+    ])|"x")
+    s: (〈0;a〉 & "x")
+    i: (〈0;a〉 & 5)
+    bad: (〈0;a〉 & "y")
+  }
+  boolScalar: {
+    a: (matchN(1, [
+      int,
+    ])|true)
+    a: (matchN(1, [
+      int,
+    ])|true)
+    a: (matchN(1, [
+      int,
+    ])|true)
+    b: (〈0;a〉 & true)
+    i: (〈0;a〉 & 5)
+    bad: (〈0;a〉 & "y")
+  }
+  numScalar: {
+    a: (matchN(1, [
+      string,
+    ])|5)
+    a: (matchN(1, [
+      string,
+    ])|5)
+    a: (matchN(1, [
+      string,
+    ])|5)
+    m: (〈0;a〉 & 5)
+    s: (〈0;a〉 & "x")
+    bad: (〈0;a〉 & 6)
+  }
+  manySchemas: {
+    a: (matchN(1, [
+      int,
+      string,
+    ])|null)
+    a: (matchN(1, [
+      int,
+      string,
+    ])|null)
+    a: (matchN(1, [
+      int,
+      string,
+    ])|null)
+    n: (〈0;a〉 & null)
+    i: (〈0;a〉 & 5)
+    bad: (〈0;a〉 & true)
+  }
+  structSchema: {
+    a: (matchN(1, [
+      {
+        x: int
+      },
+    ])|null)
+    a: (matchN(1, [
+      {
+        x: int
+      },
+    ])|null)
+    a: (matchN(1, [
+      {
+        x: int
+      },
+    ])|null)
+    n: (〈0;a〉 & null)
+    s: (〈0;a〉 & {
+      x: 1
+    })
+    bad: (〈0;a〉 & "x")
+  }
+  concreteNull: {
+    a: (matchN(1, [
+      int,
+    ])|null)
+    a: (matchN(1, [
+      int,
+    ])|null)
+    a: null
+  }
+  concreteString: {
+    a: (matchN(1, [
+      int,
+    ])|"x")
+    a: (matchN(1, [
+      int,
+    ])|"x")
+    a: "x"
+  }
+  pattern: {
+    a: {
+      [string]: (matchN(1, [
+        int,
+      ])|null)
+    }
+    a: {
+      [string]: (matchN(1, [
+        int,
+      ])|null)
+    }
+    a: {
+      [string]: (matchN(1, [
+        int,
+      ])|null)
+    }
+    a: {
+      x: null
+    }
+  }
+  listElems: {
+    a: [
+      ...(matchN(1, [
+        int,
+      ])|null),
+    ]
+    a: [
+      ...(matchN(1, [
+        int,
+      ])|null),
+    ]
+    a: [
+      ...(matchN(1, [
+        int,
+      ])|null),
+    ]
+    a: [
+      null,
+      1,
+    ]
+  }
+  two: {
+    a: (matchN(1, [
+      int,
+    ])|null)
+    a: (matchN(1, [
+      int,
+    ])|null)
+    n: (〈0;a〉 & null)
+    i: (〈0;a〉 & 5)
+    bad: (〈0;a〉 & "x")
+  }
+  satisfied: {
+    a: (matchN(1, [
+      int,
+    ])|null)
+    a: (matchN(1, [
+      int,
+    ])|null)
+    a: (matchN(1, [
+      int,
+    ])|null)
+    a: 5
+  }
+  minRunes: {
+    a: (〈import;strings〉.MinRunes(2)|null)
+    a: (〈import;strings〉.MinRunes(2)|null)
+    a: (〈import;strings〉.MinRunes(2)|null)
+    n: (〈0;a〉 & null)
+    s: (〈0;a〉 & "ab")
+    bad: (〈0;a〉 & "a")
+  }
+  merged: {
+    a: (1|2)
+    a: (1|2)
+    a: (1|2)
+  }
+  mergedDefault: {
+    a: (*1|2)
+    a: (*1|2)
+    a: (*1|2)
+  }
+  mergedNull: {
+    a: (int|null)
+    a: (int|null)
+    a: (int|null)
+  }
+  rejected: {
+    a: (matchN(1, [
+      int,
+    ])|null)
+    a: (matchN(1, [
+      int,
+    ])|null)
+    a: (matchN(1, [
+      int,
+    ])|null)
+    a: "x"
+  }
+  badArgument: {
+    a: (〈import;strings〉.MinRunes("x") & "abc")
+  }
+  badArgumentInMatchN: {
+    a: (matchN(1, [
+      〈import;strings〉.MinRunes("x"),
+    ]) & "abc")
+  }
+  badArgumentDisjunct: {
+    a: (〈import;strings〉.MinRunes("x")|null)
+    a: (〈import;strings〉.MinRunes("x")|null)
+    a: (〈import;strings〉.MinRunes("x")|null)
+    a: "abc"
+  }
+}
