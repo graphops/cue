@@ -313,6 +313,11 @@ type nodeContext struct {
 
 	postChecks []envCheck // Check non-monotonic constraints, among other things.
 
+	// late holds the conjuncts dropped for arcs that were finalized already,
+	// in the order of the arcs, which lateIndex maps to its entry.
+	late      []lateConjuncts
+	lateIndex map[*Vertex]int
+
 	// funcDefaultChecks holds the function literals evaluated within this
 	// node whose declared parameter defaults are checked against their
 	// constraints once the node's arcs have completed; see
