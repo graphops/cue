@@ -1,0 +1,221 @@
+# Tests that a try clause reading a field with a disjunction still yields its
+# body into that field.
+#
+# The try clause pre-evaluates its body, here starting with x.r?, whose inline
+# vertex shared x.r. Evaluating it resolved the disjunction of x.r without the
+# conjunct the try clause, a pushed-down parent task of x.r, was yet to yield,
+# and a conjunct arriving at a node that has resolved its disjunction is lost.
+# The constraint, or error(), the body adds was then dropped without an error.
+# The inline vertex now evaluates the conjuncts of such a field instead of
+# sharing it.
+-- in.cue --
+@experiment(try)
+
+// The body adds a value that matches none of the disjuncts.
+conflict: {
+	x: r: "4k" | "32k"
+	x: r: "32k"
+	try _ = x.r? {x: r: "zz"}
+}
+
+// The body adds a value that matches the remaining disjunct.
+compatible: {
+	x: r: "4k" | "32k"
+	x: r: "32k"
+	try _ = x.r? {x: r: "32k"}
+}
+
+// The body adds a value that selects one of two disjuncts, the first a default.
+default: {
+	x: r: *"4k" | "32k"
+	try _ = x.r? {x: r: "32k"}
+}
+
+// The body fails explicitly, as when it states that the field is not allowed.
+explicit: {
+	x: r: "4k" | "32k"
+	x: r: "32k"
+	try _ = x.r? {x: r: error("r is not allowed")}
+}
+
+// The disjunction is of structs.
+structs: {
+	x: r: {a: 1} | {a: 2}
+	x: r: a: 2
+	try _ = x.r? {x: r: a: 3}
+}
+
+// The field is optional in a definition, as when a schema allows a set of
+// values for a field only some configurations may set.
+optional: {
+	#S: {r?: "4k" | "32k"}
+	x: #S & {r: "32k"}
+	try _ = x.r? {x: r: error("r is not allowed")}
+}
+
+// The try clause is skipped, as the field is absent: nothing is yielded.
+absent: {
+	#S: {r?: "4k" | "32k", s?: int}
+	x: #S & {s: 1}
+	try _ = x.r? {x: r: error("r is not allowed")}
+}
+
+// A guard and an alias, as in a schema that rejects a field depending on
+// another, applied to every entry of a map.
+guarded: {
+	#Z: {
+		fstype!:     "zfs" | "ext4"
+		recordSize?: "4k" | "32k"
+	}
+	entries: [string]: {
+		zfs~(_, Z): #Z
+		if Z.fstype != "zfs" {
+			try _ = Z.recordSize? {zfs: recordSize: error("recordSize is for zfs datasets")}
+		}
+	}
+	entries: ok: zfs: {fstype: "zfs", recordSize: "32k"}
+	entries: none: zfs: {fstype: "ext4"}
+	entries: bad: zfs: {fstype: "ext4", recordSize: "32k"}
+}
+-- out/compile --
+--- in.cue
+{
+  conflict: {
+    x: {
+      r: ("4k"|"32k")
+    }
+    x: {
+      r: "32k"
+    }
+    try {
+      x: {
+        r: "zz"
+      }
+    }
+  }
+  compatible: {
+    x: {
+      r: ("4k"|"32k")
+    }
+    x: {
+      r: "32k"
+    }
+    try {
+      x: {
+        r: "32k"
+      }
+    }
+  }
+  default: {
+    x: {
+      r: (*"4k"|"32k")
+    }
+    try {
+      x: {
+        r: "32k"
+      }
+    }
+  }
+  explicit: {
+    x: {
+      r: ("4k"|"32k")
+    }
+    x: {
+      r: "32k"
+    }
+    try {
+      x: {
+        r: error("r is not allowed")
+      }
+    }
+  }
+  structs: {
+    x: {
+      r: ({
+        a: 1
+      }|{
+        a: 2
+      })
+    }
+    x: {
+      r: {
+        a: 2
+      }
+    }
+    try {
+      x: {
+        r: {
+          a: 3
+        }
+      }
+    }
+  }
+  optional: {
+    #S: {
+      r?: ("4k"|"32k")
+    }
+    x: (〈0;#S〉 & {
+      r: "32k"
+    })
+    try {
+      x: {
+        r: error("r is not allowed")
+      }
+    }
+  }
+  absent: {
+    #S: {
+      r?: ("4k"|"32k")
+      s?: int
+    }
+    x: (〈0;#S〉 & {
+      s: 1
+    })
+    try {
+      x: {
+        r: error("r is not allowed")
+      }
+    }
+  }
+  guarded: {
+    #Z: {
+      fstype!: ("zfs"|"ext4")
+      recordSize?: ("4k"|"32k")
+    }
+    entries: {
+      [string]: {
+        zfs: 〈2;#Z〉
+        if (〈0;zfs〉.fstype != "zfs") {
+          try {
+            zfs: {
+              recordSize: error("recordSize is for zfs datasets")
+            }
+          }
+        }
+      }
+    }
+    entries: {
+      ok: {
+        zfs: {
+          fstype: "zfs"
+          recordSize: "32k"
+        }
+      }
+    }
+    entries: {
+      none: {
+        zfs: {
+          fstype: "ext4"
+        }
+      }
+    }
+    entries: {
+      bad: {
+        zfs: {
+          fstype: "ext4"
+          recordSize: "32k"
+        }
+      }
+    }
+  }
+}
