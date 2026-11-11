@@ -1,0 +1,35 @@
+# Publishes a GitHub release with cue binaries for a fork tag
+# (v<upstream version>-graphops.<n>, for example v0.18.0-rc.1-graphops.1).
+# A manual run builds a snapshot without publishing anything.
+name: release
+
+on:
+  push:
+    tags:
+      - "v*-graphops.*"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Tags let the Go toolchain stamp the release version into the
+          # binary, so `cue version` reports it.
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Test
+        run: go test ./...
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: ${{ github.event_name == 'workflow_dispatch' && 'release --snapshot --clean' || 'release --clean' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
