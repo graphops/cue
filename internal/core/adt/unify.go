@@ -724,6 +724,9 @@ func (n *nodeContext) completeAllArcs(needs condition, mode runMode, checkTypos 
 		n.node.Arcs = slices.DeleteFunc(slices.Clone(n.node.Arcs), notPresent)
 	}
 
+	// Arcs that were given conjuncts after they were finalized may fail now.
+	n.checkLateConjuncts()
+
 	failed := false
 	for _, a := range n.node.Arcs {
 		if a.faultsParent() {

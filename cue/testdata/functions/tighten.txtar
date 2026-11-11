@@ -979,7 +979,7 @@ admission: {
 	empNX:   len([empN]) @test(eq, 1)
 	empBad:  (func(x: int | <"b") -> int) & (func(x: int) -> int: x) @test(err, code=eval, contains="parameter x of function accepts int, but its signature requires (int|<\"b\")")
 
-	// A value that a comprehension refines is pending behind a call too.
+	// A value that a comprehension refines is pending behind a call too. The call has read it by then, so the refinement is reported as late.
 	#PC: number
 	getPC: func() -> _: #PC
 	pcall: {
@@ -1667,12 +1667,16 @@ admission.rxC: invalid value "c" (out of bound =~"b"):
 [eval] admission.empBad: parameter x of function accepts int, but its signature requires (int|<"b"):
     ./in.cue:967:43
     ./in.cue:967:12
+[eval] admission.#PC: circular dependency in evaluation: the value changed after evaluation by a later conjunct:
+    ./in.cue:977:8
 [eval] admission.late: parameter x of function accepts string, but its signature requires #Late:
     ./in.cue:983:37
     ./in.cue:983:11
 [eval] admission.early: parameter x of function accepts string, but its signature requires #Early:
     ./in.cue:986:38
     ./in.cue:986:11
+[eval] admission.#LT: circular dependency in evaluation: the value changed after evaluation by a later conjunct:
+    ./in.cue:1004:8
 [eval] parameter x of function accepts {a:0,...}, but its signature requires #CorrTryAs:
     ./in.cue:926:13
     ./try.cue:30:16
@@ -1811,14 +1815,14 @@ argumentPaths.closed: x.d: field not allowed:
     ./in.cue:1260:11
     ./in.cue:1260:23
 -- out/eval/stats --
-Leaks:  173
-Freed:  3122
-Reused: 2885
+Leaks:  177
+Freed:  3124
+Reused: 2891
 Allocs: 410
 Retain: 0
 
-Unifications: 3104
-Conjuncts:    8201
+Unifications: 3110
+Conjuncts:    8209
 Disjuncts:    133
 Notifications: 8
 
