@@ -5,7 +5,9 @@ v0.18.0-rc.4, until equivalent changes land upstream. Nothing here has been
 reported or proposed upstream yet; each fix is meant to become an upstream
 issue and change once its analysis is reduced to a self-contained case.
 
-This branch starts at the `v0.18.0-rc.4` tag. See `GRAPHOPS.md` on `main` for
+This branch starts at the `v0.18.0-rc.4` tag; the release
+`v0.18.0-rc.4-graphops.1` is this branch with `fix/rc4-late-conjunct`,
+`fix/rc4-validator-error-leak` and `fix/rc4-lookup-error-leak` applied. See `GRAPHOPS.md` on `main` for
 the fork's branch conventions. It carries over every fix and addition of
 `graphops/v0.18.0-rc.3` that upstream has not made unnecessary (none of
 them); see [Moving from v0.18.0-rc.3](#moving-from-v0180-rc3).
@@ -43,6 +45,9 @@ Each fix also exists on its own branch, isolated on the `v0.18.0-rc.4` tag.
 | `fix/rc4-try-closed-field` | Spurious "undefined field", order dependent, upstream since try exists: a `?`-marked selection of a field a closed struct does not declare (`d.y?`) failed with a permanent error instead of discarding the try, but only if the lookup found the struct already evaluated, as closedness is recorded once its conjuncts are processed. Moving the field below the try made it pass; `339485ddf` (v0.17.0-alpha.2) made more orders pass by running comprehensions earlier. Selecting through a disjunction evaluates its disjuncts first, so `x.k.y?` on a default branch that lacks `y` always failed, even if another branch declares it. Such a field is now absent, as in an open struct. This changes behaviour upstream's `closedness` cases in `try.txtar` recorded, in line with proposal 4019: a misspelled `?` selection is discarded in every order, not only in some. Without `?`, the lookup still fails; so do a closed list index and an error in the selected value | Medium-high |
 | `fix/rc4-toposort-stable-sort` | Field order depending on where the module cache is, upstream since `65a15e2b6` (v0.11.0-alpha.5), with a second cause since `00349c26d` (v0.17.0-alpha.2): the structs contributing to a vertex are sorted by position, and positions in different files compare by file name, so a dependency's files in the module cache sorted before or after the main module's depending on the cache's directory. Evaluating one module with byte-identical dependencies in two cache locations could give two field orders in `cue export` and `json.Marshal`. The sort was unstable, so roots at equal positions (all the structs reached through one reference) were permuted by the roots of other files around them; and a run of roots from one comprehension firing could continue into another file, losing the iteration order. The roots are now sorted stably and a run ends at the end of a file, so the order of files has no effect. The field order of such structs changes once, to the order the evaluator added them in. The commit applies unchanged on `v0.18.0-rc.4` | High |
 | `fix/rc4-embed-root` | Files outside the module embedded through symbolic links, upstream since embedding exists (v0.10.0): `@embed(file=...)` and `@embed(glob=...)` checked their paths only lexically and read them through the OS file system, which follows links, so a link within the module could embed any file or directory on the machine. Every path an embedding reads is now resolved with `os.Root` on the module root first; one resolving outside of it, through a link leading out or an absolute link, fails the embedding with an error naming the argument and the path, and so does a glob reading such a directory while matching. Relative links within the module keep working, as do overlay-only files; `load.Config.FS` file systems are used as given. Absolute links are refused even when they lead within the module. The commit applies unchanged on `v0.18.0-rc.4` | High |
+| `fix/rc4-late-conjunct` | Silently accepted invalid configurations, upstream since conjuncts could be added to an arc after it was read (v0.16.1, v0.17.1 and v0.18.0-rc.4 accept the examples): a finalized arc takes no more conjuncts, so `insertConjunct` dropped one added later without a trace (a comprehension that waits for another one, whose guard read the arc, such as `n: a: enabled: false` with `for _, _ in r {n: a: enabled: true}` after `for _, _ in r {if n.a == _\|_ {r: x: 2}}`), and a conflict, a field a closed struct does not allow, or a narrowing (a type that becomes a value, a default that is not selected, an optional field that becomes regular) was hidden, after the tasks that read the arc had acted on its value. The dropped conjuncts are recorded per arc and checked when the node that inserted them has completed its arcs, before it collects their errors: one the arc evidently has is skipped, the others are unified with the arc's own conjuncts (so closedness is judged as for the arc) and the result is compared with the arc by what evaluation gives (validators and function types are compared after finalizing), reporting a conflict, a new field, or a changed value at the arc's path. A value that agrees is no error; an incomplete result is not one either. Behaviour change: a late conjunct that narrows an arc is now an error (`functions/tighten.txtar` has two definitions a comprehension narrows from `number` to `int` after a call read them). Cost is that of the dropped conjunct, linear in the size of the arc | High |
+| `fix/rc4-validator-error-leak` | Wrong results, a regression in v0.18.0-rc.2 (`56d5c165e` checks the validators of a scalar while its conjuncts are inserted): a validator that records the errors of the schemas it tried (`matchN` does, besides returning its failure) left them in the evaluation context, and the next operation of the same evaluation saw an error where it asked for a boolean, so equal scalars compared unequal. Three copies of `matchN(1, [int]) \| null` evaluated to `matchN(1, [int])`, four or two next to a concrete `null` were an error ("conflicting values null and null"), and a satisfied `matchN` that ran after a failed one listed itself as failed. `runChecks` now runs each validator with a context free of errors and gives the node what it recorded together with the error it returned, only when the context is the node's own; a validator that records an error without returning one (a builtin called with an argument of the wrong type) has failed, and what it recorded is its error, so `strings.MinRunes("x") & "abc"` is still reported. The causes of a failed `matchN` are listed once, under the validator that failed. Branch `fix/rc4-validator-error-leak-v2` | High |
+| `fix/rc4-lookup-error-leak` | Wrong results, upstream since v0.17 (v0.17.1 and v0.18.0-rc.4 have it): a reference to a required field records the incomplete error "required field missing" in the context and returns the field, for the node of the reference to take when its task ends. Inserting the scalar the field holds compared it with an equal scalar already in the node through `BinOpBool`, which asks the context for the boolean result and gets the pending error instead, so equal scalars compared unequal and `a!: "x"`, `b: a`, `b: "x"` reported `conflicting values "x" and "x"` (every scalar kind, either order, through a selector, a definition, a pattern, a list element, a let and in a disjunct). The incomplete error became a final one, which showed wherever the two are told apart: a comprehension guard on `b == "x"` failed instead of staying unresolved, `b \| *"d"` took the default, `b != _\|_` was false. `BinOpBool`, the one reader that did not drain the context first, now runs the comparison with a context free of errors and hands back what it held and what the comparison recorded, for the frame that owns them. The reference, the writer, is unchanged | High (reader fix; under independent review when added) |
 
 ## Additions
 
@@ -116,9 +121,31 @@ Adapted:
   stats of the new tests. The goldens that depend on several fixes together
   are updated in one commit, as before.
 
-Pending, added once validated: `fix/rc4-late-conjunct` (report a conflict with
-a field finalized before a comprehension adds to it), which is being rebuilt
-directly on v0.18.0-rc.4.
+New on this base (not in `v0.18.0-rc.3-graphops.5`):
+
+- `fix/rc4-late-conjunct`: a conjunct added to an arc after it was finalized
+  was dropped without a trace, so a conflict with the arc was not reported. An
+  earlier version for v0.18.0-rc.3 was never released; this one is rebuilt
+  directly on v0.18.0-rc.4. The golden changes that depend on the other fixes of this
+  branch are one commit on the release branch: the two new errors of
+  `functions/tighten.txtar`, and `comprehensions/try.txtar`, where
+  `tryOwnFields.guardAfterTry.x` (an invalid program) is now reported as
+  "adding field b not allowed as field set was already referenced" instead of
+  as an incomplete cyclic reference.
+  Plain v0.18.0-rc.4 accepts the examples of the test
+  `comprehensions/lateconjunct.txtar`.
+- `fix/rc4-validator-error-leak`: the errors a validator recorded stayed in
+  the context and made an unrelated operation fail, so a disjunction of a
+  validator and a scalar lost the scalar. Also a regression of v0.18.0-rc.2;
+  plain v0.18.0-rc.4 still has it (`disjunctions/validatorscalar.txtar`).
+  `fix/rc4-validator-error-leak-v2` is the revised fix, with the handling of a
+  validator that records an error without returning one; the release carries it
+  as one commit.
+- `fix/rc4-lookup-error-leak`: a scalar comparison consumed the incomplete
+  error a required-field reference had recorded for its node, so equal scalars
+  conflicted. Present in plain v0.18.0-rc.4 and v0.17.1
+  (`references/requiredscalar.txtar`); it composes with the validator fix
+  without a golden change.
 
 ## Earlier move: from v0.18.0-rc.2 to v0.18.0-rc.3
 
