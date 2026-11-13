@@ -202,7 +202,7 @@ func (c *Context) BuildExpr(x ast.Expr, options ...BuildOption) Value {
 	}
 	v := adt.Resolve(ctx, conjunct)
 
-	return c.make(v)
+	return c.makeWith(ctx, v)
 }
 
 func errFn(pos token.Pos, msg string, args ...interface{}) {}
@@ -255,7 +255,12 @@ func (c *Context) CompileBytes(b []byte, options ...BuildOption) Value {
 // }
 
 func (c *Context) make(v *adt.Vertex) Value {
-	opCtx := newContext(c.runtime())
+	return c.makeWith(c.ctx(), v)
+}
+
+// makeWith is like [Context.make], but finalizes v with the context which
+// started evaluating it rather than with a new one.
+func (c *Context) makeWith(opCtx *adt.OpContext, v *adt.Vertex) Value {
 	// TODO: this is currently needed to ensure that node is properly recognized
 	// as evaluated. Not dereferencing nodes, however, will have the benefit of
 	// retaining more information. Remove the indirection when the code will be
@@ -390,7 +395,7 @@ func (c *Context) Encode(x any, option ...EncodeOption) Value {
 	val := convert.FromGoValue(ctx, x, options.nilIsTop)
 	n := adt.ToVertex(val) // we know val is finalized
 	n.Finalize(ctx)
-	return c.make(n)
+	return c.makeWith(ctx, n)
 }
 
 // EncodeType converts a Go type to a CUE [Value].
