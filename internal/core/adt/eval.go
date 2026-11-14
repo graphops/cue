@@ -123,6 +123,17 @@ func (c *OpContext) evaluate(v *Vertex, r Resolver, state Flags) Value {
 	return v
 }
 
+// hasStructOnlyLit reports whether a struct literal of the node can only
+// evaluate to a struct; see [StructLit.isStructOnly].
+func (n *nodeContext) hasStructOnlyLit() bool {
+	for _, s := range n.node.Structs {
+		if s.StructLit != nil && s.isStructOnly() {
+			return true
+		}
+	}
+	return false
+}
+
 // unify unifies values of a Vertex to and stores the result in the Vertex. If
 // unify was called on v before it returns the cached results.
 // state can be used to indicate to which extent processing should continue.
@@ -167,7 +178,14 @@ func (n *nodeContext) validateValue(state vertexStatus) {
 		// any regular fields, and not before its embeddings have completed:
 		// marking it early lets a reference cycle through an embedding, as in
 		// `a: {div(a, 2)}`, resolve to an empty struct.
-		markStruct = n.kind&StructKind != 0 && !n.hasTop && allNonDeferredTasksFinished(n)
+		//
+		// A top-kind conjunct, such as `_` or a validator accepting any
+		// kind, does not keep the node from being a struct if one of its
+		// literals can only be a struct, as `{if c {(k): v}}`, which is
+		// the empty struct when its comprehensions yield nothing.
+		markStruct = n.kind&StructKind != 0 &&
+			(!n.hasTop || n.hasStructOnlyLit()) &&
+			allNonDeferredTasksFinished(n)
 		for _, a := range n.node.Arcs {
 			// TODO(spec): we generally allow optional fields alongside embedded
 			// scalars. We probably should not. Either way this is not entirely

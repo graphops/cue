@@ -635,7 +635,7 @@ voidLookup: {
 				z: _|_
 				c: _|_
 			}
-			y: {c: _, z: {}}
+			y: {c: {}, z: {}}
 		}
 	})
 	@test(err, at=a.x.z, code=incomplete,

@@ -66,6 +66,30 @@ func (o *StructLit) hasEmbed() bool {
 	return false
 }
 
+// isStructOnly reports whether o evaluates to a struct whatever its
+// embeddings yield: it embeds only comprehensions, and struct literals, whose
+// bodies in turn embed only such values. A comprehension that yields nothing
+// embeds nothing, so such a literal is the empty struct then, unlike one
+// embedding an expression, which may evaluate to a scalar or to top.
+func (o *StructLit) isStructOnly() bool {
+	for _, d := range o.Decls {
+		switch x := d.(type) {
+		case *Comprehension:
+			if !x.Value.isStructOnly() ||
+				(x.Fallback != nil && !x.Fallback.isStructOnly()) {
+				return false
+			}
+		case *StructLit:
+			if !x.isStructOnly() {
+				return false
+			}
+		case Expr:
+			return false
+		}
+	}
+	return true
+}
+
 func (x *StructLit) Source() ast.Node { return x.Src }
 
 func (x *StructLit) evaluate(c *OpContext, state Flags) Value {
