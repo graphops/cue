@@ -1,0 +1,340 @@
+# Tests that a struct literal whose embeddings are all comprehensions is a
+# struct when it is unified with top, also when its comprehensions yield
+# nothing.
+#
+# A struct literal embedding a value takes the value's kind: `{1}` is 1. The
+# evaluator therefore does not mark a node as a struct for a literal with
+# embeddings until its tasks are done, and not at all if the node also has a
+# top-kind conjunct (`_`, or a validator such as matchN that accepts any kind).
+# A comprehension can only embed what its body yields, though, so a literal
+# embedding only comprehensions whose bodies embed nothing but such values is
+# a struct whatever they yield: the empty struct when they yield nothing.
+# Unified with `_` it was `_` instead, unless a body declared a regular field
+# with a fixed label (whose pending arc happened to mark the struct): a
+# dynamic, optional, hidden or definition field, a pattern constraint, or a
+# nested comprehension gave `_`. A function parameter `v: _` adds such a top
+# conjunct, so passing a struct built by an empty comprehension gave `_`, an
+# incomplete value; the same holds for a definition field `#D: v: _`, also on
+# v0.16.1 and v0.12.0.
+#
+# A comprehension that cannot run yet must still leave the node incomplete,
+# and a literal that embeds an expression must still take its kind.
+-- in.cue --
+@experiment(functions,try)
+
+src:       {a: 1}
+emptyComp: {for k, v in src if k == "zzz" {(k): v}}
+fullComp:  {for k, v in src {(k): v}}
+
+// Each body that does not mark a struct by a pending arc.
+top: {
+	dynamic:    _ & {if false {("b"): 1}}
+	forEmpty:   _ & {for k, v in {} {(k): v}}
+	interp:     _ & {if false {"\("b")": 1}}
+	optional:   _ & {if false {("b")?: 1}}
+	pattern:    _ & {if false {[string]: int}}
+	definition: _ & {if false {#b: 1}}
+	hidden:     _ & {if false {_b: 1}}
+	nested:     _ & {if true {if false {("b"): 1}}}
+	elseClause: _ & {if false {("b"): 1} else {}}
+	topAfter:   {if false {("b"): 1}} & _
+	reference:  _ & emptyComp
+	static:     _ & {if false {b: 1}}
+	literal:    _ & {}
+	nonEmpty:   _ & {for k, v in src {(k): v}}
+	validator:  matchN(1, [{}]) & {if false {("b"): 1}}
+	notNull:    !=null & {if false {("b"): 1}}
+	list:       _ & [for x in [] {x}]
+}
+
+// The same through a definition field and a function parameter, which add a
+// top conjunct to the argument.
+def: {
+	#D: v: _
+	empty:  (#D & {v: emptyComp}).v
+	direct: (#D & {v: {for x in [] {(x): 1}}}).v
+	full:   (#D & {v: fullComp}).v
+}
+call: {
+	_f:       func(v: _) -> _: v
+	empty:    _f(emptyComp)
+	nested:   _f({x: emptyComp})
+	full:     _f(fullComp)
+	literal:  _f({})
+	list:     _f([for x in [] {x}])
+	listElem: _f([emptyComp])
+}
+
+// The guards of a function that inspects whether its argument is a struct,
+// and whether that struct is empty.
+guard: {
+	_g: func(v: _) -> _: [
+		if (v & {...}) != _|_ if len(v) == 0 {"empty struct"},
+		if (v & {...}) != _|_ {"struct"},
+		if (v & [...]) != _|_ {"list"},
+		"other",
+	][0]
+	empty:   _g(emptyComp)
+	nested:  _g({x: emptyComp})
+	full:    _g(fullComp)
+	literal: _g({})
+	list:    _g([for x in [] {x}])
+	scalar:  _g(1)
+
+	// The guard holds, but a function returning the argument returned top.
+	_h: func(v: _) -> _: [
+		if (v & {...}) != _|_ if len(v) == 0 {v},
+		v,
+	][0]
+	same:       _h(emptyComp)
+	sameNested: _h({x: emptyComp})
+
+	// A struct whose comprehension cannot run yet is not known to be empty.
+	y:       {z: int}
+	pending: _g({if y.z == 1 {("b"): 1}})
+}
+
+// A comprehension that cannot run yet leaves the node incomplete.
+incomplete: {
+	y:       {z: int}
+	dynamic: _ & {if y.z == 1 {("b"): 1}}
+	plain:   {if y.z == 1 {("b"): 1}}
+}
+
+// A literal that embeds an expression takes its kind, so these stay top or
+// scalar.
+embedded: {
+	top:      {_}
+	topNext:  {_, if false {("b"): 1}}
+	yieldTop: _ & {if true {_}}
+	yieldInt: _ & {if true {1}}
+	scalar:   {if true {1}}
+}
+-- out/compile --
+--- in.cue
+{
+  src: {
+    a: 1
+  }
+  emptyComp: {
+    for k, v in 〈1;src〉 if (〈0;k〉 == "zzz") {
+      〈1;k〉: 〈1;v〉
+    }
+  }
+  fullComp: {
+    for k, v in 〈1;src〉 {
+      〈1;k〉: 〈1;v〉
+    }
+  }
+  top: {
+    dynamic: (_ & {
+      if false {
+        "b": 1
+      }
+    })
+    forEmpty: (_ & {
+      for k, v in {} {
+        〈1;k〉: 〈1;v〉
+      }
+    })
+    interp: (_ & {
+      if false {
+        "\("b")": 1
+      }
+    })
+    optional: (_ & {
+      if false {
+        "b"?: 1
+      }
+    })
+    pattern: (_ & {
+      if false {
+        [string]: int
+      }
+    })
+    definition: (_ & {
+      if false {
+        #b: 1
+      }
+    })
+    hidden: (_ & {
+      if false {
+        _b: 1
+      }
+    })
+    nested: (_ & {
+      if true {
+        if false {
+          "b": 1
+        }
+      }
+    })
+    elseClause: (_ & {
+      if false {
+        "b": 1
+      } else {}
+    })
+    topAfter: ({
+      if false {
+        "b": 1
+      }
+    } & _)
+    reference: (_ & 〈1;emptyComp〉)
+    static: (_ & {
+      if false {
+        b: 1
+      }
+    })
+    literal: (_ & {})
+    nonEmpty: (_ & {
+      for k, v in 〈2;src〉 {
+        〈1;k〉: 〈1;v〉
+      }
+    })
+    validator: (matchN(1, [
+      {},
+    ]) & {
+      if false {
+        "b": 1
+      }
+    })
+    notNull: (!=null & {
+      if false {
+        "b": 1
+      }
+    })
+    list: (_ & [
+      for _, x in [] {
+        〈1;x〉
+      },
+    ])
+  }
+  def: {
+    #D: {
+      v: _
+    }
+    empty: (〈0;#D〉 & {
+      v: 〈2;emptyComp〉
+    }).v
+    direct: (〈0;#D〉 & {
+      v: {
+        for _, x in [] {
+          〈1;x〉: 1
+        }
+      }
+    }).v
+    full: (〈0;#D〉 & {
+      v: 〈2;fullComp〉
+    }).v
+  }
+  call: {
+    _f: func(v: _) -> _: 〈0;v〉
+    empty: 〈0;_f〉(〈1;emptyComp〉)
+    nested: 〈0;_f〉({
+      x: 〈2;emptyComp〉
+    })
+    full: 〈0;_f〉(〈1;fullComp〉)
+    literal: 〈0;_f〉({})
+    list: 〈0;_f〉([
+      for _, x in [] {
+        〈1;x〉
+      },
+    ])
+    listElem: 〈0;_f〉([
+      〈2;emptyComp〉,
+    ])
+  }
+  guard: {
+    _g: func(v: _) -> _: [
+      if ((〈1;v〉 & {
+        ...
+      }) != _|_(explicit error (_|_ literal) in source)) if (len(〈1;v〉) == 0) {
+        "empty struct"
+      },
+      if ((〈1;v〉 & {
+        ...
+      }) != _|_(explicit error (_|_ literal) in source)) {
+        "struct"
+      },
+      if ((〈1;v〉 & [
+        ...,
+      ]) != _|_(explicit error (_|_ literal) in source)) {
+        "list"
+      },
+      "other",
+    ][0]
+    empty: 〈0;_g〉(〈1;emptyComp〉)
+    nested: 〈0;_g〉({
+      x: 〈2;emptyComp〉
+    })
+    full: 〈0;_g〉(〈1;fullComp〉)
+    literal: 〈0;_g〉({})
+    list: 〈0;_g〉([
+      for _, x in [] {
+        〈1;x〉
+      },
+    ])
+    scalar: 〈0;_g〉(1)
+    _h: func(v: _) -> _: [
+      if ((〈1;v〉 & {
+        ...
+      }) != _|_(explicit error (_|_ literal) in source)) if (len(〈1;v〉) == 0) {
+        〈2;v〉
+      },
+      〈1;v〉,
+    ][0]
+    same: 〈0;_h〉(〈1;emptyComp〉)
+    sameNested: 〈0;_h〉({
+      x: 〈2;emptyComp〉
+    })
+    y: {
+      z: int
+    }
+    pending: 〈0;_g〉({
+      if (〈1;y〉.z == 1) {
+        "b": 1
+      }
+    })
+  }
+  incomplete: {
+    y: {
+      z: int
+    }
+    dynamic: (_ & {
+      if (〈1;y〉.z == 1) {
+        "b": 1
+      }
+    })
+    plain: {
+      if (〈1;y〉.z == 1) {
+        "b": 1
+      }
+    }
+  }
+  embedded: {
+    top: {
+      _
+    }
+    topNext: {
+      _
+      if false {
+        "b": 1
+      }
+    }
+    yieldTop: (_ & {
+      if true {
+        _
+      }
+    })
+    yieldInt: (_ & {
+      if true {
+        1
+      }
+    })
+    scalar: {
+      if true {
+        1
+      }
+    }
+  }
+}

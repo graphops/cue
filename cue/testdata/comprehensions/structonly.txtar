@@ -1,0 +1,134 @@
+# Tests that a struct literal whose embeddings are all comprehensions is a
+# struct when it is unified with top, also when its comprehensions yield
+# nothing.
+#
+# A struct literal embedding a value takes the value's kind: `{1}` is 1. The
+# evaluator therefore does not mark a node as a struct for a literal with
+# embeddings until its tasks are done, and not at all if the node also has a
+# top-kind conjunct (`_`, or a validator such as matchN that accepts any kind).
+# A comprehension can only embed what its body yields, though, so a literal
+# embedding only comprehensions whose bodies embed nothing but such values is
+# a struct whatever they yield: the empty struct when they yield nothing.
+# Unified with `_` it was `_` instead, unless a body declared a regular field
+# with a fixed label (whose pending arc happened to mark the struct): a
+# dynamic, optional, hidden or definition field, a pattern constraint, or a
+# nested comprehension gave `_`. A function parameter `v: _` adds such a top
+# conjunct, so passing a struct built by an empty comprehension gave `_`, an
+# incomplete value; the same holds for a definition field `#D: v: _`, also on
+# v0.16.1 and v0.12.0.
+#
+# A comprehension that cannot run yet must still leave the node incomplete,
+# and a literal that embeds an expression must still take its kind.
+-- in.cue --
+@experiment(functions,try)
+
+src:       {a: 1}
+emptyComp: {for k, v in src if k == "zzz" {(k): v}}
+fullComp:  {for k, v in src {(k): v}}
+
+// Each body that does not mark a struct by a pending arc.
+top: {
+	dynamic:    _ & {if false {("b"): 1}}               @test(eq, {})
+	forEmpty:   _ & {for k, v in {} {(k): v}}           @test(eq, {})
+	interp:     _ & {if false {"\("b")": 1}}            @test(eq, {})
+	optional:   _ & {if false {("b")?: 1}}              @test(eq, {})
+	pattern:    _ & {if false {[string]: int}}          @test(eq, {})
+	definition: _ & {if false {#b: 1}}                  @test(eq, {})
+	hidden:     _ & {if false {_b: 1}}                  @test(eq, {})
+	nested:     _ & {if true {if false {("b"): 1}}}     @test(eq, {})
+	elseClause: _ & {if false {("b"): 1} else {}}       @test(eq, {})
+	topAfter:   {if false {("b"): 1}} & _               @test(eq, {})
+	reference:  _ & emptyComp                           @test(eq, {})
+	static:     _ & {if false {b: 1}}                   @test(eq, {})
+	literal:    _ & {}                                  @test(eq, {})
+	nonEmpty:   _ & {for k, v in src {(k): v}}          @test(eq, {a: 1})
+	validator:  matchN(1, [{}]) & {if false {("b"): 1}} @test(eq, {})
+	notNull:    !=null & {if false {("b"): 1}}          @test(eq, {})
+	list:       _ & [for x in [] {x}]                   @test(eq, [])
+}
+
+// The same through a definition field and a function parameter, which add a
+// top conjunct to the argument.
+def: {
+	#D: v: _
+	empty:  (#D & {v: emptyComp}).v              @test(eq, {})
+	direct: (#D & {v: {for x in [] {(x): 1}}}).v @test(eq, {})
+	full:   (#D & {v: fullComp}).v               @test(eq, {a: 1})
+}
+call: {
+	_f:       func(v: _) -> _: v
+	empty:    _f(emptyComp)         @test(eq, {})
+	nested:   _f({x: emptyComp})    @test(eq, {x: {}})
+	full:     _f(fullComp)          @test(eq, {a: 1})
+	literal:  _f({})                @test(eq, {})
+	list:     _f([for x in [] {x}]) @test(eq, [])
+	listElem: _f([emptyComp])       @test(eq, [{}])
+}
+
+// The guards of a function that inspects whether its argument is a struct,
+// and whether that struct is empty.
+guard: {
+	_g: func(v: _) -> _: [
+		if (v & {...}) != _|_ if len(v) == 0 {"empty struct"},
+		if (v & {...}) != _|_ {"struct"},
+		if (v & [...]) != _|_ {"list"},
+		"other",
+	][0]
+	empty:   _g(emptyComp)         @test(eq, "empty struct")
+	nested:  _g({x: emptyComp})    @test(eq, "struct")
+	full:    _g(fullComp)          @test(eq, "struct")
+	literal: _g({})                @test(eq, "empty struct")
+	list:    _g([for x in [] {x}]) @test(eq, "list")
+	scalar:  _g(1)                 @test(eq, "other")
+
+	// The guard holds, but a function returning the argument returned top.
+	_h: func(v: _) -> _: [
+		if (v & {...}) != _|_ if len(v) == 0 {v},
+		v,
+	][0]
+	same:       _h(emptyComp)      @test(eq, {})
+	sameNested: _h({x: emptyComp}) @test(eq, {x: {}})
+
+	// A struct whose comprehension cannot run yet is not known to be empty.
+	y:       {z: int}
+	pending: _g({if y.z == 1 {("b"): 1}}) @test(err, code=incomplete)
+}
+
+// A comprehension that cannot run yet leaves the node incomplete.
+incomplete: {
+	y:       {z: int}
+	dynamic: _ & {if y.z == 1 {("b"): 1}} @test(err, code=incomplete)
+	plain:   {if y.z == 1 {("b"): 1}}     @test(err, code=incomplete)
+}
+
+// A literal that embeds an expression takes its kind, so these stay top or
+// scalar.
+embedded: {
+	top:      {_}                      @test(kind=_)
+	topNext:  {_, if false {("b"): 1}} @test(kind=_)
+	yieldTop: _ & {if true {_}}        @test(kind=_)
+	yieldInt: _ & {if true {1}}        @test(eq, 1)
+	scalar:   {if true {1}}            @test(eq, 1)
+}
+-- out/errors.txt --
+[incomplete] guard.pending: non-concrete value int in operand to ==:
+    ./in.cue:72:18
+    ./in.cue:71:15
+[incomplete] incomplete.dynamic: non-concrete value int in operand to ==:
+    ./in.cue:78:19
+    ./in.cue:77:15
+[incomplete] incomplete.plain: non-concrete value int in operand to ==:
+    ./in.cue:79:15
+    ./in.cue:77:15
+-- out/eval/stats --
+Leaks:  1
+Freed:  258
+Reused: 228
+Allocs: 31
+Retain: 0
+
+Unifications: 217
+Conjuncts:    549
+Disjuncts:    0
+
+NumCloseIDs: 108
