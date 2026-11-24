@@ -2888,7 +2888,7 @@ func walkFuncEscapes(fn *Function, f func(r Node, up int32) bool) bool {
 // clauses of comprehensions count as scopes, as each gets an environment of
 // its own; a pattern or dynamic field is evaluated in its struct's scope. It
 // reports false if f does, or if x contains a construct that it does not
-// model, such as a try clause or an evaluated value.
+// model, such as an evaluated value.
 func walkEscapes(x Node, depth int32, f func(r Node, up int32) bool) bool {
 	walk := func(xs ...Node) bool {
 		for _, x := range xs {
@@ -3020,9 +3020,10 @@ func walkEscapes(x Node, depth int32, f func(r Node, up int32) bool) bool {
 }
 
 // walkComprehension walks the comprehension x, located inside depth scopes, as
-// [walkEscapes] does. A for or let clause opens a scope for the clauses after
-// it and for the value; an if clause does not. The else clause is yielded in
-// the comprehension's own scope.
+// [walkEscapes] does. A for or let clause, or a try clause that binds a
+// variable, opens a scope for the clauses after it and for the value; an if
+// clause does not, nor does a try clause whose body is the value. The else
+// clause is yielded in the comprehension's own scope.
 func walkComprehension(x *Comprehension, depth int32, f func(r Node, up int32) bool) bool {
 	if x.Fallback != nil && !walkEscapes(x.Fallback, depth, f) {
 		return false
@@ -3042,6 +3043,16 @@ func walkComprehension(x *Comprehension, depth int32, f func(r Node, up int32) b
 		case *IfClause:
 			if !walkEscapes(cl.Condition, depth, f) {
 				return false
+			}
+		case *TryClause:
+			// The expression or body is pre-evaluated in the environment in
+			// which it is evaluated once the clause yields; see
+			// [TryClause.yield].
+			if cl.Expr != nil {
+				if !walkEscapes(cl.Expr, depth, f) {
+					return false
+				}
+				depth++
 			}
 		default:
 			return false

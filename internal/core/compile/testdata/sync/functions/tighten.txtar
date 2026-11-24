@@ -391,9 +391,9 @@ compose: {
 	pf:      mkpf() & mkpf()
 	pfX:     pf()
 
-	// A capture is found through any expression but a try clause: closures
-	// over equal values are the same function, and closures that differ in a
-	// single captured value are not.
+	// A capture is found through any expression: closures over equal values
+	// are the same function, and closures that differ in a single captured
+	// value are not.
 	mkLet:   func(n: int) -> _: {let m = n, f: func() -> int: m}.f
 	letOK:   mkLet(1) & mkLet(1)
 	letX:    letOK()
@@ -934,8 +934,8 @@ admission: {
 	corrIfX: corrIf({a: 0})
 	corrBad: (func(x: {a: int, b: 0 & a, d: string}) -> int) & (func(x: {a: 0, b: 0, d: int}) -> int: 0)
 	// The field a that _ci narrows is compared unless another part of the
-	// signature's struct refers to it, through any expression but a try
-	// assignment, or through the literals the struct is built from.
+	// signature's struct refers to it, through any expression, or through
+	// the literals the struct is built from.
 	_ci:       func(x: {a: 0, ...}) -> int: 0
 	corrNone:  ((func(x: {a: int, b: 0}) -> int) & _ci)({a: 0})
 	corrIdx:   ((func(x: {a: int, b: [0][a]}) -> int) & _ci)({a: 0})
@@ -1264,10 +1264,15 @@ compose: {
 	fb:    mkFb(1) & mkFb(1)
 	fbX:   fb([])
 	fbBad: mkFb(1) & mkFb(2)
-	// A try clause is not modeled, so it keeps even equal closures apart.
-	mkTry: func(n: int) -> _: func() -> _: {try {a: n}}
-	tryEq: mkTry(1) & mkTry(1)
-	tryX:  tryEq()
+	// Captures are found through a try clause too, in either form.
+	mkTry:    func(n: int) -> _: func() -> _: {try {a: n}}
+	tryEq:    mkTry(1) & mkTry(1)
+	tryX:     tryEq()
+	tryBad:   mkTry(1) & mkTry(2)
+	mkTryAs:  func(n: int) -> _: func() -> _: {try m = 1 {a: n + m}}
+	tryAs:    mkTryAs(1) & mkTryAs(1)
+	tryAsX:   tryAs()
+	tryAsBad: mkTryAs(1) & mkTryAs(2)
 }
 
 admission: {
@@ -1279,6 +1284,8 @@ admission: {
 	corrTry:    ((func(x: #CorrTry) -> int) & admission._ci)({a: 0})
 	#CorrTryAs: {a: int, try y = a? {b: 0 & y}}
 	corrTryAs:  ((func(x: #CorrTryAs) -> int) & admission._ci)({a: 0})
+	#TryNone:   {a: int, try y = 0 {b: 0 & y}}
+	tryNone:    ((func(x: #TryNone) -> int) & admission._ci)({a: 0})
 }
 -- out/compile --
 --- in.cue
@@ -2696,6 +2703,15 @@ admission: {
     }
     tryEq: (〈0;mkTry〉(1) & 〈0;mkTry〉(1))
     tryX: 〈0;tryEq〉()
+    tryBad: (〈0;mkTry〉(1) & 〈0;mkTry〉(2))
+    mkTryAs: func(n: int) -> _: func() -> _: {
+      try m = 1 {
+        a: (〈4;n〉 + 〈1;m〉)
+      }
+    }
+    tryAs: (〈0;mkTryAs〉(1) & 〈0;mkTryAs〉(1))
+    tryAsX: 〈0;tryAs〉()
+    tryAsBad: (〈0;mkTryAs〉(1) & 〈0;mkTryAs〉(2))
   }
   admission: {
     #CorrFb: {
@@ -2723,6 +2739,15 @@ admission: {
       }
     }
     corrTryAs: (func(x: 〈0;#CorrTryAs〉) -> int & 〈1;admission〉._ci)({
+      a: 0
+    })
+    #TryNone: {
+      a: int
+      try y = 0 {
+        b: (0 & 〈1;y〉)
+      }
+    }
+    tryNone: (func(x: 〈0;#TryNone〉) -> int & 〈1;admission〉._ci)({
       a: 0
     })
   }
