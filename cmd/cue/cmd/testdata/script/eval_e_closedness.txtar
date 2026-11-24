@@ -1,0 +1,39 @@
+# An expression given with -e is checked for closedness like the same
+# expression in a file.
+! exec cue eval -e '#S & d' x.cue
+cmp stderr expect/conj/stderr
+! stdout .
+
+! exec cue eval -e '{y: #S & d}' x.cue
+cmp stderr expect/nested/stderr
+
+! exec cue export -e '#S & d' x.cue
+cmp stderr expect/conj/stderr
+
+exec cue eval -e '#S & {a: 1}' x.cue
+cmp stdout expect/allowed/stdout
+
+# The same conjunction in the file is rejected too.
+! exec cue eval -e x x.cue y.cue
+cmp stderr expect/infile/stderr
+
+-- x.cue --
+package x
+
+#S: {a?: int}
+d: {b: 1}
+-- y.cue --
+package x
+
+x: #S & d
+-- expect/conj/stderr --
+b: field not allowed:
+    ./x.cue:4:5
+-- expect/nested/stderr --
+y.b: field not allowed:
+    ./x.cue:4:5
+-- expect/allowed/stdout --
+a: 1
+-- expect/infile/stderr --
+x.b: field not allowed:
+    ./x.cue:4:5
