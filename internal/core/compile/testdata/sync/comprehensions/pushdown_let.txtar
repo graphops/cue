@@ -1,0 +1,591 @@
+# Tests that a let in the body of a comprehension does not keep the
+# comprehension from being pushed down. A let in the body can only be
+# referred to from within the body, so a reference from outside cannot
+# observe it. Counting it as adding field conjuncts made a reference to a
+# sibling field run the comprehension early, evaluating its guard before
+# another comprehension added a conjunct to the field the guard reads. The
+# field was then finalized at its default, and the later conjunct was
+# dropped without an error.
+# https://cuelang.org/issue/4543
+-- in.cue --
+@experiment(try)
+
+// The reported case.
+reported: {
+	x: {
+		on: *false | bool
+		if on {
+			let v = 1
+			out: v
+		}
+		n: 1
+	}
+	if x.n == 1 {
+		x: on: true
+	}
+}
+
+// The same without the let, which was not affected.
+noLet: {
+	x: {
+		on: *false | bool
+		if on {
+			out: 1
+		}
+		n: 1
+	}
+	if x.n == 1 {
+		x: on: true
+	}
+}
+
+// A let whose value is a struct built by a comprehension.
+letStruct: {
+	x: {
+		on: *false | bool
+		if on {
+			let v = {for k, _ in {a: 1} {(k): 1}}
+			out: v
+		}
+		n: 1
+	}
+	if x.n == 1 {
+		x: on: true
+	}
+}
+
+// A let referring to a field declared by the same body.
+letBodyField: {
+	x: {
+		on: *false | bool
+		if on {
+			let v = out2
+			out:  v
+			out2: 2
+		}
+		n: 1
+	}
+	if x.n == 1 {
+		x: on: true
+	}
+}
+
+// The let is in a comprehension nested in the body.
+nested: {
+	x: {
+		on: *false | bool
+		if on {
+			if true {
+				let v = 1
+				out: v
+			}
+		}
+		n: 1
+	}
+	if x.n == 1 {
+		x: on: true
+	}
+}
+
+// The let is in a for comprehension.
+forClause: {
+	x: {
+		on: *false | bool
+		for _, e in {a: 1} if on {
+			let v = e
+			out: v
+		}
+		n: 1
+	}
+	if x.n == 1 {
+		x: on: true
+	}
+}
+
+// The let is in the else clause.
+elseClause: {
+	x: {
+		on: *false | bool
+		if !on {
+			out: 1
+		} else {
+			let v = 2
+			out: v
+		}
+		n: 1
+	}
+	if x.n == 1 {
+		x: on: true
+	}
+}
+
+// An embedded let can declare fields that are not known in advance, so the
+// comprehension is still not pushed down, and the conjunct is still
+// dropped, as it is with a dynamic field, a pattern constraint or ... in the
+// body instead.
+letEmbed: {
+	x: {
+		on: *false | bool
+		if on {
+			let v = {out: 1}
+			v
+		}
+		n: 1
+	}
+	if x.n == 1 {
+		x: on: true
+	}
+}
+
+// Issue 4487 with a let in the guarded body. The guard reads a list built
+// by a comprehension over a struct whose comprehensions yield nothing.
+issue4487: {
+	empty: {
+		q: {
+			a: 0
+			if false {b: 1}
+			if false {c: 2}
+		}
+		n: [if len(q) > 1 {q}]
+		if len(n) == 0 {
+			let m = "empty"
+			out: m
+		}
+	}
+	populated: {
+		q: {
+			a: 0
+			b: 1
+			if false {c: 2}
+			if false {d: 3}
+		}
+		n: [if len(q) > 1 {q}]
+		if len(n) != 0 {
+			let m = n
+			out: m
+		}
+	}
+}
+-- issue4543.cue --
+// Issue 4543. The guard reads a field of a disjunction while another
+// comprehension, guarded by a comparison with bottom, is still to run, and
+// the guarded body declares a let.
+issue4543: {
+	app: {
+		kv: {}
+		job: *{} | {}
+		job: {
+			enabled: "a" != "b"
+			vars: {
+				if kv.CONN != _|_ {
+				}
+			}
+		}
+		if job.enabled {
+			let p = {}
+			out: p
+		}
+	}
+}
+
+// The second reproducer of issue 4543, from its first comment: the same empty
+// guard and a sibling guarded body with a let, without a disjunction. The
+// early run of the comprehension reported that a guard changed after it was
+// evaluated, although the guarded body is empty.
+issue4543Comment: {
+	#Merge: {
+		env: string
+		in: {
+			global:      _
+			development: _
+		}
+		out: in.global & in[env]
+	}
+
+	#App: {
+		path: string | *"p"
+		paths?: [...string]
+		policies?: auto: [string]: bool | *false
+		if policies != _|_ {
+			let a = (#Merge & {in: policies.auto, env: "development"}).out
+			auto: a
+		}
+	}
+
+	app: [string]~(X): {
+		paths: ["/\(X.path)/"]
+	} & #App
+
+	app: b~(X): {
+		_values: (#Merge & {in: values, env: "development"}).out
+		policies: {
+			if X._values.auth.deploy != _|_ {}
+		}
+	}
+
+	values: global: auth: {}
+}
+-- issue4448.cue --
+import (
+	"list"
+	"strings"
+)
+
+// Issue 4448 with a let in the guarded body. The let kept the comprehension
+// from being pushed down, so looking up _port forced its guard again, which
+// left the "\(port)" interpolation incomplete. As in issue4448.txtar, the
+// test is sensitive to evaluation order; _s and m are needed to trigger the
+// failure.
+issue4448: {
+	_s: strings.ToLower("A")
+
+	#App: {
+		units: {_elem: {
+			spec: {src: string, tags: _} | {tags: _}
+			if spec != _|_ {
+				let v = 1
+				_w: v
+			}
+		}}
+		m: units._elem
+	}
+
+	#Mixin: {
+		#cfg: {
+			entries: w: {
+				_lines: ["\(port)"]
+				port: _
+			}
+			_all: list.Concat([entries.w._lines])
+		}
+
+		...
+	}
+
+	app: #App
+	app: #Mixin
+	app: {
+		#cfg: entries: w: {
+			port: units._elem._port
+		}
+		units: _elem: {
+			_port: 8080
+			spec: {
+				src: "x"
+				tags: [#cfg._all]
+			}
+		}
+	}
+}
+-- out/compile --
+--- in.cue
+{
+  reported: {
+    x: {
+      on: (*false|bool)
+      if 〈0;on〉 {
+        let v#1 = 1
+        out: 〈0;let v#1〉
+      }
+      n: 1
+    }
+    if (〈0;x〉.n == 1) {
+      x: {
+        on: true
+      }
+    }
+  }
+  noLet: {
+    x: {
+      on: (*false|bool)
+      if 〈0;on〉 {
+        out: 1
+      }
+      n: 1
+    }
+    if (〈0;x〉.n == 1) {
+      x: {
+        on: true
+      }
+    }
+  }
+  letStruct: {
+    x: {
+      on: (*false|bool)
+      if 〈0;on〉 {
+        let v#2multi = {
+          for k, _ in {
+            a: 1
+          } {
+            〈1;k〉: 1
+          }
+        }
+        out: 〈0;let v#2〉
+      }
+      n: 1
+    }
+    if (〈0;x〉.n == 1) {
+      x: {
+        on: true
+      }
+    }
+  }
+  letBodyField: {
+    x: {
+      on: (*false|bool)
+      if 〈0;on〉 {
+        let v#3 = 〈0;out2〉
+        out: 〈0;let v#3〉
+        out2: 2
+      }
+      n: 1
+    }
+    if (〈0;x〉.n == 1) {
+      x: {
+        on: true
+      }
+    }
+  }
+  nested: {
+    x: {
+      on: (*false|bool)
+      if 〈0;on〉 {
+        if true {
+          let v#4 = 1
+          out: 〈0;let v#4〉
+        }
+      }
+      n: 1
+    }
+    if (〈0;x〉.n == 1) {
+      x: {
+        on: true
+      }
+    }
+  }
+  forClause: {
+    x: {
+      on: (*false|bool)
+      for _, e in {
+        a: 1
+      } if 〈1;on〉 {
+        let v#5multi = 〈1;e〉
+        out: 〈0;let v#5〉
+      }
+      n: 1
+    }
+    if (〈0;x〉.n == 1) {
+      x: {
+        on: true
+      }
+    }
+  }
+  elseClause: {
+    x: {
+      on: (*false|bool)
+      if !〈0;on〉 {
+        out: 1
+      } else {
+        let v#6 = 2
+        out: 〈0;let v#6〉
+      }
+      n: 1
+    }
+    if (〈0;x〉.n == 1) {
+      x: {
+        on: true
+      }
+    }
+  }
+  letEmbed: {
+    x: {
+      on: (*false|bool)
+      if 〈0;on〉 {
+        let v#7 = {
+          out: 1
+        }
+        〈0;let v#7〉
+      }
+      n: 1
+    }
+    if (〈0;x〉.n == 1) {
+      x: {
+        on: true
+      }
+    }
+  }
+  issue4487: {
+    empty: {
+      q: {
+        a: 0
+        if false {
+          b: 1
+        }
+        if false {
+          c: 2
+        }
+      }
+      n: [
+        if (len(〈1;q〉) > 1) {
+          〈2;q〉
+        },
+      ]
+      if (len(〈0;n〉) == 0) {
+        let m#8 = "empty"
+        out: 〈0;let m#8〉
+      }
+    }
+    populated: {
+      q: {
+        a: 0
+        b: 1
+        if false {
+          c: 2
+        }
+        if false {
+          d: 3
+        }
+      }
+      n: [
+        if (len(〈1;q〉) > 1) {
+          〈2;q〉
+        },
+      ]
+      if (len(〈0;n〉) != 0) {
+        let m#9 = 〈1;n〉
+        out: 〈0;let m#9〉
+      }
+    }
+  }
+}
+--- issue4448.cue
+{
+  issue4448: {
+    _s: 〈import;strings〉.ToLower("A")
+    #App: {
+      units: {
+        _elem: {
+          spec: ({
+            src: string
+            tags: _
+          }|{
+            tags: _
+          })
+          if (〈0;spec〉 != _|_(explicit error (_|_ literal) in source)) {
+            let v#A = 1
+            _w: 〈0;let v#A〉
+          }
+        }
+      }
+      m: 〈0;units〉._elem
+    }
+    #Mixin: {
+      #cfg: {
+        entries: {
+          w: {
+            _lines: [
+              "\(〈1;port〉)",
+            ]
+            port: _
+          }
+        }
+        _all: 〈import;list〉.Concat([
+          〈1;entries〉.w._lines,
+        ])
+      }
+      ...
+    }
+    app: 〈0;#App〉
+    app: 〈0;#Mixin〉
+    app: {
+      #cfg: {
+        entries: {
+          w: {
+            port: 〈3;units〉._elem._port
+          }
+        }
+      }
+      units: {
+        _elem: {
+          _port: 8080
+          spec: {
+            src: "x"
+            tags: [
+              〈4;#cfg〉._all,
+            ]
+          }
+        }
+      }
+    }
+  }
+}
+--- issue4543.cue
+{
+  issue4543: {
+    app: {
+      kv: {}
+      job: (*{}|{})
+      job: {
+        enabled: ("a" != "b")
+        vars: {
+          if (〈2;kv〉.CONN != _|_(explicit error (_|_ literal) in source)) {}
+        }
+      }
+      if 〈0;job〉.enabled {
+        let p#B = {}
+        out: 〈0;let p#B〉
+      }
+    }
+  }
+  issue4543Comment: {
+    #Merge: {
+      env: string
+      in: {
+        global: _
+        development: _
+      }
+      out: (〈0;in〉.global & 〈0;in〉[〈0;env〉])
+    }
+    #App: {
+      path: (string|*"p")
+      paths?: [
+        ...string,
+      ]
+      policies?: {
+        auto: {
+          [string]: (bool|*false)
+        }
+      }
+      if (〈0;policies〉 != _|_(explicit error (_|_ literal) in source)) {
+        let a#C = (〈2;#Merge〉 & {
+          in: 〈2;policies〉.auto
+          env: "development"
+        }).out
+        auto: 〈0;let a#C〉
+      }
+    }
+    app: {
+      [string]: ({
+        paths: [
+          "/\(〈2;(〈0;-〉)〉.path)/",
+        ]
+      } & 〈1;#App〉)
+    }
+    app: {
+      b: {
+        _values: (〈2;#Merge〉 & {
+          in: 〈3;values〉
+          env: "development"
+        }).out
+        policies: {
+          if (〈2;b〉._values.auth.deploy != _|_(explicit error (_|_ literal) in source)) {}
+        }
+      }
+    }
+    values: {
+      global: {
+        auth: {}
+      }
+    }
+  }
+}

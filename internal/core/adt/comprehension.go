@@ -275,12 +275,14 @@ func pushDownDeps(n *nodeContext, t *task, x Node) condition {
 				// any additional precision.
 
 			case *LetField:
-				completes |= fieldConjunctsKnown
-
 				n.node.MultiLet = true
 				// A let within a comprehension can only be referred to within
 				// the comprehension. There is therefore no need to track its
 				// own dependencies. Intentionally no pushDownDeps call here.
+				// For the same reason, its arc cannot be observed from outside
+				// the comprehension, so it does not count as adding field
+				// conjuncts, which would keep the comprehension from being
+				// pushed down.
 
 			case *DynamicField:
 				// Depending on arc type, may not contribute to concrete value.
