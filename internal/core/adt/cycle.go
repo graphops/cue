@@ -436,6 +436,32 @@ type RefNode struct {
 	// Len is the length of the chain starting at this node. A node r is part
 	// of a chain if and only if the node of that chain with r.Len is r.
 	Len int32
+
+	// argEntry reports that Ref reached a vertex of a function argument
+	// that shares another vertex, so that Next continues with the chain of
+	// the argument instead of that of the context in which Ref was resolved,
+	// which is outer; see [OpContext.argChain]. outer is not used to detect
+	// cycles: it keeps the references through which a conjunct was reached,
+	// which give the order of its fields; see [RefNode.Outermost].
+	argEntry bool
+	outer    *RefNode
+}
+
+// Outermost returns the first reference through which a conjunct with the
+// chain r was reached, or nil if there is none. Unlike the end of r, it does
+// not depend on where the chain continues with that of a function argument.
+func (r *RefNode) Outermost() *RefNode {
+	for r != nil {
+		switch {
+		case r.argEntry:
+			r = r.outer
+		case r.Next == nil:
+			return r
+		default:
+			r = r.Next
+		}
+	}
+	return nil
 }
 
 // cyclicConjunct is used in nodeContext to postpone the computation of

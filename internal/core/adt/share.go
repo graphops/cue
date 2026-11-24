@@ -112,6 +112,7 @@ func (n *nodeContext) dropSharing() {
 	n.isShared = false
 	n.noSharing = true
 	n.node.IsShared = false
+	delete(n.ctx.argChains, n.node)
 	n.node.OpenedShared = false
 	n.node.ClosedShared = false
 	n.decShared()
@@ -195,6 +196,7 @@ func (n *nodeContext) share(c Conjunct, arc *Vertex, id CloseInfo) {
 	n.node.BaseValue = arc
 	n.node.IsShared = true
 	n.isShared = true
+	n.recordArgChain(id)
 	n.node.OpenedShared = id.Opened || id.ConjunctOpened
 	n.addShared(c, arc, id)
 
@@ -356,6 +358,120 @@ func (v *Vertex) sharesOpened() bool {
 			return false
 		}
 		v = arc
+	}
+	return false
+}
+
+// A function argument is evaluated under the cycle-reference chain of its
+// call, not under that of the callee's body: its conjuncts are marked
+// [CycleInfo.IsFuncArg] and carry the chain of the call, which scheduling
+// them restores. A vertex of an argument that structure shares another
+// vertex, however, holds neither the arcs nor the scheduled conjuncts of
+// that vertex. A reference to it, a selection through it or a comprehension
+// over it reaches those of the shared vertex instead, which carry no such
+// chain, and they are scheduled with the chain of the body. If they make a
+// call that this chain already holds, as when the argument is the result of
+// an earlier call of the same function,
+//
+//	F: func(r: _) -> _: {r, x: G(1)}
+//	G: func(a: _) -> _: {y: H(a)}
+//	H: func(b: _) -> _: b
+//	W: func(o: _) -> _: F(o)
+//	once:  W({})
+//	twice: W(once)
+//
+// the call is taken for a structural cycle. Therefore, the chain under which
+// a vertex of an argument starts sharing is recorded, and what is reached
+// through the vertex is scheduled under that chain, as it would be if the
+// vertex did not share.
+
+// recordArgChain records the chain of id for the node if id is that of a
+// function argument. See [OpContext.argChain].
+func (n *nodeContext) recordArgChain(id CloseInfo) {
+	if id.IsFuncArg {
+		n.ctx.setArgChain(n.node, id.Refs)
+	}
+}
+
+func (c *OpContext) setArgChain(v *Vertex, refs *RefNode) {
+	if c.argChains == nil {
+		c.argChains = map[*Vertex]*RefNode{}
+	}
+	c.argChains[v] = refs
+}
+
+// argChain reports the chain of the function argument v is part of, if v,
+// or a vertex v indirects to, is recorded as sharing a vertex as part of an
+// argument. Of several such vertices the last one, closest to the shared
+// vertex, determines the chain. If nonDisjunct is set, argChain stops at a
+// disjunct, as [Vertex.DerefNonDisjunct] does.
+func (c *OpContext) argChain(v *Vertex, nonDisjunct bool) (refs *RefNode, ok bool) {
+	if len(c.argChains) == 0 {
+		return nil, false
+	}
+	for {
+		if r, found := c.argChains[v]; found {
+			refs, ok = r, true
+		}
+		arc, isVertex := v.BaseValue.(*Vertex)
+		if !isVertex || (nonDisjunct && arc.IsDisjunct) {
+			return refs, ok
+		}
+		v = arc
+	}
+}
+
+// An argSelection records that the operand of a selection resolved to a
+// vertex of a function argument that shares another vertex, with the chain of
+// the argument and the vertex in which the selection looks up its field.
+type argSelection struct {
+	refs *RefNode
+	node *Vertex
+}
+
+// noteArgSelection records an argSelection in c if ref, the vertex that the
+// operand of a selection resolved to, shares a vertex as part of a function
+// argument, and node is the vertex in which the field is looked up.
+// [processResolver] then schedules a field of node under the chain of the
+// argument. An operand that does not share keeps the selection recorded by
+// its own operand, if any: its fields lie within the same shared vertex.
+func (c *OpContext) noteArgSelection(ref, node *Vertex) {
+	if ref == nil {
+		return
+	}
+	if refs, ok := c.argChain(ref, false); ok {
+		c.argSelection = &argSelection{refs: refs, node: node}
+	}
+}
+
+// argRef returns the chain under which n schedules the conjuncts of arc, a
+// vertex of a function argument that shares another vertex or a vertex
+// reached by a selection through one, which ref resolved to under the chain
+// refs: ref followed by the chain of the argument, argRefs. The result keeps
+// refs for the order of fields: see [RefNode.Outermost].
+func (n *nodeContext) argRef(arc *Vertex, ref Resolver, argRefs, refs *RefNode) *RefNode {
+	r := &RefNode{
+		Ref:      ref,
+		Arc:      deref(arc),
+		Node:     deref(n.node),
+		Next:     argRefs,
+		Depth:    n.depth,
+		Len:      1,
+		argEntry: true,
+		outer:    refs,
+	}
+	if argRefs != nil {
+		r.Len = argRefs.Len + 1
+	}
+	return r
+}
+
+// within reports whether v is the node of s or lies within it.
+func (s *argSelection) within(v *Vertex) bool {
+	for ; v != nil; v = v.Parent {
+		if v == s.node {
+			return true
+		}
 	}
 	return false
 }
