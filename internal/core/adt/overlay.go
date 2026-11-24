@@ -167,6 +167,10 @@ func (ctx *overlayContext) cloneRoot(root *nodeContext) *nodeContext {
 	v.state.vertexMap = ctx.vertexMap
 	ctx.root = v
 
+	// The clones of arcs that hold the dependency on a parent task that was
+	// not cloned, once for each such hold.
+	var released []*nodeContext
+
 	for v := range ctx.vertexMap {
 		v = v.overlay
 		if v == nil {
@@ -182,7 +186,8 @@ func (ctx *overlayContext) cloneRoot(root *nodeContext) *nodeContext {
 		// The parent tasks of an arc, such as a comprehension pushed down
 		// into it, are cloned after the arc. Point the arc at their clones,
 		// which run in this disjunct, so that it keeps waiting for them. A
-		// parent task that was not cloned does not add to this disjunct.
+		// parent task that was not cloned does not add to this disjunct, so
+		// the arc no longer depends on it.
 		pts := n.parentTasks[:0]
 		for _, t := range n.parentTasks {
 			if t, ok := ctx.tasks[t]; ok {
@@ -190,9 +195,21 @@ func (ctx *overlayContext) cloneRoot(root *nodeContext) *nodeContext {
 			}
 		}
 		n.parentTasks = pts
+		held := n.pushedBy[:0]
+		for _, t := range n.pushedBy {
+			if t, ok := ctx.tasks[t]; ok {
+				held = append(held, t)
+			} else {
+				released = append(released, n)
+			}
+		}
+		n.pushedBy = held
 
 		for _, t := range n.tasks {
 			t.node = ctx.vertexMap.deref(t.node.node).state
+			for i, a := range t.pushedTo {
+				t.pushedTo[i] = ctx.vertexMap.deref(a)
+			}
 
 			if t.blockedOn != nil {
 				before := t.blockedOn.node.node
@@ -205,6 +222,12 @@ func (ctx *overlayContext) cloneRoot(root *nodeContext) *nodeContext {
 				after.state.scheduler.addBlocking(t)
 			}
 		}
+	}
+
+	// Release the dependencies only now that the disjunct is cloned, as
+	// completing a condition may evaluate it.
+	for _, n := range released {
+		n.unholdPushedDeps()
 	}
 
 	return v.state
@@ -339,6 +362,7 @@ func (ctx *overlayContext) cloneScheduler(dst, src *nodeContext) {
 	ds.provided = ss.provided
 	ds.counters = ss.counters
 	ds.parentTasks = append(ds.parentTasks, ss.parentTasks...) // rewritten in cloneRoot
+	ds.pushedBy = append(ds.pushedBy, ss.pushedBy...)          // rewritten in cloneRoot
 
 	ss.blocking = ss.blocking[:0]
 
@@ -387,6 +411,7 @@ func (ctx *overlayContext) cloneTask(t *task, dst, src *scheduler) *task {
 	d.x = t.x
 	d.id = id
 	d.node = dst.node
+	d.pushedTo = append(d.pushedTo, t.pushedTo...) // rewritten in cloneRoot
 
 	if t.run == handleComprehension {
 		if ctx.tasks == nil {

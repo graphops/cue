@@ -149,7 +149,7 @@ func (p *taskContext) popTask() {
 }
 
 // taskChunkSize is the number of tasks allocated at once when the pool is empty.
-// sizeof(task) is 128 bytes, so 32 tasks is exactly 4KiB per chunk.
+// sizeof(task) is 152 bytes, so 32 tasks is 4.75KiB per chunk.
 const taskChunkSize = 32
 
 func (p *taskContext) newTask() *task {
@@ -286,6 +286,11 @@ type scheduler struct {
 	// fields to this node.
 	parentTasks []*task
 
+	// pushedBy lists the parent tasks that hold [pushedDeps] of this node,
+	// once for each time it counts them in counters. See
+	// [scheduler.holdPushedDeps].
+	pushedBy []*task
+
 	// blocking is a list of tasks that are blocked on the completion of
 	// the indicate conditions. This can hold tasks from other nodes or tasks
 	// originating from this node itself.
@@ -324,7 +329,87 @@ func (s *scheduler) clear() {
 		ctx:         s.ctx,
 		tasks:       s.tasks[:0],
 		parentTasks: s.parentTasks[:0],
+		pushedBy:    s.pushedBy[:0],
 		blocking:    s.blocking[:0],
+	}
+}
+
+// pushedDeps are the conditions of an arc that a comprehension pushed down to
+// it holds until it is done: until then, it may still add conjuncts to the
+// arc, or fail and make the arc fail with it.
+const pushedDeps = valueKnown | fieldConjunctsKnown | allTasksCompleted
+
+// holdPushedDeps makes the pushedDeps of s depend on t, a comprehension pushed
+// down to s; see [pushDownDeps]. t releases them when it is done; see
+// [task.releasePushedDeps].
+//
+// The hold is recorded on both sides: in pushedBy of s, which owns the
+// counters, and in pushedTo of t, which only refers to the vertex of s. A
+// release decrements the counters only for a hold it removes from pushedBy.
+// So the counters count exactly the holds recorded with them: when the state
+// of a vertex is freed or reused, its counters and holds go together, and a
+// release for a vertex whose current state does not hold t, such as one whose
+// state was freed or replaced since, has no effect.
+func (s *scheduler) holdPushedDeps(t *task) {
+	s.pushedBy = append(s.pushedBy, t)
+	s.provided |= pushedDeps
+	s.incrementCounts(pushedDeps)
+	t.pushedTo = append(t.pushedTo, s.node.node)
+}
+
+// holdsPushedDeps reports whether the pushedDeps of s depend on t.
+func (s *scheduler) holdsPushedDeps(t *task) bool {
+	return slices.Contains(s.pushedBy, t)
+}
+
+// releasePushedDeps releases a hold of t on the pushedDeps of s, if any.
+func (s *scheduler) releasePushedDeps(t *task) {
+	if i := slices.Index(s.pushedBy, t); i >= 0 {
+		s.pushedBy = slices.Delete(s.pushedBy, i, i+1)
+		s.unholdPushedDeps()
+	}
+}
+
+// unholdPushedDeps undoes the counts of a hold just removed from pushedBy.
+//
+// Once the conjuncts of s are scheduled, its counters count its tasks too, so
+// a count that drops to zero means the condition is met. Before that, they
+// count only the holds: the tasks of s, which may provide the same
+// conditions, are not added yet. Completing the conditions then would mark s
+// as done before it is evaluated at all, as when a comprehension adds the
+// only conjunct of a field and the field is unified only afterwards. So the
+// hold is undone as if it had never been made, and the tasks count from zero.
+func (s *scheduler) unholdPushedDeps() {
+	if s.node.isInitialized {
+		s.decrementCounts(pushedDeps)
+		return
+	}
+	for x := pushedDeps & s.ctx.counterMask; x != 0; x &= x - 1 {
+		s.counters[bits.TrailingZeros16(uint16(x))]--
+	}
+	if len(s.pushedBy) == 0 {
+		s.provided &^= pushedDeps
+		for _, t := range s.tasks {
+			s.provided |= t.completes
+		}
+	}
+}
+
+// releasePushedDeps releases the holds of t, a comprehension that will not add
+// to the arcs it was pushed down to any more, on those arcs.
+//
+// Each vertex is removed from pushedTo before it is released, as completing
+// its conditions evaluates further: if that leaves this function early, the
+// rest is released when the node of t is freed.
+func (t *task) releasePushedDeps() {
+	for len(t.pushedTo) > 0 {
+		i := len(t.pushedTo) - 1
+		v := t.pushedTo[i]
+		t.pushedTo = t.pushedTo[:i]
+		// A vertex whose state was freed holds nothing.
+		if s := v.state; s != nil {
+			s.releasePushedDeps(t)
+		}
 	}
 }
 
@@ -1010,6 +1095,10 @@ type task struct {
 	// The node from which this conjunct originates.
 	node *nodeContext
 
+	// pushedTo lists the vertices whose pushedDeps this comprehension holds;
+	// see [scheduler.holdPushedDeps].
+	pushedTo []*Vertex
+
 	run *runner // TODO: use struct to make debugging easier?
 
 	// The Conjunct processed by this task.
@@ -1047,6 +1136,9 @@ func (s *scheduler) insertTask(t *task) {
 
 func runTask(t *task, mode runMode) {
 	if t.defunct {
+		if t.run == handleComprehension {
+			t.releasePushedDeps()
+		}
 		t.state = taskCANCELLED
 		return
 	}
@@ -1133,6 +1225,13 @@ func runTask(t *task, mode runMode) {
 			}
 		default:
 			panic(r)
+		}
+
+		// Release the arcs a comprehension was pushed down to only now that
+		// it is no longer the current task: what a release completes may
+		// otherwise wait for, and so block, the finished task.
+		if t.state >= taskSUCCESS && t.run == handleComprehension {
+			t.releasePushedDeps()
 		}
 	}()
 

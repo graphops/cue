@@ -51,7 +51,7 @@ Allocs: 14
 Retain: 0
 
 Unifications: 26
-Conjuncts:    61
+Conjuncts:    62
 Disjuncts:    6
 ResolveDep:   10
 
@@ -68,6 +68,12 @@ diff old new
 -Retain: 1
 -
 -Unifications: 23
+-Conjuncts:    61
+-Disjuncts:    34
+-
+-MisalignedConjunct: 7
+-
+-NumCloseIDs: 4
 +Leaks:  1
 +Freed:  31
 +Reused: 18
@@ -75,12 +81,7 @@ diff old new
 +Retain: 0
 +
 +Unifications: 26
- Conjuncts:    61
--Disjuncts:    34
--
--MisalignedConjunct: 7
--
--NumCloseIDs: 4
++Conjuncts:    62
 +Disjuncts:    6
 +ResolveDep:   10
 +
@@ -107,7 +108,7 @@ Allocs: 14
 Retain: 0
 
 Unifications: 26
-Conjuncts:    61
+Conjuncts:    62
 Disjuncts:    6
 ResolveDep:   10
 
@@ -124,6 +125,12 @@ diff old new
 -Retain: 1
 -
 -Unifications: 23
+-Conjuncts:    61
+-Disjuncts:    34
+-
+-MisalignedConjunct: 7
+-
+-NumCloseIDs: 4
 +Leaks:  1
 +Freed:  31
 +Reused: 18
@@ -131,12 +138,7 @@ diff old new
 +Retain: 0
 +
 +Unifications: 26
- Conjuncts:    61
--Disjuncts:    34
--
--MisalignedConjunct: 7
--
--NumCloseIDs: 4
++Conjuncts:    62
 +Disjuncts:    6
 +ResolveDep:   10
 +

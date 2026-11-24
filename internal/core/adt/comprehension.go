@@ -190,6 +190,19 @@ func (n *nodeContext) processComprehension(d *envYield, state vertexStatus) *Bot
 		condition: allKnown,
 		mode:      ignore,
 	}, d.addEnv); err != nil {
+		// The arcs the comprehension was pushed down to fail with it, as they
+		// would if it were not pushed down. Cycles are reported by lookups of
+		// those arcs.
+		if err.Code != CycleError {
+			c := MakeConjunct(d.env, err, d.id)
+			t := ctx.current()
+			for _, arc := range t.pushedTo {
+				if s := arc.state; s != nil && s.holdsPushedDeps(t) {
+					arc.insertConjunct(ctx, c, c.CloseInfo, arc.ArcType, false, false)
+				}
+			}
+		}
+
 		if err.IsIncomplete() {
 			return err
 		}
@@ -265,6 +278,7 @@ func pushDownDeps(n *nodeContext, t *task, x Node) condition {
 				// pushdown bookkeeping has nothing to do here.
 				if arcState := arc.getBareState(n.ctx); arcState != nil {
 					arcState.parentTasks = append(arcState.parentTasks, t)
+					arcState.holdPushedDeps(t)
 					pushDownDeps(arcState, t, x.Value)
 				}
 

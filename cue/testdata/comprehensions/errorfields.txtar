@@ -1,0 +1,316 @@
+# A field declared both outside and in the body of a comprehension depends on
+# the clauses of the comprehension. When these fail, the field fails with them,
+# rather than taking the value it would have if the comprehension yielded
+# nothing. Each out field is evaluated before the struct it selects from, and
+# so before the struct records the error.
+# https://cuelang.org/issue/XXXX
+-- in.cue --
+@experiment(try)
+
+incomplete: {
+	out: #P.x @test(err, code=incomplete, contains="non-concrete value int in operand to ==", pos=[3:6, 7:5])
+	#P: {
+		x: [...]
+		if b == 1 {
+			x: [1]
+		}
+	}
+	b: int
+}
+
+// The field itself, as the API looks it up in p after evaluating p.
+lookup: {
+	p: {
+		x: [...] @test(err, code=incomplete, contains="non-concrete value int in operand to ==", pos=[1:6, 5:5])
+		if b == 1 {
+			x: [1]
+		}
+	}
+	b: int
+}
+
+fatal: {
+	out: p.x @test(err, code=eval, contains="conflicting values 2 and 1", pos=[7:5, 7:9])
+	p: {
+		x: [...]
+		if b {
+			x: [1]
+		}
+	}
+	b: 1 & 2 @test(err, code=eval, contains="conflicting values 2 and 1", pos=[0:5, 0:9])
+}
+
+// Only the else clause declares x.
+fatalElse: {
+	out: p.x @test(err, code=eval, contains="conflicting values 2 and 1", pos=[9:5, 9:9])
+	p: {
+		x: [...]
+		if b {
+			y: 1
+		} else {
+			x: [2]
+		}
+	}
+	b: 1 & 2 @test(err, code=eval, contains="conflicting values 2 and 1", pos=[0:5, 0:9])
+}
+
+// Both clauses declare x.
+incompleteElse: {
+	out: p.x @test(err, code=incomplete, contains="non-concrete value int in operand to ==", pos=[3:6, 9:5])
+	p: {
+		x: [...]
+		if b == 1 {
+			x: [1]
+		} else {
+			x: [2]
+		}
+	}
+	b: int
+}
+
+// The guard fails only after the selection of x.
+requiredMissing: {
+	out: p.x @test(err, code=incomplete, contains="required field missing: mode", pos=[3:10])
+	p: {
+		x: [...]
+		if cfg.mode == "a" {
+			x: [1]
+		}
+	}
+	cfg: mode!: string
+}
+
+// An embedding and a for loop use the conjuncts of x.
+embedding: {
+	out: {p.x} @test(err, code=incomplete, contains="non-concrete value int in operand to ==", pos=[3:6, 7:5])
+	p: {
+		x: [...]
+		if b == 1 {
+			x: [1]
+		}
+	}
+	b: int
+}
+
+forLoop: {
+	out: [for v in p {v}] @test(err, at=0, code=incomplete, contains="non-concrete value int in operand to ==", pos=[3:6, 7:5])
+	p: {
+		x: [...]
+		if b == 1 {
+			x: [1]
+		}
+	}
+	b: int
+}
+
+nested: {
+	out: p.a.x @test(err, code=incomplete, contains="non-concrete value int in operand to ==", pos=[3:6, 7:5])
+	p: {
+		a: x: [...]
+		if b == 1 {
+			a: x: [1]
+		}
+	}
+	b: int
+}
+
+nestedComprehension: {
+	out: p.x @test(err, code=incomplete, contains="non-concrete value int in operand to ==", pos=[3:6, 9:5])
+	p: {
+		x: [...]
+		if b == 1 {
+			for v in [1] {
+				x: [v]
+			}
+		}
+	}
+	b: int
+}
+
+// x is declared in a struct embedded in the body.
+embeddedStruct: {
+	out: p.x @test(err, code=incomplete, contains="non-concrete value int in operand to ==", pos=[3:6, 7:5])
+	p: {
+		x: [...]
+		if b == 1 {
+			{x: [1]}
+		}
+	}
+	b: int
+}
+
+// The source of a for clause, rather than a guard, fails.
+forSource: {
+	out: p.x @test(err, code=incomplete, contains="cannot range over s", pos=[3:12])
+	p: {
+		x: [...]
+		for v in s {
+			x: [v]
+		}
+	}
+	s: _
+}
+
+// x is declared outside the failing comprehension only by another one.
+otherComprehension: {
+	out: p.x @test(err, code=incomplete, contains="non-concrete value int in operand to ==", pos=[2:6, 9:5])
+	p: {
+		if b == 1 {
+			x: [1]
+		}
+		if true {
+			x: [...]
+		}
+	}
+	b: int
+}
+
+// The comprehension does not declare y.
+otherField: {
+	x: p.x @test(err, code=incomplete, contains="non-concrete value int in operand to ==", pos=[5:6, 9:5])
+	y: p.y @test(eq, 1)
+	p: {
+		x: [...]
+		y: 1
+		if b == 1 {
+			x: [1]
+		}
+	}
+	b: int
+}
+
+// The guard becomes concrete in an instance of the definition.
+instance: {
+	out: q.x @test(eq, [1])
+	q: #P & {b: 1}
+	#P: {
+		b: int
+		x: [...]
+		if b == 1 {
+			x: [1]
+		}
+	}
+}
+
+// A try clause whose ?-marked reference fails yields nothing, without an
+// error.
+tryAbsent: {
+	out: p.x @test(eq, [])
+	p: {
+		x: [...]
+		try B = c.b? {
+			x: [B]
+		}
+	}
+	c: {}
+}
+
+conditionFalse: {
+	out: p.x @test(eq, [])
+	p: {
+		x: [...]
+		if b == 2 {
+			x: [1]
+		}
+	}
+	b: 1
+}
+-- out/errors.txt --
+[incomplete] incomplete.#P: non-concrete value int in operand to ==:
+    ./in.cue:7:6
+    ./in.cue:11:5
+[incomplete] incomplete.#P: non-concrete value int in operand to ==:
+    ./in.cue:7:6
+    ./in.cue:11:5
+[incomplete] lookup.p: non-concrete value int in operand to ==:
+    ./in.cue:18:6
+    ./in.cue:22:5
+[eval] fatal.b: conflicting values 2 and 1:
+    ./in.cue:33:5
+    ./in.cue:33:9
+[eval] fatal.b: conflicting values 2 and 1:
+    ./in.cue:33:5
+    ./in.cue:33:9
+[eval] fatal.b: conflicting values 2 and 1:
+    ./in.cue:33:5
+    ./in.cue:33:9
+[eval] fatalElse.b: conflicting values 2 and 1:
+    ./in.cue:47:5
+    ./in.cue:47:9
+[eval] fatalElse.b: conflicting values 2 and 1:
+    ./in.cue:47:5
+    ./in.cue:47:9
+[eval] fatalElse.b: conflicting values 2 and 1:
+    ./in.cue:47:5
+    ./in.cue:47:9
+[incomplete] incompleteElse.p: non-concrete value int in operand to ==:
+    ./in.cue:55:6
+    ./in.cue:61:5
+[incomplete] incompleteElse.p: non-concrete value int in operand to ==:
+    ./in.cue:55:6
+    ./in.cue:61:5
+[incomplete] requiredMissing.p: required field missing: mode:
+    ./in.cue:69:10
+[incomplete] requiredMissing.p: required field missing: mode:
+    ./in.cue:69:10
+[incomplete] embedding.p: non-concrete value int in operand to ==:
+    ./in.cue:81:6
+    ./in.cue:85:5
+[incomplete] embedding.p: non-concrete value int in operand to ==:
+    ./in.cue:81:6
+    ./in.cue:85:5
+[incomplete] forLoop.p: non-concrete value int in operand to ==:
+    ./in.cue:92:6
+    ./in.cue:96:5
+[incomplete] forLoop.p: non-concrete value int in operand to ==:
+    ./in.cue:92:6
+    ./in.cue:96:5
+[incomplete] nested.p: non-concrete value int in operand to ==:
+    ./in.cue:103:6
+    ./in.cue:107:5
+[incomplete] nested.p: non-concrete value int in operand to ==:
+    ./in.cue:103:6
+    ./in.cue:107:5
+[incomplete] nestedComprehension.p: non-concrete value int in operand to ==:
+    ./in.cue:114:6
+    ./in.cue:120:5
+[incomplete] nestedComprehension.p: non-concrete value int in operand to ==:
+    ./in.cue:114:6
+    ./in.cue:120:5
+[incomplete] embeddedStruct.p: non-concrete value int in operand to ==:
+    ./in.cue:128:6
+    ./in.cue:132:5
+[incomplete] embeddedStruct.p: non-concrete value int in operand to ==:
+    ./in.cue:128:6
+    ./in.cue:132:5
+[incomplete] forSource.p: cannot range over s (incomplete type _):
+    ./in.cue:140:12
+[incomplete] forSource.p: cannot range over s (incomplete type _):
+    ./in.cue:140:12
+[incomplete] otherComprehension.p: non-concrete value int in operand to ==:
+    ./in.cue:151:6
+    ./in.cue:158:5
+[incomplete] otherComprehension.p: non-concrete value int in operand to ==:
+    ./in.cue:151:6
+    ./in.cue:158:5
+[incomplete] otherField.p: non-concrete value int in operand to ==:
+    ./in.cue:168:6
+    ./in.cue:172:5
+[incomplete] otherField.p: non-concrete value int in operand to ==:
+    ./in.cue:168:6
+    ./in.cue:172:5
+[incomplete] instance.#P: non-concrete value int in operand to ==:
+    ./in.cue:182:6
+    ./in.cue:180:6
+-- out/eval/stats --
+Leaks:  0
+Freed:  96
+Reused: 72
+Allocs: 24
+Retain: 0
+
+Unifications: 96
+Conjuncts:    128
+Disjuncts:    0
+
+NumCloseIDs: 3
