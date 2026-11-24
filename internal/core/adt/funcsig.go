@@ -2776,12 +2776,12 @@ func (c *OpContext) sameCaptures(fn *Function, ex, ey *Environment) bool {
 	})
 }
 
-// sameCapture reports whether the reference r, which refers to the
-// environment up levels above that of its literal, resolves to the same value
-// from ex and from ey.
+// sameCapture reports whether the reference r, or the reference r selects
+// from, which refers to the environment up levels above that of its literal,
+// resolves to the same value from ex and from ey.
 func (c *OpContext) sameCapture(r Node, up int32, ex, ey *Environment) bool {
 	var ref Expr
-	switch r := r.(type) {
+	switch r := selectionHead(r).(type) {
 	case *LabelReference:
 		return ex.up(c, up).DynamicLabel == ey.up(c, up).DynamicLabel
 	case *FieldReference:
@@ -2884,11 +2884,13 @@ func walkFuncEscapes(fn *Function, f func(r Node, up int32) bool) bool {
 // the function being walked, that refers to a scope outside that function. A
 // reference counts its levels from the scope it occurs in, so it escapes when
 // it goes up at least depth levels, or one more for a value reference such as
-// self. Struct literals, list literals, function bodies, and the for and let
-// clauses of comprehensions count as scopes, as each gets an environment of
-// its own; a pattern or dynamic field is evaluated in its struct's scope. It
-// reports false if f does, or if x contains a construct that it does not
-// model, such as an evaluated value.
+// self. For a reference from which fields are selected, f is passed the
+// outermost selection, such as a.b.c for a; see [selectionHead]. Struct
+// literals, list literals, function bodies, and the for and let clauses of
+// comprehensions count as scopes, as each gets an environment of its own; a
+// pattern or dynamic field is evaluated in its struct's scope. It reports
+// false if f does, or if x contains a construct that it does not model, such
+// as an evaluated value.
 func walkEscapes(x Node, depth int32, f func(r Node, up int32) bool) bool {
 	walk := func(xs ...Node) bool {
 		for _, x := range xs {
@@ -2918,7 +2920,14 @@ func walkEscapes(x Node, depth int32, f func(r Node, up int32) bool) bool {
 		}
 		return ref(x.UpCount)
 	case *SelectorExpr:
-		return walk(x.X)
+		head := selectionHead(x)
+		switch head.(type) {
+		case *FieldReference, *LetReference, *ValueReference:
+			return walkEscapes(head, depth, func(_ Node, up int32) bool {
+				return f(x, up)
+			})
+		}
+		return walk(head)
 	case *IndexExpr:
 		return walk(x.X, x.Index)
 	case *SliceExpr:
@@ -3017,6 +3026,18 @@ func walkEscapes(x Node, depth int32, f func(r Node, up int32) bool) bool {
 		return true // a literal or another evaluated value
 	}
 	return false
+}
+
+// selectionHead returns the expression that a selection such as a.b.c selects
+// from, a, or x itself if it is not a selection.
+func selectionHead(x Node) Node {
+	for {
+		s, ok := x.(*SelectorExpr)
+		if !ok {
+			return x
+		}
+		x = s.X
+	}
 }
 
 // walkComprehension walks the comprehension x, located inside depth scopes, as

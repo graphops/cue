@@ -217,15 +217,16 @@ func (n *nodeContext) scheduleConjunct(c Conjunct, id CloseInfo) {
 		// We therefore postpone call expressions until we have evidence that
 		// such non-cyclic conjuncts exist.
 		//
-		// We only defer calls that contain references in their arguments, as
-		// only those can cause infinite recursion. Calls with only literal
-		// arguments (like `or(["a", "b"])`) are safe to evaluate immediately,
-		// even when evaluated from within an unrelated cyclic context.
+		// We only defer calls whose arguments may refer to the cycle, as only
+		// those can cause infinite recursion. Calls with only literal
+		// arguments (like `or(["a", "b"])`), or with arguments that refer
+		// only to unrelated values, are safe to evaluate immediately, even
+		// when evaluated from within an unrelated cyclic context.
 		//
 		// TODO: this is rather hacky. We probably need a better solution
 		// in a future iteration of the evaluator.
 		if isCall && id.CycleType == IsCyclic && !n.hasNonCycle && !n.hasNonCyclic {
-			if slices.ContainsFunc(call.Args, exprHasResolver) {
+			if slices.ContainsFunc(call.Args, exprHasResolver) && n.argsReachCycle(env, call, id) {
 				n.hasAncestorCycle = true
 				n.cyclicConjuncts = append(n.cyclicConjuncts, cyclicConjunct{c: c})
 				return
@@ -341,6 +342,135 @@ func exprHasResolver(x Expr) bool {
 	default:
 		return true // Conservatively assume unknown types may have references.
 	}
+}
+
+// argsReachCycle reports whether the arguments of call, a cyclic conjunct of
+// n evaluated in env with the cycle information ci, may refer to the cycle.
+//
+// The cyclic mark of a conjunct is inherited by all conjuncts derived from it.
+// It is set when a reference reaching the conjunct closes a cycle, which may
+// happen through a lookup that has nothing to do with the arguments of a
+// call. The arguments re-enter the cycle only through a reference to the
+// vertex being evaluated, an ancestor or another vertex in progress, or an
+// arc on the reference chain of the conjunct, which are the vertices
+// [nodeContext.detectCycle] treats as a cycle. So each reference by which an
+// argument escapes (see [walkEscapes]) is looked up among the existing arcs,
+// without evaluating anything. A reference that cannot be looked up that
+// way, and a construct that walkEscapes does not model, may refer to the
+// cycle.
+func (n *nodeContext) argsReachCycle(env *Environment, call *CallExpr, ci CloseInfo) bool {
+	for _, a := range call.Args {
+		if n.exprReachesCycle(env, ci, a, maxCycleLets) {
+			return true
+		}
+	}
+	return false
+}
+
+// maxCycleLets bounds the number of lets that [nodeContext.exprReachesCycle]
+// follows from one to another.
+const maxCycleLets = 4
+
+// exprReachesCycle reports whether x, evaluated in env, may refer to the
+// cycle; see [nodeContext.argsReachCycle]. lets is the number of lets that
+// may still be followed.
+func (n *nodeContext) exprReachesCycle(env *Environment, ci CloseInfo, x Expr, lets int) bool {
+	return !walkEscapes(x, 0, func(r Node, up int32) bool {
+		return !n.refReachesCycle(env, ci, r, up, lets)
+	})
+}
+
+// refReachesCycle reports whether r, a reference or a selection from one,
+// which refers to the environment up levels above env, may refer to the
+// cycle; see [nodeContext.argsReachCycle].
+func (n *nodeContext) refReachesCycle(env *Environment, ci CloseInfo, r Node, up int32, lets int) bool {
+	head, labels := splitPath(r)
+	switch x := head.(type) {
+	case *LabelReference:
+		return false
+	case *LetReference:
+		if len(labels) == 0 {
+			// A let reads what its expression reads.
+			return lets == 0 || n.exprReachesCycle(env.up(n.ctx, up), ci, x.X, lets-1)
+		}
+	}
+	v := n.pathArc(env, head, labels, up, lets)
+	if v == nil || equalDeref(v, n.node) || n.hasAncestor(v) {
+		return true
+	}
+	for r := ci.Refs; r != nil; r = r.Next {
+		if equalDeref(r.Arc, v) {
+			return true
+		}
+	}
+	return false
+}
+
+// pathArc returns the existing arc that the reference head, which refers to
+// the environment up levels above env, and the selection of labels from it
+// refer to, without evaluating anything. It returns nil if there is no such
+// arc or the reference is not modeled.
+func (n *nodeContext) pathArc(env *Environment, head Node, labels []Feature, up int32, lets int) *Vertex {
+	var v *Vertex
+	switch x := head.(type) {
+	case *FieldReference:
+		if v = env.up(n.ctx, up).DerefVertex(n.ctx); v != nil {
+			v = v.Lookup(x.Label)
+		}
+	case *ValueReference:
+		// Up 0 is the vertex being evaluated, and up 1 the struct it is in,
+		// as for self.
+		if up == 0 {
+			v = n.node
+		} else {
+			v = env.up(n.ctx, up-1).DerefVertex(n.ctx)
+		}
+	case *LetReference:
+		// A selection from a let selects from the arc its expression refers
+		// to, if it is a reference or a selection from one.
+		h, ls := splitPath(x.X)
+		u, ok := refUpCount(h)
+		if !ok || lets == 0 {
+			return nil
+		}
+		v = n.pathArc(env.up(n.ctx, up), h, ls, u, lets-1)
+	}
+	for _, l := range labels {
+		if v == nil {
+			break
+		}
+		v = v.Lookup(l)
+	}
+	return v
+}
+
+// splitPath splits a selection such as a.b.c into the expression it selects
+// from, a, and the labels it selects, b and c; see [selectionHead].
+func splitPath(x Node) (head Node, labels []Feature) {
+	for {
+		s, ok := x.(*SelectorExpr)
+		if !ok {
+			break
+		}
+		labels = append(labels, s.Sel)
+		x = s.X
+	}
+	slices.Reverse(labels)
+	return x, labels
+}
+
+// refUpCount returns the UpCount of the reference x, as [walkEscapes] passes
+// it for a reference in an expression that opens no scope.
+func refUpCount(x Node) (int32, bool) {
+	switch x := x.(type) {
+	case *FieldReference:
+		return x.UpCount, true
+	case *ValueReference:
+		return x.UpCount, true
+	case *LetReference:
+		return x.UpCount, true
+	}
+	return 0, false
 }
 
 // scheduleStruct records all elements of this conjunct in the structure and
