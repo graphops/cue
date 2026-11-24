@@ -160,6 +160,12 @@ func (v *Vertex) unify(c *OpContext, flags Flags) bool {
 		return false
 	}
 
+	// A comprehension pre-evaluating a try clause has yet to yield into v.
+	// See [scheduler.hasPreEvaluatingParentTask].
+	if mode == finalize && v.state != nil && v.state.hasPreEvaluatingParentTask() {
+		mode = attemptOnly
+	}
+
 	if n := v.state; n != nil && n.ctx.opID != c.opID {
 		// TODO: we could clear the closedness information.
 		// v.state = nil
@@ -986,8 +992,12 @@ func (v *Vertex) lookup(c *OpContext, pos token.Pos, f Feature, flags Flags) *Ve
 				// member, so treat it as ArcNotPresent. This ensures lookups
 				// of truly absent fields produce an incomplete error rather
 				// than returning _.
+				//
+				// A comprehension pre-evaluating the try clause body that
+				// does this lookup is not such work: for the body, what it
+				// would yield does not exist yet (see [task.preEvaluates]).
 				if state != nil {
-					if state.hasActiveParentTask() {
+					if state.hasActiveParentTaskFor(c.vertex) {
 						c.lookupPendingParent = true
 						return arcReturn
 					}
@@ -998,11 +1008,17 @@ func (v *Vertex) lookup(c *OpContext, pos token.Pos, f Feature, flags Flags) *Ve
 				// Check the arc's own parent tasks (e.g.,
 				// comprehensions pushed down by pushDownDeps) — they
 				// may still produce this field.
-				if arcState.hasActiveParentTask() {
+				if arcState.hasActiveParentTaskFor(c.vertex) {
 					c.lookupPendingParent = true
 					return arcReturn
 				}
-				arc.ArcType = ArcNotPresent
+				// The field is absent for the body, but the comprehension
+				// may still declare it once it has decided: the arc stays
+				// pending, and is reported as such below.
+				if (state == nil || !state.hasActiveParentTask()) &&
+					!arcState.hasActiveParentTask() {
+					arc.ArcType = ArcNotPresent
+				}
 			}
 
 		case yield:

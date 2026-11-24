@@ -3997,6 +3997,24 @@ func (tb *tryBody) unmetWait() (w tryWait, ok bool) {
 	return w, false
 }
 
+// finalizeTryBody finalizes v, the inline vertex pre-evaluating a try clause
+// of the comprehension run by the current task. Doing so may reach the arcs
+// the comprehension was pushed down to, as in
+//
+//	x: a: 5
+//	try X = x? {x: a: <=2}
+//
+// where v shares x. Until the comprehension yields into these arcs, the
+// pre-evaluation must not commit anything about them that the yield may
+// change, or what it yields is lost. See
+// [scheduler.hasPreEvaluatingParentTask].
+func finalizeTryBody(c *OpContext, v *Vertex) {
+	t := c.current()
+	t.preEvalBody = v
+	defer func() { t.preEvalBody = nil }()
+	v.Finalize(c)
+}
+
 func (x *TryClause) Source() ast.Node {
 	if x.Src == nil {
 		return nil
@@ -4037,7 +4055,7 @@ func (x *TryClause) yield(s *compState) {
 	// that finalizing it leaves tasks blocked on rooted vertices alone (see
 	// [scheduler.inTryBody]).
 	v.getState(c).tryBody = tb
-	v.Finalize(c)
+	finalizeTryBody(c, v)
 
 	// The body may depend on the type of an arc that a running comprehension
 	// may still declare (see [mustAwaitProducer]). A wait that the evaluation
