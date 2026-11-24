@@ -1,0 +1,178 @@
+# Tests a comprehension in a struct that is unified with a disjunction. The
+# comprehension is a parent task of the fields its body declares, and runs in
+# each disjunct after the struct is cloned for it. Those fields must remain
+# pending in the disjunct until it has run, rather than being taken as absent.
+# A comprehension outside the struct is not cloned, and does not add to the
+# disjunct.
+# https://cuelang.org/issue/XXXX
+-- in.cue --
+// The comprehension iterates over the field it is in.
+self: {
+	out: ({...} | int) & {
+		a: 1
+		for _, v in out {b: v}
+	}
+}
+
+// The field refers to a struct with the comprehension, which iterates over
+// that field.
+reference: {
+	x: {
+		a: 1
+		for _, v in out {b: v}
+	}
+	out: x & ({...} | int)
+}
+
+// The guard asks whether the field its body declares is absent, which is a
+// cycle, as it is without the disjunction. Both disjuncts fail, the one with
+// the struct for that cycle.
+guard: {
+	out: ({...} | int) & {
+		a: 1
+		if out.b == _|_ {b: 1}
+	}
+}
+
+// The disjunction is unified in a separate declaration, through a definition,
+// and the comprehension is next to another one.
+definition: {
+	#M: {...}
+	x: {
+		if true {a: 1}
+		for k, v in out {b: v}
+	}
+	out: x
+	out: #M | int
+}
+
+// Another field of the struct refers to the field that the comprehension,
+// which iterates over the struct, declares.
+sibling: {
+	out: ({...} | int) & {a: 1, c: out.b, for _, v in out {b: 1}}
+}
+
+// A field outside the struct refers to the field that the comprehension, whose
+// guard reads the labels of the struct, declares.
+label: {
+	out: ({...} | int) & {a: 1, for k, _ in out if k == "a" {b: 1}}
+	y: out.b
+}
+
+// A comprehension outside the field adds to the field, but is not cloned for
+// its disjuncts and does not add to them. Its guard needs the disjunction to
+// be resolved, so the disjunction remains unresolved.
+outside: {
+	out: {a: 1} | {a: 2}
+	if out.a == 1 {out: b: 2}
+}
+
+// A reference to a field that a comprehension adds to later, from a field
+// unified with a disjunction, is a different bug, which is not fixed here and
+// is reported separately.
+args: {
+	x: {
+		args: a: 1
+		if out.a == 1 {args: b: 2}
+	}
+	out: x.args & ({...} | int)
+}
+-- out/compile --
+--- in.cue
+{
+  self: {
+    out: (({
+      ...
+    }|int) & {
+      a: 1
+      for _, v in 〈1;out〉 {
+        b: 〈1;v〉
+      }
+    })
+  }
+  reference: {
+    x: {
+      a: 1
+      for _, v in 〈1;out〉 {
+        b: 〈1;v〉
+      }
+    }
+    out: (〈0;x〉 & ({
+      ...
+    }|int))
+  }
+  guard: {
+    out: (({
+      ...
+    }|int) & {
+      a: 1
+      if (〈1;out〉.b == _|_(explicit error (_|_ literal) in source)) {
+        b: 1
+      }
+    })
+  }
+  definition: {
+    #M: {
+      ...
+    }
+    x: {
+      if true {
+        a: 1
+      }
+      for k, v in 〈1;out〉 {
+        b: 〈1;v〉
+      }
+    }
+    out: 〈0;x〉
+    out: (〈0;#M〉|int)
+  }
+  sibling: {
+    out: (({
+      ...
+    }|int) & {
+      a: 1
+      c: 〈1;out〉.b
+      for _, v in 〈1;out〉 {
+        b: 1
+      }
+    })
+  }
+  label: {
+    out: (({
+      ...
+    }|int) & {
+      a: 1
+      for k, _ in 〈1;out〉 if (〈0;k〉 == "a") {
+        b: 1
+      }
+    })
+    y: 〈0;out〉.b
+  }
+  outside: {
+    out: ({
+      a: 1
+    }|{
+      a: 2
+    })
+    if (〈0;out〉.a == 1) {
+      out: {
+        b: 2
+      }
+    }
+  }
+  args: {
+    x: {
+      args: {
+        a: 1
+      }
+      if (〈1;out〉.a == 1) {
+        args: {
+          b: 2
+        }
+      }
+    }
+    out: (〈0;x〉.args & ({
+      ...
+    }|int))
+  }
+}
