@@ -699,6 +699,60 @@ disjunctEnv: {
 	}
 }
 
+// The fields instantiated from a pattern constraint share its environment
+// but for their label, which label references read, so nothing cached per
+// environment may carry over from one such field to another.
+patternEnv: {
+	F: func(n: string) -> string: n
+
+	// Each field passes its own label.
+	args: {
+		x: [string]~(K, _): F(K)
+		x: {a: _, b: _}
+		out: x @test(eq, {a: "a", b: "a"}, incorrect) @test(eq:todo, {a: "a", b: "b"})
+	}
+
+	// The same holds for a call below the field, within a comprehension
+	// or in a struct.
+	nested: {
+		x: [string]~(K, _): [for _ in [0] {F(K)}][0]
+		x: {a: _, b: _}
+		y: [string]~(K, _): {r: F(K)}
+		y: {a: _, b: _}
+		out: [x, y.b.r] @test(eq, [{a: "a", b: "b"}, "b"])
+	}
+
+	// Each field calls its own closure.
+	closures: {
+		p: [string]~(K, _): func() -> string: K
+		p: {a: _, b: _}
+		q: [string]~(K, _): p[K]()
+		q: {a: _, b: _}
+		out: [p.b(), q] @test(eq, ["b", {a: "a", b: "a"}], incorrect) @test(eq:todo, ["b", {a: "a", b: "b"}])
+	}
+
+	// Following a chain of closures through one call site is not
+	// recursion.
+	chain: {
+		next: {a: "b", b: "c", c: ""}
+		p: [string]~(K, _): func() -> string: [if next[K] != "" {p[next[K]]()}, K][0]
+		p: {a: _, b: _, c: _}
+		out: p.a() @test(err, code=structural_cycle, incorrect) @test(eq:todo, "c")
+	}
+
+	// The defaults of each field are checked, not only those of the first,
+	// and a call omitting the parameter receives the field's own default.
+	defaults: {
+		bad: [string]~(K, _): func(n: "a" = K) -> string: n
+		bad: {a: _, b: _}
+		badB: bad.b @test(err:todo, code=eval, contains="invalid default for parameter n")
+
+		ok: [string]~(K, _): func(n: string = K) -> string: n
+		ok: {a: _, b: _}
+		okOut: [ok.a(), ok.b()] @test(eq, ["a", "b"])
+	}
+}
+
 // Declared compatibility aligns parameters as calls bind them: a type's
 // constraint on a labeled or omittable parameter must be covered by the
 // implementation parameter it binds to, while a default is no coverage
@@ -856,25 +910,27 @@ invalid default for parameter a: invalid value 9 (out of bound <5):
     ./in.cue:692:32
     ./in.cue:692:27
     ./in.cue:693:25
+[structural_cycle] patternEnv.chain.out: structural cycle:
+    ./in.cue:737:60
 [eval] admission.bad: parameter b of function accepts string, but its signature requires int:
-    ./in.cue:710:12
-    ./in.cue:706:7
+    ./in.cue:764:12
+    ./in.cue:760:7
 [eval] admission.gBad: parameter n of function accepts string, but its signature requires int:
-    ./in.cue:717:13
-    ./in.cue:714:8
+    ./in.cue:771:13
+    ./in.cue:768:8
 -- out/eval/stats --
-Leaks:  129
-Freed:  1499
-Reused: 1462
-Allocs: 166
+Leaks:  134
+Freed:  1587
+Reused: 1553
+Allocs: 168
 Retain: 0
 
-Unifications: 1304
-Conjuncts:    3746
+Unifications: 1391
+Conjuncts:    3963
 Disjuncts:    232
 Notifications: 8
 
-NumCloseIDs: 643
+NumCloseIDs: 673
 
-ConjunctInfos:       1479
+ConjunctInfos:       1581
 MaxConjunctInfos:    8
