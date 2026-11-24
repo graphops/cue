@@ -295,6 +295,14 @@ func (v *Vertex) insertConjunct(ctx *OpContext, c Conjunct, id CloseInfo, mode A
 	}
 
 	if v.isInProgress() {
+		// A node shares a vertex only while every conjunct it has is one
+		// it shares. A conjunct added once sharing started, such as by a
+		// comprehension, is scheduled as a task, which unshares the node
+		// only when it runs. Until then, the node would still lead
+		// references to the shared vertex, which lacks the conjunct.
+		if added && n.isShared {
+			n.unshare()
+		}
 		n.scheduleConjunct(c, id)
 	}
 

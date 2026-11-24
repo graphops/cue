@@ -1,0 +1,80 @@
+# Tests a field that structure shares a vertex when a comprehension adds a
+# conjunct to it. The field must no longer lead references to the shared
+# vertex, which lacks that conjunct.
+# https://cuelang.org/issue/XXXX
+# https://cuelang.org/issue/4524
+-- in.cue --
+// The guard evaluates c1, which then shares B, and the comprehension adds C
+// afterwards. m1 unifies c1, so it must have w.
+reference: {
+	B: {x: 2}
+	C: {x: 2, w: 1}
+	m1: c1 & {}
+	c1: B
+	if c1.x == 2 {c1: C}
+	@test(eq, {B: {x: 2}, C: {x: 2, w: 1}, m1: {x: 2, w: 1}, c1: {x: 2, w: 1}})
+}
+
+// The same, with m1 a reference to c1 alone.
+share: {
+	B: {x: 2}
+	C: {x: 2, w: 1}
+	m1: c1
+	c1: B
+	if c1.x == 2 {c1: C}
+	@test(eq, {B: {x: 2}, C: {x: 2, w: 1}, m1: {x: 2, w: 1}, c1: {x: 2, w: 1}})
+}
+
+// Selecting a field that only the added conjunct has.
+selection: {
+	B: {x: 2}
+	C: {x: 2, w: 1}
+	m1: c1.w
+	c1: B
+	if c1.x == 2 {c1: C}
+	@test(eq, {B: {x: 2}, C: {x: 2, w: 1}, m1: 1, c1: {x: 2, w: 1}})
+}
+
+// Iterating over the fields of c1.
+iteration: {
+	B: {x: 2}
+	C: {x: 2, w: 1}
+	m1: [for k, _ in c1 {k}]
+	c1: B
+	if c1.x == 2 {c1: C}
+	@test(eq, {B: {x: 2}, C: {x: 2, w: 1}, m1: ["x", "w"], c1: {x: 2, w: 1}})
+}
+
+// The comprehension adds the vertex c1 already shares.
+sameVertex: {
+	B: {x: 2}
+	m1: c1 & {y: 3}
+	c1: B
+	if c1.x == 2 {c1: B}
+	@test(eq, {B: {x: 2}, m1: {x: 2, y: 3}, c1: {x: 2}})
+}
+
+// Issue 4524. c1 shares #B opened, and the comprehension adds #B, which
+// closes c1, so m1 must reject y.
+issue4524: {
+	#B: {x: 2}
+	m1: c1 & {y: 3}
+	c1: #B...
+	if c1.x == 2 {c1: #B}
+	@test(err, code=eval, at=m1.y, contains="field not allowed")
+}
+-- out/errors.txt --
+[eval] issue4524.m1.y: field not allowed:
+    ./in.cue:55:12
+-- out/eval/stats --
+Leaks:  0
+Freed:  61
+Reused: 46
+Allocs: 15
+Retain: 0
+
+Unifications: 61
+Conjuncts:    107
+Disjuncts:    0
+
+NumCloseIDs: 19

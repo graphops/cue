@@ -1,0 +1,147 @@
+# Tests a field that structure shares a vertex when a comprehension adds a
+# conjunct to it. The field must no longer lead references to the shared
+# vertex, which lacks that conjunct.
+# https://cuelang.org/issue/XXXX
+# https://cuelang.org/issue/4524
+-- in.cue --
+// The guard evaluates c1, which then shares B, and the comprehension adds C
+// afterwards. m1 unifies c1, so it must have w.
+reference: {
+	B: {x: 2}
+	C: {x: 2, w: 1}
+	m1: c1 & {}
+	c1: B
+	if c1.x == 2 {c1: C}
+}
+
+// The same, with m1 a reference to c1 alone.
+share: {
+	B: {x: 2}
+	C: {x: 2, w: 1}
+	m1: c1
+	c1: B
+	if c1.x == 2 {c1: C}
+}
+
+// Selecting a field that only the added conjunct has.
+selection: {
+	B: {x: 2}
+	C: {x: 2, w: 1}
+	m1: c1.w
+	c1: B
+	if c1.x == 2 {c1: C}
+}
+
+// Iterating over the fields of c1.
+iteration: {
+	B: {x: 2}
+	C: {x: 2, w: 1}
+	m1: [for k, _ in c1 {k}]
+	c1: B
+	if c1.x == 2 {c1: C}
+}
+
+// The comprehension adds the vertex c1 already shares.
+sameVertex: {
+	B: {x: 2}
+	m1: c1 & {y: 3}
+	c1: B
+	if c1.x == 2 {c1: B}
+}
+
+// Issue 4524. c1 shares #B opened, and the comprehension adds #B, which
+// closes c1, so m1 must reject y.
+issue4524: {
+	#B: {x: 2}
+	m1: c1 & {y: 3}
+	c1: #B...
+	if c1.x == 2 {c1: #B}
+}
+-- out/compile --
+--- in.cue
+{
+  reference: {
+    B: {
+      x: 2
+    }
+    C: {
+      x: 2
+      w: 1
+    }
+    m1: (〈0;c1〉 & {})
+    c1: 〈0;B〉
+    if (〈0;c1〉.x == 2) {
+      c1: 〈1;C〉
+    }
+  }
+  share: {
+    B: {
+      x: 2
+    }
+    C: {
+      x: 2
+      w: 1
+    }
+    m1: 〈0;c1〉
+    c1: 〈0;B〉
+    if (〈0;c1〉.x == 2) {
+      c1: 〈1;C〉
+    }
+  }
+  selection: {
+    B: {
+      x: 2
+    }
+    C: {
+      x: 2
+      w: 1
+    }
+    m1: 〈0;c1〉.w
+    c1: 〈0;B〉
+    if (〈0;c1〉.x == 2) {
+      c1: 〈1;C〉
+    }
+  }
+  iteration: {
+    B: {
+      x: 2
+    }
+    C: {
+      x: 2
+      w: 1
+    }
+    m1: [
+      for k, _ in 〈1;c1〉 {
+        〈1;k〉
+      },
+    ]
+    c1: 〈0;B〉
+    if (〈0;c1〉.x == 2) {
+      c1: 〈1;C〉
+    }
+  }
+  sameVertex: {
+    B: {
+      x: 2
+    }
+    m1: (〈0;c1〉 & {
+      y: 3
+    })
+    c1: 〈0;B〉
+    if (〈0;c1〉.x == 2) {
+      c1: 〈1;B〉
+    }
+  }
+  issue4524: {
+    #B: {
+      x: 2
+    }
+    m1: (〈0;c1〉 & {
+      y: 3
+    })
+    c1: 〈0;#B〉...
+    if (〈0;c1〉.x == 2) {
+      c1: 〈1;#B〉
+    }
+  }
+}
