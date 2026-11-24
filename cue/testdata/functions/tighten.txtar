@@ -391,9 +391,9 @@ compose: {
 	pf:      mkpf() & mkpf()
 	pfX:     pf() @test(eq, {a: 1})
 
-	// A capture is found through any expression but a try clause: closures
-	// over equal values are the same function, and closures that differ in a
-	// single captured value are not.
+	// A capture is found through any expression: closures over equal values
+	// are the same function, and closures that differ in a single captured
+	// value are not.
 	mkLet:   func(n: int) -> _: {let m = n, f: func() -> int: m}.f
 	letOK:   mkLet(1) & mkLet(1)
 	letX:    letOK() @test(eq, 1)
@@ -934,8 +934,8 @@ admission: {
 	corrIfX: corrIf({a: 0}) @test(eq, 0)
 	corrBad: (func(x: {a: int, b: 0 & a, d: string}) -> int) & (func(x: {a: 0, b: 0, d: int}) -> int: 0) @test(err, code=eval, contains="parameter x of function accepts")
 	// The field a that _ci narrows is compared unless another part of the
-	// signature's struct refers to it, through any expression but a try
-	// assignment, or through the literals the struct is built from.
+	// signature's struct refers to it, through any expression, or through
+	// the literals the struct is built from.
 	_ci:       func(x: {a: 0, ...}) -> int: 0
 	corrNone:  ((func(x: {a: int, b: 0}) -> int) & _ci)({a: 0}) @test(err, code=eval, contains="parameter x of function accepts")
 	corrIdx:   ((func(x: {a: int, b: [0][a]}) -> int) & _ci)({a: 0}) @test(eq, 0)
@@ -1264,10 +1264,15 @@ compose: {
 	fb:    mkFb(1) & mkFb(1)
 	fbX:   fb([]) @test(eq, {a: 1})
 	fbBad: mkFb(1) & mkFb(2) @test(err, code=eval, contains="the same function literal is closed over different values")
-	// A try clause is not modeled, so it keeps even equal closures apart.
-	mkTry: func(n: int) -> _: func() -> _: {try {a: n}}
-	tryEq: mkTry(1) & mkTry(1) @test(err, code=eval, contains="the same function literal is closed over different values", incorrect)
-	tryX:  tryEq() @test(err, code=eval, incorrect) @test(eq:todo, {a: 1})
+	// Captures are found through a try clause too, in either form.
+	mkTry:    func(n: int) -> _: func() -> _: {try {a: n}}
+	tryEq:    mkTry(1) & mkTry(1)
+	tryX:     tryEq() @test(eq, {a: 1})
+	tryBad:   mkTry(1) & mkTry(2) @test(err, code=eval, contains="the same function literal is closed over different values")
+	mkTryAs:  func(n: int) -> _: func() -> _: {try m = 1 {a: n + m}}
+	tryAs:    mkTryAs(1) & mkTryAs(1)
+	tryAsX:   tryAs() @test(eq, {a: 2})
+	tryAsBad: mkTryAs(1) & mkTryAs(2) @test(err, code=eval, contains="the same function literal is closed over different values")
 }
 
 admission: {
@@ -1279,6 +1284,8 @@ admission: {
 	corrTry:    ((func(x: #CorrTry) -> int) & admission._ci)({a: 0}) @test(eq, 0)
 	#CorrTryAs: {a: int, try y = a? {b: 0 & y}}
 	corrTryAs:  ((func(x: #CorrTryAs) -> int) & admission._ci)({a: 0}) @test(err, code=eval, contains="but its signature requires #CorrTryAs", incorrect) @test(eq:todo, 0)
+	#TryNone:   {a: int, try y = 0 {b: 0 & y}}
+	tryNone:    ((func(x: #TryNone) -> int) & admission._ci)({a: 0}) @test(err, code=eval, contains="parameter x of function accepts")
 }
 -- out/errors.txt --
 [eval] tighten.y: missing argument b:
@@ -1450,10 +1457,10 @@ meet.wr: function returns _, but its signature requires number:
     ./in.cue:493:12
 [eval] compose.fbBad: conflicting function implementations: the same function literal is closed over different values:
     ./try.cue:7:28
-[eval] compose.tryEq: conflicting function implementations: the same function literal is closed over different values:
-    ./try.cue:12:28
-[eval] compose.tryEq: conflicting function implementations: the same function literal is closed over different values:
-    ./try.cue:12:28
+[eval] compose.tryBad: conflicting function implementations: the same function literal is closed over different values:
+    ./try.cue:12:31
+[eval] compose.tryAsBad: conflicting function implementations: the same function literal is closed over different values:
+    ./try.cue:16:31
 [eval] errorPaths.arg: conflicting values int and 1.5 (mismatched types int and float):
     ./in.cue:499:26
     ./in.cue:499:31
@@ -1649,7 +1656,10 @@ admission.rxC: invalid value "c" (out of bound =~"b"):
     ./in.cue:986:11
 [eval] parameter x of function accepts {a:0,...}, but its signature requires #CorrTryAs:
     ./in.cue:926:13
-    ./try.cue:25:16
+    ./try.cue:30:16
+[eval] parameter x of function accepts {a:0,...}, but its signature requires #TryNone:
+    ./in.cue:926:13
+    ./try.cue:32:16
 [eval] conflicting defaults for parameter a: conflicting values 3 and 2:
     ./in.cue:1013:19
     ./in.cue:1029:10
@@ -1760,14 +1770,14 @@ admission.rxC: invalid value "c" (out of bound =~"b"):
     ./in.cue:1102:9
     ./in.cue:1229:21
 -- out/eval/stats --
-Leaks:  163
-Freed:  3016
-Reused: 2777
-Allocs: 402
+Leaks:  171
+Freed:  3070
+Reused: 2831
+Allocs: 410
 Retain: 0
 
-Unifications: 2990
-Conjuncts:    8248
+Unifications: 3051
+Conjuncts:    8390
 Disjuncts:    135
 
-NumCloseIDs: 1270
+NumCloseIDs: 1292
