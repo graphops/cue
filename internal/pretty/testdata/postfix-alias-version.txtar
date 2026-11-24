@@ -1,0 +1,22 @@
+# The simple postfix alias keeps its bare form `label~X` in a file written
+# for a language version below v0.17.0, whose parser does not accept
+# `label~(X)`. The dual form `label~(K,V)` is accepted there too.
+#version: v0.16.0
+-- in --
+@experiment(aliasv2)
+#Simple: {
+	x~X: int
+}
+#Dual: {
+	x~(K, V): int
+}
+-- out/relpos --
+@experiment(aliasv2)
+#Simple: {
+	x~X: int
+}
+#Dual: {
+	x~(K,V): int
+}
+-- out/norelpos --
+@experiment(aliasv2), #Simple: {x~X: int}, #Dual: {x~(K,V): int}

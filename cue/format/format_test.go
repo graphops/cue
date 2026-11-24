@@ -121,6 +121,63 @@ func TestPostfixSpread(t *testing.T) {
 	}
 }
 
+// TestPostfixAliasVersion checks that a simple postfix alias is written in
+// its canonical form a~(X) only for a language version which accepts it,
+// from v0.17.0 on. A file written for an older version keeps a~X, as its
+// own parser rejects a~(X); the dual form a~(K,V) is accepted by both.
+// https://cuelang.org/issue/XXXX
+func TestPostfixAliasVersion(t *testing.T) {
+	const head = "@experiment(aliasv2)\n\n"
+	sources := []struct{ version, src, want string }{
+		{"v0.16.0", "a~X: int\n", "a~X: int\n"},
+		{"v0.16.0", "a~(X): int\n", "a~X: int\n"},
+		{"v0.16.0", "a~X?: int\n", "a~X?: int\n"},
+		{"v0.16.0", "[string]~(K,V): int\n", "[string]~(K,V): int\n"},
+		{"v0.17.0", "a~X: int\n", "a~(X): int\n"},
+		{"v0.17.0", "a~(X)?: int\n", "a~(X)?: int\n"},
+		{"", "a~X: int\n", "a~(X): int\n"},
+	}
+	for _, tc := range sources {
+		t.Run(tc.version+"/"+strings.TrimSuffix(tc.src, "\n"), func(t *testing.T) {
+			got, err := format.Source([]byte(head+tc.src), format.Version(tc.version))
+			qt.Assert(t, qt.IsNil(err))
+			qt.Check(t, qt.Equals(string(got), head+tc.want))
+
+			// A declaration formatted on its own takes the version from its
+			// position.
+			f, err := parser.ParseFile("in.cue", head+tc.src, parser.Version(tc.version))
+			qt.Assert(t, qt.IsNil(err))
+			got, err = format.Node(f.Decls[len(f.Decls)-1])
+			qt.Assert(t, qt.IsNil(err))
+			qt.Check(t, qt.Equals(string(got)+"\n", tc.want))
+		})
+	}
+
+	// A file assembled by a generator, whose nodes have no positions, takes
+	// the version it records, and the current one when it records none.
+	for _, tc := range []struct{ version, want string }{
+		{"v0.16.0", "a~X: int\n"},
+		{"v0.17.0", "a~(X): int\n"},
+		{"", "a~(X): int\n"},
+	} {
+		t.Run("built/"+tc.version, func(t *testing.T) {
+			f := &ast.File{Decls: []ast.Decl{&ast.Field{
+				Label: ast.NewIdent("a"),
+				Alias: &ast.PostfixAlias{Field: ast.NewIdent("X")},
+				Value: ast.NewIdent("int"),
+			}}}
+			if tc.version != "" {
+				exp, err := cueexperiment.NewFile(tc.version, "aliasv2")
+				qt.Assert(t, qt.IsNil(err))
+				f.SetExperiments(exp)
+			}
+			got, err := format.Node(f)
+			qt.Assert(t, qt.IsNil(err))
+			qt.Check(t, qt.Equals(string(got), tc.want))
+		})
+	}
+}
+
 // TestFuncParamComments checks that both formatters keep a comment placed
 // after a parameter's "=" or ":", or on its own line before the default or
 // the constraint, and that the result parses back and is stable. The

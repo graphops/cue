@@ -24,6 +24,7 @@ import (
 	"cuelang.org/go/cue/literal"
 	"cuelang.org/go/cue/token"
 	"cuelang.org/go/internal"
+	"cuelang.org/go/internal/mod/semver"
 )
 
 // File overview
@@ -179,6 +180,10 @@ type converter struct {
 	// [Config.Node] returns them to the caller. It is nil when no error
 	// occurred.
 	errs errors.Error
+
+	// srcFile is the file being converted, if the node converted is one.
+	// [converter.parenAlias] reads the language version it is written for.
+	srcFile *ast.File
 }
 
 // errf records a formatting error at pos.
@@ -191,6 +196,7 @@ func (c *converter) node(n ast.Node) doc {
 	c.analyse(n)
 	switch n := n.(type) {
 	case *ast.File:
+		c.srcFile = n
 		return cat(c.maybeGroup(n, c.file(n)), lineBreakHard)
 	case ast.Expr:
 		return c.expr(n)
@@ -4128,13 +4134,37 @@ func (c *converter) fieldValExpr(v ast.Expr) doc {
 
 // postfixAlias converts a PostfixAlias.
 func (c *converter) postfixAlias(a *ast.PostfixAlias) doc {
-	// The single-alias form is always parenthesised (`~(X)`, never
-	// `~X`), consistent with the parser which accepts both but
-	// normalises to the parens form.
+	// The single-alias form is parenthesised (`~(X)`, not `~X`),
+	// consistent with the dual form, where the language version accepts
+	// the parentheses.
 	if a.Label == nil {
+		if !c.parenAlias(a) {
+			return cats(stringLit("~"), stringLit(a.Field.Name))
+		}
 		return cats(stringLit("~("), stringLit(a.Field.Name), rParenLit)
 	}
 	return cats(stringLit("~("), stringLit(a.Label.Name), commaLit, stringLit(a.Field.Name), rParenLit)
+}
+
+// parenAlias reports whether the single-alias form of a may be written
+// with parentheses, which the parser accepts from language version
+// v0.17.0 on. Below that, `~(X)` does not parse, so `~X` is kept.
+//
+// The version is that of the file being converted when it records one,
+// as a file assembled rather than parsed may hold positions of whatever
+// its declarations were read from, and that of a's own position
+// otherwise. An alias recording neither is taken to be written for the
+// current version.
+func (c *converter) parenAlias(a *ast.PostfixAlias) bool {
+	v := ""
+	if c.srcFile != nil {
+		exp := c.srcFile.Experiment()
+		v = exp.LanguageVersion()
+	}
+	if v == "" {
+		v = a.Tilde.LanguageVersion()
+	}
+	return v == "" || semver.Compare(v, "v0.17.0") >= 0
 }
 
 // importDecl converts an ImportDecl. Comments on each ImportSpec are
