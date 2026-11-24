@@ -37,7 +37,18 @@ func BinOpBool(c *OpContext, node Node, op Op, left, right Value) bool {
 	// This swap seems fine given that OpContext is not meant for concurrent use.
 	src := c.src
 	c.src = nil
-	defer func() { c.src = src }()
+	// The errors the context holds belong to the evaluation that recorded
+	// them, such as the incomplete error of a reference to a required field,
+	// which the task that resolved it takes when it ends. They are not the
+	// result of this comparison, which OpContext.NewBool would return in
+	// place of a boolean. Compare without them and hand them back, along
+	// with any the comparison records itself.
+	saved := c.errs
+	c.errs = nil
+	defer func() {
+		c.src = src
+		c.errs = CombineErrors(src, saved, c.errs)
+	}()
 
 	v := BinOp(c, node, op, left, right)
 	b, ok := v.(*Bool)

@@ -142,6 +142,81 @@ doNotEscalateError: {
 		pass:    (a & {in: required}).out @test(err, code=incomplete, contains="undefined field: %s", args=[self], pos=[-4:11, -5:3, 0:18])
 	}
 }
+-- scalar.cue --
+// A reference to a required field is incomplete. Unifying it with a scalar
+// that equals the value of the field leaves it incomplete: the incomplete
+// error of the reference is not the result of comparing the two scalars.
+// https://cuelang.org/issue/XXXX
+scalar: {
+	// Each kind of scalar, and either order of the conjuncts.
+	string: {
+		a!: "x"
+		b:  a
+		b:  "x" @test(err, code=incomplete, contains="required field missing")
+	}
+	number: {
+		a!: 5
+		b:  a
+		b:  5 @test(err, code=incomplete)
+	}
+	nullValue: {
+		a!: null
+		b:  a
+		b:  null @test(err, code=incomplete)
+	}
+	valueFirst: {
+		a!: "x"
+		b:  "x"
+		b:  a @test(err, code=incomplete)
+	}
+	// The required field is reached through a selector and a definition.
+	selector: {
+		s: a!: "x"
+		b: s.a
+		b: "x" @test(err, code=incomplete)
+	}
+	definition: {
+		#D: a!: "x"
+		d: #D
+		b: d.a
+		b: "x" @test(err, code=incomplete)
+	}
+	// What reads the field sees an incomplete value, not a conflict.
+	consumers: {
+		a!: "x"
+		b:  a
+		b:  "x"
+		guard: [if b == "x" {1}] @test(err, code=incomplete)
+		default: b | *"d" @test(eq, "d")
+	}
+	// A disjunct referring to the field next to an equal scalar is
+	// incomplete, so is the disjunction once the other disjunct fails.
+	disjunct: {
+		a!: "x"
+		c: {b: a} | {b: "o"}
+		c: b: "x"
+		@test(err, code=incomplete, at=c)
+	}
+
+	// Scalars that differ still conflict, as do numbers of different kinds,
+	// which the comparison itself reports.
+	differ: {
+		a!: "x"
+		b:  a
+		b:  "y" @test(err, code=eval, contains="conflicting values")
+	}
+	kinds: {
+		a!: 1.0
+		b:  a
+		b:  1 @test(err, code=eval, contains="conflicting values")
+	}
+	// A disjunct that fails otherwise is still eliminated.
+	eliminated: {
+		a!: "x"
+		c: {b: a} | {b: "x"}
+		c: b: "x" @test(eq, "x")
+	}
+}
 -- out/errors.txt --
 [eval] embedScalar.t1: cannot combine regular field "a" with 1:
     ./in.cue:35:6
@@ -174,18 +249,48 @@ doNotEscalateError: {
     ./issue3918.cue:49:11
     ./issue3918.cue:48:3
     ./issue3918.cue:53:18
+[incomplete] scalar.string.b: required field missing: a:
+    ./scalar.cue:9:7
+[incomplete] scalar.number.b: required field missing: a:
+    ./scalar.cue:14:7
+[incomplete] scalar.nullValue.b: required field missing: a:
+    ./scalar.cue:19:7
+[incomplete] scalar.valueFirst.b: required field missing: a:
+    ./scalar.cue:25:7
+[incomplete] scalar.selector.b: required field missing: a:
+    ./scalar.cue:30:8
+[incomplete] scalar.definition.b: required field missing: a:
+    ./scalar.cue:36:8
+[incomplete] scalar.consumers.b: required field missing: a:
+    ./scalar.cue:42:7
+[incomplete] scalar.consumers.b: required field missing: a:
+    ./scalar.cue:42:7
+[incomplete] scalar.disjunct.c: 2 errors in empty disjunction:
+scalar.disjunct.c.b: conflicting values "o" and "x":
+    ./scalar.cue:51:19
+    ./scalar.cue:52:9
+scalar.disjunct.c.b: required field missing: a:
+    ./scalar.cue:51:10
+[eval] scalar.differ.b: conflicting values "x" and "y":
+    ./scalar.cue:59:7
+    ./scalar.cue:60:7
+    ./scalar.cue:61:7
+[eval] scalar.kinds.b: conflicting values 1 and 1.0 (mismatched types int and float):
+    ./scalar.cue:64:7
+    ./scalar.cue:65:7
+    ./scalar.cue:66:7
 -- out/eval/stats --
-Leaks:  0
-Freed:  70
-Reused: 53
-Allocs: 17
+Leaks:  3
+Freed:  125
+Reused: 101
+Allocs: 27
 Retain: 0
 
-Unifications: 68
-Conjuncts:    96
-Disjuncts:    0
+Unifications: 116
+Conjuncts:    181
+Disjuncts:    6
 
-NumCloseIDs: 12
+NumCloseIDs: 25
 -- out/todo.txt --
 v3 reports incomplete errors for reference.toWithinDefinition, toFieldFromDefinition, toNonDefinition, toConcrete sub-fields (required field missing), whereas v2 resolved those fields to concrete values. v3 also shows structure sharing (~) for reference.toFieldFromDefinition.p1.b and p2.b.
 issue3918.noFunction.x: v3 evaluates x as a structure-shared reference to _foo.in (formatted as a bare identifier "in" that cannot be compiled standalone); the expected struct only asserts on #disjuncts and _foo.

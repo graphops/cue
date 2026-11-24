@@ -113,6 +113,80 @@ doNotEscalateError: {
 		pass:    (a & {in: required}).out
 	}
 }
+-- scalar.cue --
+// A reference to a required field is incomplete. Unifying it with a scalar
+// that equals the value of the field leaves it incomplete: the incomplete
+// error of the reference is not the result of comparing the two scalars.
+// https://cuelang.org/issue/XXXX
+scalar: {
+	// Each kind of scalar, and either order of the conjuncts.
+	string: {
+		a!: "x"
+		b:  a
+		b:  "x"
+	}
+	number: {
+		a!: 5
+		b:  a
+		b:  5
+	}
+	nullValue: {
+		a!: null
+		b:  a
+		b:  null
+	}
+	valueFirst: {
+		a!: "x"
+		b:  "x"
+		b:  a
+	}
+	// The required field is reached through a selector and a definition.
+	selector: {
+		s: a!: "x"
+		b: s.a
+		b: "x"
+	}
+	definition: {
+		#D: a!: "x"
+		d: #D
+		b: d.a
+		b: "x"
+	}
+	// What reads the field sees an incomplete value, not a conflict.
+	consumers: {
+		a!: "x"
+		b:  a
+		b:  "x"
+		guard: [if b == "x" {1}]
+		default: b | *"d"
+	}
+	// A disjunct referring to the field next to an equal scalar is
+	// incomplete, so is the disjunction once the other disjunct fails.
+	disjunct: {
+		a!: "x"
+		c: {b: a} | {b: "o"}
+		c: b: "x"
+	}
+
+	// Scalars that differ still conflict, as do numbers of different kinds,
+	// which the comparison itself reports.
+	differ: {
+		a!: "x"
+		b:  a
+		b:  "y"
+	}
+	kinds: {
+		a!: 1.0
+		b:  a
+		b:  1
+	}
+	// A disjunct that fails otherwise is still eliminated.
+	eliminated: {
+		a!: "x"
+		c: {b: a} | {b: "x"}
+		c: b: "x"
+	}
+}
 -- out/compile --
 --- in.cue
 {
@@ -236,6 +310,89 @@ doNotEscalateError: {
       pass: (〈1;a〉 & {
         in: 〈1;required〉
       }).out
+    }
+  }
+}
+--- scalar.cue
+{
+  scalar: {
+    string: {
+      a!: "x"
+      b: 〈0;a〉
+      b: "x"
+    }
+    number: {
+      a!: 5
+      b: 〈0;a〉
+      b: 5
+    }
+    nullValue: {
+      a!: null
+      b: 〈0;a〉
+      b: null
+    }
+    valueFirst: {
+      a!: "x"
+      b: "x"
+      b: 〈0;a〉
+    }
+    selector: {
+      s: {
+        a!: "x"
+      }
+      b: 〈0;s〉.a
+      b: "x"
+    }
+    definition: {
+      #D: {
+        a!: "x"
+      }
+      d: 〈0;#D〉
+      b: 〈0;d〉.a
+      b: "x"
+    }
+    consumers: {
+      a!: "x"
+      b: 〈0;a〉
+      b: "x"
+      guard: [
+        if (〈1;b〉 == "x") {
+          1
+        },
+      ]
+      default: (〈0;b〉|*"d")
+    }
+    disjunct: {
+      a!: "x"
+      c: ({
+        b: 〈1;a〉
+      }|{
+        b: "o"
+      })
+      c: {
+        b: "x"
+      }
+    }
+    differ: {
+      a!: "x"
+      b: 〈0;a〉
+      b: "y"
+    }
+    kinds: {
+      a!: 1.0
+      b: 〈0;a〉
+      b: 1
+    }
+    eliminated: {
+      a!: "x"
+      c: ({
+        b: 〈1;a〉
+      }|{
+        b: "x"
+      })
+      c: {
+        b: "x"
+      }
     }
   }
 }
