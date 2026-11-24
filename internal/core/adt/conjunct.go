@@ -389,6 +389,15 @@ func (n *nodeContext) scheduleStruct(env *Environment,
 		ci = n.splitStruct(s, ci)
 	}
 
+	if k := s.numComprehensionEmbeds(); k > 0 {
+		n.compLits = append(n.compLits, compLit{
+			env:     childEnv,
+			s:       s,
+			ci:      ci,
+			pending: k,
+		})
+	}
+
 	// Struct literals with static elements are common;
 	// grow the capacity ahead of time to make space for their arcs.
 	n.node.Arcs = slices.Grow(n.node.Arcs, len(s.Decls))

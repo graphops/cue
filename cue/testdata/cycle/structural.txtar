@@ -75,14 +75,14 @@ b4: {
 // Ensure that the cycle error is not blindly copied to a referring field,
 // as the cycle may not persist.
 b4: cond1: {
-	b: x.y & {_z: false, [1]}
+	b: x.y & {_z: false, [1]} @test(err, code=eval, contains="mismatched types list and struct", pos=[0:5, 0:23, 1:8])
 	x: y: {
 		_z: *true | bool
 		if _z {
 			[y]
 		}
 	}
-	@test(err, code=structural_cycle, path=x.y.0, contains="structural cycle", pos=[])
+	@test(err, at=x.y, code=structural_cycle, path=b4.cond1.x.y.0, contains="structural cycle", pos=[])
 }
 
 // Only x.y reports the cycle; b, which refers to it, does not.
@@ -847,6 +847,10 @@ resolveToAncestor: {
     ./in.cue:70:8
     ./in.cue:70:9
 [structural_cycle] b4.x.y.0: structural cycle
+[eval] b4.cond1.b: conflicting values [1] and {_z:(*true|bool),if _z {[y]}} (mismatched types list and struct):
+    ./in.cue:77:5
+    ./in.cue:77:23
+    ./in.cue:78:8
 [structural_cycle] b4.cond1.x.y.0: structural cycle
 [structural_cycle] b4.cond2.x.y.0: structural cycle
 [structural_cycle] b4.cond2.x.y.0: structural cycle
@@ -987,14 +991,14 @@ b12: evalv3 shows a tail disjunction in the innermost list1 node; evalv2 shows n
 
 n4: field ordering differs between evalv2 and evalv3.
 -- out/eval/stats --
-Leaks:  95
-Freed:  691
-Reused: 621
-Allocs: 165
+Leaks:  94
+Freed:  690
+Reused: 620
+Allocs: 164
 Retain: 0
 
-Unifications: 529
-Conjuncts:    966
-Disjuncts:    149
+Unifications: 528
+Conjuncts:    963
+Disjuncts:    147
 
 NumCloseIDs: 105

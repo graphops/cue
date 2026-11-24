@@ -756,7 +756,7 @@ issue3934: {
 	}
 
 	@test(eq, {
-		out: {foo: *{bar: 3} | {extra?: null | {}, bar?: int} | null}
+		out: {foo: *{bar: 3} | {extra?: null | {}, bar?: int}}
 		#Foo: {foo?: *{bar: 3} | {bar?: int, extra?: null | {}} | null}
 		#Bar: {bar?: int, extra?: null | {}}
 	})
@@ -1036,7 +1036,7 @@ Notifications: 7
 
 NumCloseIDs: 441
 
-ConjunctInfos:       1156
+ConjunctInfos:       1159
 MaxConjunctInfos:    5
 MaxReqSets:          9
 MaxRedirect:         2

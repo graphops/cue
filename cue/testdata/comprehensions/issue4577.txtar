@@ -1,0 +1,134 @@
+# A comprehension embeds what it yields, so one that yields nothing adds
+# nothing to its struct literal: no field and no embedded value.
+# https://cuelang.org/issue/4577
+-- in.cue --
+@experiment(functions,try)
+
+// An embedded value is the value of the literal, as without the comprehension.
+embedded: {
+	scalar:    {int, if false {x: 1}}                        @test(eq, int)
+	validator: {=~"a", if false {x: 1}}                      @test(eq, =~"a")
+	bound:     {<0, if false {x: 1}}                         @test(eq, <0)
+	top:       {_, if false {("b"): 1}}                      @test(kind=_)
+	for:       {int, for k, v in {} {(k): v}}                @test(eq, int)
+	yields:    {int, if true {x: 1}}                         @test(err, code=eval, contains="mismatched types int and struct")
+	match:     {=~"a", if false {x: 1}} & "abc"              @test(eq, "abc")
+	noMatch:   {=~"a", if false {x: 1}} & "xyz"              @test(err, code=eval, contains="out of bound")
+	optional:  {int, if false {x?: 1}}                       @test(eq, int)
+	required:  {int, if false {x!: 1}}                       @test(eq, int)
+	nested:    {int, if true {if false {x: 1}}}              @test(eq, int)
+	body:      {"b", for k in [1] {if false {x: 1}}}         @test(eq, "b")
+	bodyLet:   {"b", for k in [1] {let y = k, if false {y}}} @test(eq, "b")
+}
+
+// A literal that embeds only comprehensions which yield nothing is the empty
+// struct, also next to top.
+top: {
+	static:     _ & {if false {x: 1}}                   @test(eq, {})
+	dynamic:    _ & {if false {("b"): 1}}               @test(eq, {})
+	forEmpty:   _ & {for k, v in {} {(k): v}}           @test(eq, {})
+	optional:   _ & {if false {("b")?: 1}}              @test(eq, {})
+	pattern:    _ & {if false {[string]: int}}          @test(eq, {})
+	definition: _ & {if false {#b: 1}}                  @test(eq, {})
+	hidden:     _ & {if false {_b: 1}}                  @test(eq, {})
+	scalar:     _ & {if false {1}}                      @test(eq, {})
+	two:        _ & {if false {1}, if false {2}}        @test(eq, {})
+	topAfter:   {if false {("b"): 1}} & _               @test(eq, {})
+	validator:  matchN(1, [{}]) & {if false {("b"): 1}} @test(eq, {})
+	notNull:    !=null & {if false {("b"): 1}}          @test(eq, {})
+	elseEmpty:  _ & {if false {1} else {if false {2}}}  @test(eq, {})
+
+	// The comprehensions of the body of a comprehension act as further
+	// clauses, as in {for k in [1] if false {1}}.
+	nested: _ & {if true {if false {("b"): 1}}} @test(eq, {})
+	body:   _ & {for k in [1] {if false {1}}}   @test(eq, {})
+	clause: _ & {for k in [1] if false {1}}     @test(eq, {})
+}
+
+// The same through a definition field and a function parameter, which add a
+// top conjunct to the argument.
+def: {
+	#D: v: _
+	labels: {}
+	empty:  (#D & {v: {for k, x in labels {(k): x}}}).v @test(eq, {})
+	direct: (#D & {v: {for x in [] {(x): 1}}}).v        @test(eq, {})
+}
+call: {
+	_f:    func(v: _) -> _: v
+	empty: _f({for k, x in {} {(k): x}}) @test(eq, {})
+}
+
+// Such a literal conflicts with a value of another kind, and rules out the
+// disjuncts of another kind, as {} does.
+kind: {
+	scalar:      {if false {x: 1}} & string                    @test(err, code=eval, contains="mismatched types string and struct")
+	list:        {if false {[2]}} & [1]                        @test(err, code=eval, contains="mismatched types list and struct")
+	embedded:    {"b", {if false {x: 1}}}                      @test(err, code=eval, contains="mismatched types string and struct")
+	disjunction: {if false {("b"): 1}} & (null | {a?: int})    @test(eq, {a?: int})
+	choice:      {x: {if false {y: 1}} | string} & {x: string} @test(eq, {x: string})
+}
+
+// A comprehension that yields a value still determines the literal.
+yields: {
+	scalar:  _ & {if true {1}}                   @test(eq, 1)
+	second:  _ & {if false {1}, if true {2}}     @test(eq, 2)
+	body:    {for k in [1, 2] {if k == 2 {"b"}}} @test(eq, "b")
+	top:     _ & {if true {_}}                   @test(kind=_)
+	field:   _ & {if true {("b"): 1}}            @test(eq, {b: 1})
+	elseVal: _ & {if false {1} else {2}}         @test(eq, 2)
+}
+
+// The body of a comprehension in a list is an element of its own, so it is
+// the empty struct if its comprehensions yield nothing.
+list: [for x in [1, 2] {if x > 1 {x}}] @test(eq, [{}, 2])
+
+// A comprehension that cannot run yet leaves the node incomplete.
+incomplete: {
+	y:       {z: int}
+	dynamic: _ & {if y.z == 1 {("b"): 1}} @test(err, code=incomplete)
+	plain:   {if y.z == 1 {("b"): 1}}     @test(err, code=incomplete)
+	scalar:  {int, if y.z == 1 {x: 1}}    @test(err, code=incomplete)
+
+	// The guard reads the field set to which the comprehension adds b.
+	length: a: {if len(a) == 0 {("b"): 1}} @test(err, code=incomplete)
+}
+-- out/errors.txt --
+[eval] embedded.yields: conflicting values int and {x:1} (mismatched types int and struct):
+    ./in.cue:10:14
+    ./in.cue:10:27
+[eval] embedded.noMatch: invalid value "xyz" (out of bound =~"a"):
+    ./in.cue:12:14
+    ./in.cue:12:13
+    ./in.cue:12:40
+[eval] kind.scalar: conflicting values string and {if false {x:1}} (mismatched types string and struct):
+    ./in.cue:60:15
+    ./in.cue:60:35
+[eval] kind.list: conflicting values [1] and {if false {[2]}} (mismatched types list and struct):
+    ./in.cue:61:15
+    ./in.cue:61:34
+[eval] kind.embedded: conflicting values "b" and {if false {x:1}} (mismatched types string and struct):
+    ./in.cue:62:16
+    ./in.cue:62:21
+[incomplete] incomplete.dynamic: non-concrete value int in operand to ==:
+    ./in.cue:84:19
+    ./in.cue:83:15
+[incomplete] incomplete.plain: non-concrete value int in operand to ==:
+    ./in.cue:85:15
+    ./in.cue:83:15
+[incomplete] incomplete.scalar: non-concrete value int in operand to ==:
+    ./in.cue:86:20
+    ./in.cue:83:15
+[incomplete] incomplete.length.a: error in call to len: incomplete argument _ (type _):
+    ./in.cue:89:17
+-- out/eval/stats --
+Leaks:  19
+Freed:  107
+Reused: 92
+Allocs: 34
+Retain: 0
+
+Unifications: 115
+Conjuncts:    194
+Disjuncts:    4
+
+NumCloseIDs: 12

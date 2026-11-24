@@ -66,6 +66,21 @@ func (o *StructLit) hasEmbed() bool {
 	return false
 }
 
+// numComprehensionEmbeds reports the number of comprehensions o embeds, or 0
+// if it embeds any other value.
+func (o *StructLit) numComprehensionEmbeds() int {
+	n := 0
+	for _, d := range o.Decls {
+		switch d.(type) {
+		case *Comprehension:
+			n++
+		case Expr:
+			return 0
+		}
+	}
+	return n
+}
+
 func (x *StructLit) Source() ast.Node { return x.Src }
 
 func (x *StructLit) evaluate(c *OpContext, state Flags) Value {
