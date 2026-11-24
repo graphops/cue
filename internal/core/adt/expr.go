@@ -3706,7 +3706,7 @@ func (c *OpContext) forSource(x Expr) *Vertex {
 	// TODO: always get the vertex. This allows a whole bunch of trickery
 	// down the line.
 	c.inDetached++
-	v := c.unifyNode(x, state)
+	v, ref := c.unifyNodeRef(x, state)
 	c.inDetached--
 
 	node, ok := v.(*Vertex)
@@ -3786,13 +3786,24 @@ func (c *OpContext) forSource(x Expr) *Vertex {
 		return emptyNode
 	}
 
+	c.noteArgSelection(ref, node)
 	return node
 }
 
 func (x *ForClause) yield(s *compState) {
 	c := s.ctx
 	env := c.Env(0)
+	savedArgSelection := c.argSelection
+	c.argSelection = nil
 	n := c.forSource(x.Src)
+	// The value of a source within a function argument that shares another
+	// vertex is bound like a vertex of the argument that shares: see
+	// [OpContext.argChain].
+	selection := c.argSelection
+	c.argSelection = savedArgSelection
+	if selection != nil && !selection.within(n) {
+		selection = nil
+	}
 
 	if s := n.getState(c); s != nil {
 		s.freeze(fieldSetKnown, x)
@@ -3855,6 +3866,9 @@ func (x *ForClause) yield(s *compState) {
 				ArcType:   ArcPending,
 			}
 			n.Arcs = append(n.Arcs, b)
+			if selection != nil {
+				c.setArgChain(b, selection.refs)
+			}
 		}
 
 		if x.Key != InvalidLabel {

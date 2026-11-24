@@ -120,12 +120,16 @@ func processResolver(ctx *OpContext, t *task, mode runMode) {
 	// clobber ours.
 	savedPendingParent := ctx.lookupPendingParent
 	ctx.lookupPendingParent = false
+	savedArgSelection := ctx.argSelection
+	ctx.argSelection = nil
 	arc := r.resolve(ctx, Flags{
 		condition: fieldSetKnown,
 		mode:      mode,
 	})
 	pendingParent := ctx.lookupPendingParent
 	ctx.lookupPendingParent = savedPendingParent
+	selection := ctx.argSelection
+	ctx.argSelection = savedArgSelection
 	// TODO: ensure that resolve always returns one of these two.
 	if arc == nil || arc == emptyNode {
 		// TODO: yield instead?
@@ -157,6 +161,15 @@ func processResolver(ctx *OpContext, t *task, mode runMode) {
 		ci.ConjunctOpened = true
 	}
 
+	// A reference to, or a selection through, a vertex of a function
+	// argument that shares another vertex schedules the conjuncts of the
+	// shared vertex under the chain of the argument; see
+	// [OpContext.argChain].
+	argRefs, isArg := ctx.argChain(arc, true)
+	if !isArg && selection != nil && selection.within(arc) {
+		argRefs, isArg = selection.refs, true
+	}
+
 	arc = arc.DerefNonDisjunct()
 
 	if ctx.LogEval > 0 {
@@ -184,6 +197,13 @@ func processResolver(ctx *OpContext, t *task, mode runMode) {
 		// TODO: ensure better positioning information.
 		ctx.AddBottom(b)
 		return
+	}
+
+	if isArg {
+		// As for the argument conjunct itself, the CycleType of the
+		// referring context is kept; see [nodeContext.scheduleConjunct].
+		ci.Refs = t.node.argRef(arc, r, argRefs, ci.Refs)
+		ci.IsFuncArg = true
 	}
 
 	c := MakeConjunct(t.env, t.x, ci)

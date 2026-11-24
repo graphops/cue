@@ -1,0 +1,576 @@
+# A function argument is evaluated with the cycle-reference chain of its call,
+# not with that of the callee's body. A vertex of an argument that structure
+# shares another vertex must keep that chain for what is reached through it
+# by a reference to the parameter, a selection through it or a comprehension
+# over it. When what is reached calls a function that the body's chain
+# already holds, as when the argument is the result of an earlier call of the
+# same function, the call was taken for a structural cycle.
+# https://cuelang.org/issue/XXXX
+-- in.cue --
+@experiment(functions)
+
+// The reproducer of the issue: twice applies W to the result of once.
+issue: {
+	F: func(r: _) -> _: {r, x: G(1)}
+	G: func(a: _) -> _: {y: H(a)}
+	H: func(b: _) -> _: b
+	W: func(o: _) -> _: F(o)
+	once:  W({})
+	twice: W(once)
+}
+
+F: func(r: _) -> _: {
+	let L = {p: {q: {z: 1}}}
+	r
+	x: G(L)
+}
+G: func(a: _) -> _: {y: H(a.p)}
+H: func(b: _) -> _: {for _, v in b {v}}
+
+// The wrapper passes a field of its argument. The body of F iterates over a
+// field of a value it builds itself. twice and thrice apply the wrapper to an
+// earlier result.
+W: func(o: _) -> _: F(o.d)
+once:   W({d: {}})
+twice:  W({d: once})
+thrice: W({d: twice})
+
+// The argument is an earlier result unified with more fields.
+fields: W({d: W({d: {a: 1}}) & {b: 2}})
+
+// The wrapper passes its argument itself, and the inner function returns
+// its argument rather than iterating over it.
+F2: func(r: _) -> _: {
+	let L = {p: {q: {z: 1}}}
+	r
+	x: G2(L)
+}
+G2: func(a: _) -> _: {y: H2(a.p)}
+H2: func(b: _) -> _: b
+W2: func(o: _) -> _: F2(o)
+once2:  W2({})
+twice2: W2(once2)
+
+// A field of the callee's body that refers to the parameter, referred to in
+// turn, keeps the value of the argument.
+F3: func(r: _) -> _: {
+	let L = {p: {q: {z: 1}}}
+	in: r
+	out: in
+	x: G(L)
+}
+W3: func(o: _) -> _: F3(o.d)
+once3:  W3({d: {}})
+twice3: W3({d: once3})
+
+// Genuine cycles through function calls are still structural cycles.
+cycles: {
+	R: func(r: _) -> _: {r, x: R(r)}
+	recurse: R({a: 1})
+
+	N: func(r: _) -> _: {sub: r}
+	nest: N(nest)
+
+	E: func(r: _) -> _: {r}
+	self: E(self)
+
+	A: W({d: {b: B}})
+	B: W({d: {a: A}})
+	C: W({d: {c: C}})
+}
+
+// A selection through a parameter reaches a field of the vertex that a field
+// of the argument shares. Here probe.o is e.l.k, whose call of N was taken for
+// a recursion of the call of N made by probe.
+lookup: {
+	K: func(a: _) -> _: a.l.k
+	N: func(a: _) -> _: {c: a.n, o: K({l: a.l})}
+	e: l: k: N({n: 1}).c
+	d: *{x: 1} | {[string]: _}
+	d: e
+	probe: N({n: 2, l: d.l})
+}
+
+// Without the disjunction on d, the result of the call of N made by e.l.k is
+// memoized before probe needs it, which hid the error.
+lookupPlain: {
+	K: func(a: _) -> _: a.l.k
+	N: func(a: _) -> _: {c: a.n, o: K({l: a.l})}
+	e: l: k: N({n: 1}).c
+	probe: N({n: 2, l: e.l})
+}
+
+// Other ways to reach e.l.k through the argument of K.
+lookupVia: {
+	// The parameter shares the argument itself.
+	direct: {
+		K: func(a: _) -> _: a.l.k
+		N: func(a: _) -> _: {c: a.n, o: K(a.m)}
+		e: l: k: N({n: 1, m: l: k: 0}).c
+		d: *{x: 1} | {[string]: _}
+		d: e
+		probe: N({n: 2, m: d})
+	}
+	index: {
+		K: func(a: _) -> _: a.l["k"]
+		N: func(a: _) -> _: {c: a.n, o: K({l: a.l})}
+		e: l: k: N({n: 1}).c
+		d: *{x: 1} | {[string]: _}
+		d: e
+		probe: N({n: 2, l: d.l})
+	}
+	embed: {
+		K: func(a: _) -> _: {a.l}.k
+		N: func(a: _) -> _: {c: a.n, o: K({l: a.l})}
+		e: l: k: N({n: 1}).c
+		d: *{x: 1} | {[string]: _}
+		d: e
+		probe: N({n: 2, l: d.l})
+	}
+	let: {
+		K: func(a: _) -> _: {let X = a.l, out: X.k}.out
+		N: func(a: _) -> _: {c: a.n, o: K({l: a.l})}
+		e: l: k: N({n: 1}).c
+		d: *{x: 1} | {[string]: _}
+		d: e
+		probe: N({n: 2, l: d.l})
+	}
+	comprehension: {
+		K: func(a: _) -> _: {for _, v in a.l {v}}
+		N: func(a: _) -> _: {c: a.n, o: K({l: a.l})}
+		e: l: k: N({n: 1}).c
+		d: *{x: 1} | {[string]: _}
+		d: e
+		probe: N({n: 2, l: d.l})
+	}
+	// The argument passes through another call.
+	nested: {
+		K: func(a: _) -> _: a.m.l.k
+		M: func(a: _) -> _: K({m: a})
+		N: func(a: _) -> _: {c: a.n, o: M({l: a.l})}
+		e: l: k: N({n: 1}).c
+		d: *{x: 1} | {[string]: _}
+		d: e
+		probe: N({n: 2, l: d.l})
+	}
+	// The argument is a disjunction.
+	disjunction: {
+		K: func(a: _) -> _: a.l.k
+		N: func(a: _) -> _: {c: a.n, o: K(*{l: a.l} | {l: a.l, z: 1})}
+		e: l: k: N({n: 1}).c
+		d: *{x: 1} | {[string]: _}
+		d: e
+		probe: N({n: 2, l: d.l})
+	}
+}
+
+// Recursion through a selection on a parameter is still a structural cycle.
+lookupCycles: {
+	S: func(a: _) -> _: {v: a.l.k, n: S({l: a.l})}
+	select: S({l: k: 1})
+
+	T: func(a: _) -> _: {z: a.l}
+	self: T({l: self})
+
+	C: func(a: _) -> _: {for _, v in a {v}}
+	comprehension: C({l: comprehension})
+}
+-- out/compile --
+--- in.cue
+{
+  issue: {
+    F: func(r: _) -> _: {
+      〈1;r〉
+      x: 〈2;G〉(1)
+    }
+    G: func(a: _) -> _: {
+      y: 〈2;H〉(〈1;a〉)
+    }
+    H: func(b: _) -> _: 〈0;b〉
+    W: func(o: _) -> _: 〈1;F〉(〈0;o〉)
+    once: 〈0;W〉({})
+    twice: 〈0;W〉(〈0;once〉)
+  }
+  F: func(r: _) -> _: {
+    let L#1 = {
+      p: {
+        q: {
+          z: 1
+        }
+      }
+    }
+    〈1;r〉
+    x: 〈2;G〉(〈0;let L#1〉)
+  }
+  G: func(a: _) -> _: {
+    y: 〈2;H〉(〈1;a〉.p)
+  }
+  H: func(b: _) -> _: {
+    for _, v in 〈1;b〉 {
+      〈1;v〉
+    }
+  }
+  W: func(o: _) -> _: 〈1;F〉(〈0;o〉.d)
+  once: 〈0;W〉({
+    d: {}
+  })
+  twice: 〈0;W〉({
+    d: 〈1;once〉
+  })
+  thrice: 〈0;W〉({
+    d: 〈1;twice〉
+  })
+  fields: 〈0;W〉({
+    d: (〈1;W〉({
+      d: {
+        a: 1
+      }
+    }) & {
+      b: 2
+    })
+  })
+  F2: func(r: _) -> _: {
+    let L#2 = {
+      p: {
+        q: {
+          z: 1
+        }
+      }
+    }
+    〈1;r〉
+    x: 〈2;G2〉(〈0;let L#2〉)
+  }
+  G2: func(a: _) -> _: {
+    y: 〈2;H2〉(〈1;a〉.p)
+  }
+  H2: func(b: _) -> _: 〈0;b〉
+  W2: func(o: _) -> _: 〈1;F2〉(〈0;o〉)
+  once2: 〈0;W2〉({})
+  twice2: 〈0;W2〉(〈0;once2〉)
+  F3: func(r: _) -> _: {
+    let L#3 = {
+      p: {
+        q: {
+          z: 1
+        }
+      }
+    }
+    in: 〈1;r〉
+    out: 〈0;in〉
+    x: 〈2;G〉(〈0;let L#3〉)
+  }
+  W3: func(o: _) -> _: 〈1;F3〉(〈0;o〉.d)
+  once3: 〈0;W3〉({
+    d: {}
+  })
+  twice3: 〈0;W3〉({
+    d: 〈1;once3〉
+  })
+  cycles: {
+    R: func(r: _) -> _: {
+      〈1;r〉
+      x: 〈2;R〉(〈1;r〉)
+    }
+    recurse: 〈0;R〉({
+      a: 1
+    })
+    N: func(r: _) -> _: {
+      sub: 〈1;r〉
+    }
+    nest: 〈0;N〉(〈0;nest〉)
+    E: func(r: _) -> _: {
+      〈1;r〉
+    }
+    self: 〈0;E〉(〈0;self〉)
+    A: 〈1;W〉({
+      d: {
+        b: 〈2;B〉
+      }
+    })
+    B: 〈1;W〉({
+      d: {
+        a: 〈2;A〉
+      }
+    })
+    C: 〈1;W〉({
+      d: {
+        c: 〈2;C〉
+      }
+    })
+  }
+  lookup: {
+    K: func(a: _) -> _: 〈0;a〉.l.k
+    N: func(a: _) -> _: {
+      c: 〈1;a〉.n
+      o: 〈2;K〉({
+        l: 〈2;a〉.l
+      })
+    }
+    e: {
+      l: {
+        k: 〈2;N〉({
+          n: 1
+        }).c
+      }
+    }
+    d: (*{
+      x: 1
+    }|{
+      [string]: _
+    })
+    d: 〈0;e〉
+    probe: 〈0;N〉({
+      n: 2
+      l: 〈1;d〉.l
+    })
+  }
+  lookupPlain: {
+    K: func(a: _) -> _: 〈0;a〉.l.k
+    N: func(a: _) -> _: {
+      c: 〈1;a〉.n
+      o: 〈2;K〉({
+        l: 〈2;a〉.l
+      })
+    }
+    e: {
+      l: {
+        k: 〈2;N〉({
+          n: 1
+        }).c
+      }
+    }
+    probe: 〈0;N〉({
+      n: 2
+      l: 〈1;e〉.l
+    })
+  }
+  lookupVia: {
+    direct: {
+      K: func(a: _) -> _: 〈0;a〉.l.k
+      N: func(a: _) -> _: {
+        c: 〈1;a〉.n
+        o: 〈2;K〉(〈1;a〉.m)
+      }
+      e: {
+        l: {
+          k: 〈2;N〉({
+            n: 1
+            m: {
+              l: {
+                k: 0
+              }
+            }
+          }).c
+        }
+      }
+      d: (*{
+        x: 1
+      }|{
+        [string]: _
+      })
+      d: 〈0;e〉
+      probe: 〈0;N〉({
+        n: 2
+        m: 〈1;d〉
+      })
+    }
+    index: {
+      K: func(a: _) -> _: 〈0;a〉.l["k"]
+      N: func(a: _) -> _: {
+        c: 〈1;a〉.n
+        o: 〈2;K〉({
+          l: 〈2;a〉.l
+        })
+      }
+      e: {
+        l: {
+          k: 〈2;N〉({
+            n: 1
+          }).c
+        }
+      }
+      d: (*{
+        x: 1
+      }|{
+        [string]: _
+      })
+      d: 〈0;e〉
+      probe: 〈0;N〉({
+        n: 2
+        l: 〈1;d〉.l
+      })
+    }
+    embed: {
+      K: func(a: _) -> _: {
+        〈1;a〉.l
+      }.k
+      N: func(a: _) -> _: {
+        c: 〈1;a〉.n
+        o: 〈2;K〉({
+          l: 〈2;a〉.l
+        })
+      }
+      e: {
+        l: {
+          k: 〈2;N〉({
+            n: 1
+          }).c
+        }
+      }
+      d: (*{
+        x: 1
+      }|{
+        [string]: _
+      })
+      d: 〈0;e〉
+      probe: 〈0;N〉({
+        n: 2
+        l: 〈1;d〉.l
+      })
+    }
+    let: {
+      K: func(a: _) -> _: {
+        let X#4 = 〈1;a〉.l
+        out: 〈0;let X#4〉.k
+      }.out
+      N: func(a: _) -> _: {
+        c: 〈1;a〉.n
+        o: 〈2;K〉({
+          l: 〈2;a〉.l
+        })
+      }
+      e: {
+        l: {
+          k: 〈2;N〉({
+            n: 1
+          }).c
+        }
+      }
+      d: (*{
+        x: 1
+      }|{
+        [string]: _
+      })
+      d: 〈0;e〉
+      probe: 〈0;N〉({
+        n: 2
+        l: 〈1;d〉.l
+      })
+    }
+    comprehension: {
+      K: func(a: _) -> _: {
+        for _, v in 〈1;a〉.l {
+          〈1;v〉
+        }
+      }
+      N: func(a: _) -> _: {
+        c: 〈1;a〉.n
+        o: 〈2;K〉({
+          l: 〈2;a〉.l
+        })
+      }
+      e: {
+        l: {
+          k: 〈2;N〉({
+            n: 1
+          }).c
+        }
+      }
+      d: (*{
+        x: 1
+      }|{
+        [string]: _
+      })
+      d: 〈0;e〉
+      probe: 〈0;N〉({
+        n: 2
+        l: 〈1;d〉.l
+      })
+    }
+    nested: {
+      K: func(a: _) -> _: 〈0;a〉.m.l.k
+      M: func(a: _) -> _: 〈1;K〉({
+        m: 〈1;a〉
+      })
+      N: func(a: _) -> _: {
+        c: 〈1;a〉.n
+        o: 〈2;M〉({
+          l: 〈2;a〉.l
+        })
+      }
+      e: {
+        l: {
+          k: 〈2;N〉({
+            n: 1
+          }).c
+        }
+      }
+      d: (*{
+        x: 1
+      }|{
+        [string]: _
+      })
+      d: 〈0;e〉
+      probe: 〈0;N〉({
+        n: 2
+        l: 〈1;d〉.l
+      })
+    }
+    disjunction: {
+      K: func(a: _) -> _: 〈0;a〉.l.k
+      N: func(a: _) -> _: {
+        c: 〈1;a〉.n
+        o: 〈2;K〉((*{
+          l: 〈2;a〉.l
+        }|{
+          l: 〈2;a〉.l
+          z: 1
+        }))
+      }
+      e: {
+        l: {
+          k: 〈2;N〉({
+            n: 1
+          }).c
+        }
+      }
+      d: (*{
+        x: 1
+      }|{
+        [string]: _
+      })
+      d: 〈0;e〉
+      probe: 〈0;N〉({
+        n: 2
+        l: 〈1;d〉.l
+      })
+    }
+  }
+  lookupCycles: {
+    S: func(a: _) -> _: {
+      v: 〈1;a〉.l.k
+      n: 〈2;S〉({
+        l: 〈2;a〉.l
+      })
+    }
+    select: 〈0;S〉({
+      l: {
+        k: 1
+      }
+    })
+    T: func(a: _) -> _: {
+      z: 〈1;a〉.l
+    }
+    self: 〈0;T〉({
+      l: 〈1;self〉
+    })
+    C: func(a: _) -> _: {
+      for _, v in 〈1;a〉 {
+        〈1;v〉
+      }
+    }
+    comprehension: 〈0;C〉({
+      l: 〈1;comprehension〉
+    })
+  }
+}

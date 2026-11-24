@@ -269,17 +269,12 @@ func analyseStructs(v *adt.Vertex, builder *GraphBuilder) []structMeta {
 					sMeta.pos = pos
 				}
 			}
-			refs := c.CloseInfo.CycleInfo.Refs
+			refs := c.CloseInfo.CycleInfo.Refs.Outermost()
 			if refs == nil {
 				continue
 			}
 			debug(" ref %p :: %T (%v)\n",
 				refs.Ref, refs.Ref, refs.Ref.Source().Pos())
-			for refs.Next != nil {
-				refs = refs.Next
-				debug(" ref %p :: %T (%v)\n",
-					refs.Ref, refs.Ref, refs.Ref.Source().Pos())
-			}
 			maps.Insert(structMetaMap(refs.Ref), maps.All(sMetas))
 			if pos := refs.Ref.Source().Pos(); pos.IsValid() {
 				for sMeta := range nodeToStructMetas[refs.Ref] {
