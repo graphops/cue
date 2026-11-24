@@ -247,6 +247,10 @@ func (v *Vertex) unify(c *OpContext, flags Flags) bool {
 
 	defer n.unmarkDepth(n.markDepth())
 
+	savedFinalizing := n.isFinalizing
+	n.isFinalizing = mode == finalize
+	defer func() { n.isFinalizing = savedFinalizing }()
+
 	n.process(nodeOnlyNeeds, mode)
 
 	if n.node.ArcType != ArcPending &&

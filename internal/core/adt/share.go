@@ -55,15 +55,21 @@ func (n *nodeContext) unshare() {
 }
 
 // sharesSingleValue reports whether the vertex n shares holds a value that
-// is not a disjunction, finalizing the vertex if needed to know its value.
+// is not a disjunction. If n is being finalized, the vertex is finalized
+// first if needed to know its value.
 func (n *nodeContext) sharesSingleValue() bool {
 	v, ok := n.node.BaseValue.(*Vertex)
 	if !ok {
 		return false
 	}
+	// The vertex is finalized only while this node is, as finalizeSharing
+	// does once the node is complete. A node evaluated in part, such as for
+	// a selection, may be evaluated from within an evaluation the vertex
+	// depends on, such as a comprehension of the vertex, which finalizing
+	// the vertex would force before the comprehension adds its fields.
 	// A cyclic reference is left to finalizeSharing, as in that case the
 	// vertex may depend on this node.
-	if n.shareCycleType == NoCycle {
+	if n.isFinalizing && n.shareCycleType == NoCycle {
 		v.Finalize(n.ctx)
 	}
 	return v.isFinal() && disjunctionOf(v) == nil
