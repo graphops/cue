@@ -709,7 +709,7 @@ patternEnv: {
 	args: {
 		x: [string]~(K, _): F(K)
 		x: {a: _, b: _}
-		out: x @test(eq, {a: "a", b: "a"}, incorrect) @test(eq:todo, {a: "a", b: "b"})
+		out: x @test(eq, {a: "a", b: "b"})
 	}
 
 	// The same holds for a call below the field, within a comprehension
@@ -728,7 +728,7 @@ patternEnv: {
 		p: {a: _, b: _}
 		q: [string]~(K, _): p[K]()
 		q: {a: _, b: _}
-		out: [p.b(), q] @test(eq, ["b", {a: "a", b: "a"}], incorrect) @test(eq:todo, ["b", {a: "a", b: "b"}])
+		out: [p.b(), q] @test(eq, ["b", {a: "a", b: "b"}])
 	}
 
 	// Following a chain of closures through one call site is not
@@ -737,7 +737,7 @@ patternEnv: {
 		next: {a: "b", b: "c", c: ""}
 		p: [string]~(K, _): func() -> string: [if next[K] != "" {p[next[K]]()}, K][0]
 		p: {a: _, b: _, c: _}
-		out: p.a() @test(err, code=structural_cycle, incorrect) @test(eq:todo, "c")
+		out: p.a() @test(eq, "c")
 	}
 
 	// The defaults of each field are checked, not only those of the first,
@@ -745,7 +745,7 @@ patternEnv: {
 	defaults: {
 		bad: [string]~(K, _): func(n: "a" = K) -> string: n
 		bad: {a: _, b: _}
-		badB: bad.b @test(err:todo, code=eval, contains="invalid default for parameter n")
+		badB: bad.b @test(err, code=eval, contains="invalid default for parameter n")
 
 		ok: [string]~(K, _): func(n: string = K) -> string: n
 		ok: {a: _, b: _}
@@ -910,8 +910,12 @@ invalid default for parameter a: invalid value 9 (out of bound <5):
     ./in.cue:692:32
     ./in.cue:692:27
     ./in.cue:693:25
-[structural_cycle] patternEnv.chain.out: structural cycle:
-    ./in.cue:737:60
+[eval] invalid default for parameter n: conflicting values "b" and "a":
+    ./in.cue:745:39
+    ./in.cue:745:33
+[eval] invalid default for parameter n: conflicting values "b" and "a":
+    ./in.cue:745:39
+    ./in.cue:745:33
 [eval] admission.bad: parameter b of function accepts string, but its signature requires int:
     ./in.cue:764:12
     ./in.cue:760:7
@@ -919,18 +923,18 @@ invalid default for parameter a: invalid value 9 (out of bound <5):
     ./in.cue:771:13
     ./in.cue:768:8
 -- out/eval/stats --
-Leaks:  134
-Freed:  1587
-Reused: 1553
-Allocs: 168
+Leaks:  133
+Freed:  1625
+Reused: 1589
+Allocs: 169
 Retain: 0
 
-Unifications: 1391
-Conjuncts:    3963
+Unifications: 1412
+Conjuncts:    4039
 Disjuncts:    232
 Notifications: 8
 
-NumCloseIDs: 673
+NumCloseIDs: 693
 
-ConjunctInfos:       1581
+ConjunctInfos:       1622
 MaxConjunctInfos:    8
