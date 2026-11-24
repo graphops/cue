@@ -89,6 +89,31 @@ generatedFields: {
 nestedFields: {
 	x: {a: {p: 1 & 2, q: 3 & 4}, b: 5 & 6} | {a: {p: 7 & 8}} // The errors of fields a.q and b are missing.
 }
+
+// A failed nested disjunction reports a list of errors, which is left out
+// of the errors of an enclosing disjunction with more than two disjuncts.
+// When every disjunct fails with such a list, that list must be reported
+// rather than an empty disjunction without any cause.
+// https://cuelang.org/issue/4587
+nestedOnly: {
+	// Each disjunct reads a field whose own disjunction failed.
+	sharedField: {
+		size: *"1Gi" | _
+		size: =~"^[1-9]"
+		size: "0Gi"
+		x: {a: size} | {b: size} | {c: size}
+	}
+	// Each disjunct fails in a nested disjunction of its own. The first of
+	// them is reported.
+	distinct: {
+		x: {a: 1 & (2 | 3)} | {a: 4 & (5 | 6)} | {a: 7 & (8 | 9)}
+	}
+	// A disjunct which fails with an error of its own is still reported
+	// alone, without the nested failures of the others.
+	mixed: {
+		x: {a: 1 & (2 | 3)} | {a: 4 & 5} | {a: 6 & (7 | 8)}
+	}
+}
 -- issue3581.cue --
 // evalv3: tools/flow unexpected error when a flow task result field is used as
 // a list item; string interpolation in a list element caused a spurious error.
@@ -519,6 +544,38 @@ reportFailedField: {
         p: (7 & 8)
       }
     })
+  }
+  nestedOnly: {
+    sharedField: {
+      size: (*"1Gi"|_)
+      size: =~"^[1-9]"
+      size: "0Gi"
+      x: ({
+        a: 〈1;size〉
+      }|{
+        b: 〈1;size〉
+      }|{
+        c: 〈1;size〉
+      })
+    }
+    distinct: {
+      x: ({
+        a: (1 & (2|3))
+      }|{
+        a: (4 & (5|6))
+      }|{
+        a: (7 & (8|9))
+      })
+    }
+    mixed: {
+      x: ({
+        a: (1 & (2|3))
+      }|{
+        a: (4 & 5)
+      }|{
+        a: (6 & (7|8))
+      })
+    }
   }
 }
 --- issue3576.cue
