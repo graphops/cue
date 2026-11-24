@@ -116,14 +116,26 @@ func (p *taskContext) current() *task {
 // the rooted node whose evaluation reached it. The exception is a field of a
 // let's copy, which runs with no rooted task when the referrer shares it: it
 // records the work on itself, and the referrer finalizes it.
-func (p *taskContext) rootedTaskNode() *nodeContext {
-	for _, t := range slices.Backward(p.stack) {
+//
+// Within the evaluation of a disjunct, only the tasks that evaluation started
+// are considered: their nodes belong to the disjunct, or are reached and
+// completed through it. The earlier tasks belong to the node the disjunction
+// is defined on, whose tasks are cloned into the disjuncts evaluated after
+// this one, or to the nodes whose evaluation reached it, which are completed
+// whichever disjunct is chosen. Work recorded on them would report an error
+// of the disjunct, which may yet be discarded, outside of it.
+func (c *OpContext) rootedTaskNode() *nodeContext {
+	stack := c.stack
+	if i := len(c.overlays) - 1; i >= 0 {
+		stack = stack[c.overlays[i].taskDepth:]
+	}
+	for _, t := range slices.Backward(stack) {
 		if !t.node.node.Internal() {
 			return t.node
 		}
 	}
-	if t := p.current(); t != nil {
-		return t.node
+	if len(stack) > 0 {
+		return stack[len(stack)-1].node
 	}
 	return nil
 }
