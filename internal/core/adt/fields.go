@@ -313,7 +313,12 @@ func (v *Vertex) insertConjunct(ctx *OpContext, c Conjunct, id CloseInfo, mode A
 			ctx.stats.SkippedNotification++
 			continue
 		}
+		// The conjunct is added to rec.v, so an error it causes there, such
+		// as a conflict with a value rec.v already has, belongs to rec.v,
+		// not to v.
+		saved := ctx.PushArc(rec.v)
 		rec.v.state.scheduleConjunct(c, rec.c)
+		ctx.PopArc(saved)
 	}
 
 	return

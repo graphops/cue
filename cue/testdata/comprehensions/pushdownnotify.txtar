@@ -1,0 +1,143 @@
+# Tests a reference to a field that a pushed-down comprehension adds to,
+# resolved while that comprehension is still pending or running, here
+# because its own guard reads the referring field. The reference copies the
+# conjuncts the field has so far, and must receive those the comprehension
+# adds afterwards, although the comprehension no longer holds up the
+# field's parent.
+# https://cuelang.org/issue/4550
+-- in.cue --
+// The guard reads a field that unifies the field the comprehension adds to.
+reported: {
+	@test(permute, count=2)
+	a: x & {z: 1}
+	x: on: true
+	if a.on {
+		x: y: 1
+	}
+	@test(eq, {a: {on: true, y: 1, z: 1}, x: {on: true, y: 1}})
+}
+
+// The comprehension adds to a field nested in the one the reference copies.
+nested: {
+	a: x.y.z & {w: 1}
+	x: y: z: on: true
+	if a.on {
+		x: y: z: v: 1
+	}
+	@test(eq, {a: {on: true, v: 1, w: 1}, x: {y: z: {on: true, v: 1}}})
+}
+
+// The guard reads the field the comprehension adds to, so that field is
+// being evaluated when it is copied. The copy is made when another
+// comprehension, run by the lookup of a.b, makes a.b stop sharing x.
+shared: {
+	a: {
+		b: x
+		if b.on {
+			b: {}
+		}
+	}
+	x: a.b & {on: true}
+	if x.on {
+		x: y: 1
+	}
+	@test(eq, {a: b: {on: true, y: 1}, x: {on: true, y: 1}})
+}
+
+// The guard reads the field that unifies the field the comprehension adds
+// to, as in reported. A definition the comprehension adds closes the field,
+// so the reference must reject a field the definition does not allow.
+closedness: {
+	#B: {x: 2}
+	m1: c1 & {y: 3}
+	c1: {x: 2, ...}
+	if m1.x == 2 {
+		c1: #B
+	}
+	@test(err, code=eval, at=m1.y, contains="field not allowed", pos=[2:12])
+}
+
+// The same with the guard reading the field the comprehension adds to,
+// which already worked.
+closednessGuardOwn: {
+	#B: {x: 2}
+	m1: c1 & {y: 3}
+	c1: {x: 2, ...}
+	if c1.x == 2 {
+		c1: #B
+	}
+	@test(err, code=eval, at=m1.y, contains="field not allowed", pos=[2:12])
+}
+
+// The same as reported with the guard reading the field the comprehension
+// adds to, which already worked.
+guardOwn: {
+	a: x & {z: 1}
+	x: on: true
+	if x.on {
+		x: y: 1
+	}
+	@test(eq, {a: {on: true, y: 1, z: 1}, x: {on: true, y: 1}})
+}
+
+// A similar shape with the guard reading the field the comprehension adds
+// to, and that field opened with ... before. m1 should reject y, but it
+// resolves c1 through the vertex c1 structure shares, #B opened, before c1
+// has processed the #B that the comprehension adds. This change does not
+// affect that. See https://cuelang.org/issue/4524.
+issue4524: {
+	#B: {x: 2}
+	m1: c1 & {y: 3}
+	c1: #B...
+	if c1.x == 2 {
+		c1: #B
+	}
+	@test(eq, {#B: {x: 2}, m1: {x: 2, y: 3}, c1: {x: 2}}, incorrect)
+	@test(err:todo, code=eval, at=m1.y, contains="field not allowed")
+}
+-- issue4550.cue --
+// Issue 4550. The guard reads X, which refers to the field that the
+// comprehension declares, so the value the comprehension adds conflicts with
+// X. The conflict is reported at X, the field that receives that value.
+issue4550: {
+	aux: {if X != _|_ {m: "xyz"}}
+	X: aux.m @test(err, code=eval, path=issue4550.X, contains="conflicting values \"xyz\" and \"abc\"")
+	X: "abc"
+}
+
+// The same with the comprehension last, which already worked.
+issue4550Reordered: {
+	X: aux.m @test(err, code=eval, path=issue4550Reordered.X, contains="conflicting values \"xyz\" and \"abc\"")
+	X: "abc"
+	aux: {if X != _|_ {m: "xyz"}}
+}
+-- out/errors.txt --
+[eval] closedness.m1.y: field not allowed:
+    ./in.cue:44:12
+[eval] closednessGuardOwn.m1.y: field not allowed:
+    ./in.cue:56:12
+[cycle] issue4550.aux: circular dependency in evaluation of conditionals: X changed after evaluation:
+    ./issue4550.cue:5:11
+[eval] issue4550.X: conflicting values "xyz" and "abc":
+    ./issue4550.cue:5:24
+    ./issue4550.cue:6:5
+    ./issue4550.cue:7:5
+[eval] issue4550Reordered.X: conflicting values "xyz" and "abc":
+    ./issue4550.cue:12:5
+    ./issue4550.cue:13:5
+    ./issue4550.cue:14:24
+[cycle] issue4550Reordered.aux: circular dependency in evaluation of conditionals: X changed after evaluation:
+    ./issue4550.cue:14:11
+-- out/eval/stats --
+Leaks:  0
+Freed:  58
+Reused: 42
+Allocs: 16
+Retain: 0
+
+Unifications: 58
+Conjuncts:    108
+Disjuncts:    0
+Notifications: 4
+
+NumCloseIDs: 12

@@ -606,11 +606,14 @@ func (n *nodeContext) scheduleVertexConjuncts(c Conjunct, arc *Vertex, closeInfo
 		// If the arc has a parent that for which the field conjuncts are not
 		// fully known yet, we may not have collected all conjuncts yet. In that
 		// case we need ot add n to the notification list of arc to ensure
-		// we will get the notifications in the future.
+		// we will get the notifications in the future. The same holds while a
+		// parent task, such as a pushed-down comprehension, may still add
+		// conjuncts to arc, as such a task does not hold up the parent.
 		pState := arc.Parent.getState(n.ctx)
 		state := arc.getBareState(n.ctx)
 		if pState != nil && state != nil &&
-			!pState.meets(allAncestorsProcessed|fieldConjunctsKnown) {
+			(!pState.meets(allAncestorsProcessed|fieldConjunctsKnown) ||
+				state.hasActiveParentTask()) {
 			state.addNotify2(n.node, closeInfo)
 		}
 	}
@@ -628,11 +631,13 @@ func (n *nodeContext) scheduleVertexConjuncts(c Conjunct, arc *Vertex, closeInfo
 
 func (n *nodeContext) addNotify2(v *Vertex, c CloseInfo) {
 	// No need to do the notification mechanism if we are already complete.
+	// An active parent task may still add conjuncts after all ancestors are
+	// processed.
 	switch {
 	case n.node.isFinal():
 		return
 	case !n.node.isInProgress():
-	case n.meets(allAncestorsProcessed):
+	case n.meets(allAncestorsProcessed) && !n.hasActiveParentTask():
 		return
 	}
 
