@@ -1776,8 +1776,11 @@ Reused: 2831
 Allocs: 410
 Retain: 0
 
-Unifications: 3051
-Conjuncts:    8390
+Unifications: 2990
+Conjuncts:    8253
 Disjuncts:    135
+Notifications: 8
+
+SkippedNotification: 3
 
 NumCloseIDs: 1292

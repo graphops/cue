@@ -1,0 +1,234 @@
+# Tests a reference to a field that a pushed-down comprehension adds to,
+# resolved while that comprehension is still pending or running, here
+# because its own guard reads the referring field. The reference copies the
+# conjuncts the field has so far, and must receive those the comprehension
+# adds afterwards, although the comprehension no longer holds up the
+# field's parent.
+# https://cuelang.org/issue/4550
+-- in.cue --
+// The guard reads a field that unifies the field the comprehension adds to.
+reported: {
+	a: x & {z: 1}
+	x: on: true
+	if a.on {
+		x: y: 1
+	}
+}
+
+// The comprehension adds to a field nested in the one the reference copies.
+nested: {
+	a: x.y.z & {w: 1}
+	x: y: z: on: true
+	if a.on {
+		x: y: z: v: 1
+	}
+}
+
+// The guard reads the field the comprehension adds to, so that field is
+// being evaluated when it is copied. The copy is made when another
+// comprehension, run by the lookup of a.b, makes a.b stop sharing x.
+shared: {
+	a: {
+		b: x
+		if b.on {
+			b: {}
+		}
+	}
+	x: a.b & {on: true}
+	if x.on {
+		x: y: 1
+	}
+}
+
+// The guard reads the field that unifies the field the comprehension adds
+// to, as in reported. A definition the comprehension adds closes the field,
+// so the reference must reject a field the definition does not allow.
+closedness: {
+	#B: {x: 2}
+	m1: c1 & {y: 3}
+	c1: {x: 2, ...}
+	if m1.x == 2 {
+		c1: #B
+	}
+}
+
+// The same with the guard reading the field the comprehension adds to,
+// which already worked.
+closednessGuardOwn: {
+	#B: {x: 2}
+	m1: c1 & {y: 3}
+	c1: {x: 2, ...}
+	if c1.x == 2 {
+		c1: #B
+	}
+}
+
+// The same as reported with the guard reading the field the comprehension
+// adds to, which already worked.
+guardOwn: {
+	a: x & {z: 1}
+	x: on: true
+	if x.on {
+		x: y: 1
+	}
+}
+
+// A similar shape with the guard reading the field the comprehension adds
+// to, and that field opened with ... before. m1 should reject y, but it
+// resolves c1 through the vertex c1 structure shares, #B opened, before c1
+// has processed the #B that the comprehension adds. This change does not
+// affect that. See https://cuelang.org/issue/4524.
+issue4524: {
+	#B: {x: 2}
+	m1: c1 & {y: 3}
+	c1: #B...
+	if c1.x == 2 {
+		c1: #B
+	}
+}
+-- issue4550.cue --
+// Issue 4550. The guard reads X, which refers to the field that the
+// comprehension declares, so the value the comprehension adds conflicts with
+// X. The conflict is reported at X, the field that receives that value.
+issue4550: {
+	aux: {if X != _|_ {m: "xyz"}}
+	X: aux.m
+	X: "abc"
+}
+
+// The same with the comprehension last, which already worked.
+issue4550Reordered: {
+	X: aux.m
+	X: "abc"
+	aux: {if X != _|_ {m: "xyz"}}
+}
+-- out/compile --
+--- in.cue
+{
+  reported: {
+    a: (〈0;x〉 & {
+      z: 1
+    })
+    x: {
+      on: true
+    }
+    if 〈0;a〉.on {
+      x: {
+        y: 1
+      }
+    }
+  }
+  nested: {
+    a: (〈0;x〉.y.z & {
+      w: 1
+    })
+    x: {
+      y: {
+        z: {
+          on: true
+        }
+      }
+    }
+    if 〈0;a〉.on {
+      x: {
+        y: {
+          z: {
+            v: 1
+          }
+        }
+      }
+    }
+  }
+  shared: {
+    a: {
+      b: 〈1;x〉
+      if 〈0;b〉.on {
+        b: {}
+      }
+    }
+    x: (〈0;a〉.b & {
+      on: true
+    })
+    if 〈0;x〉.on {
+      x: {
+        y: 1
+      }
+    }
+  }
+  closedness: {
+    #B: {
+      x: 2
+    }
+    m1: (〈0;c1〉 & {
+      y: 3
+    })
+    c1: {
+      x: 2
+      ...
+    }
+    if (〈0;m1〉.x == 2) {
+      c1: 〈1;#B〉
+    }
+  }
+  closednessGuardOwn: {
+    #B: {
+      x: 2
+    }
+    m1: (〈0;c1〉 & {
+      y: 3
+    })
+    c1: {
+      x: 2
+      ...
+    }
+    if (〈0;c1〉.x == 2) {
+      c1: 〈1;#B〉
+    }
+  }
+  guardOwn: {
+    a: (〈0;x〉 & {
+      z: 1
+    })
+    x: {
+      on: true
+    }
+    if 〈0;x〉.on {
+      x: {
+        y: 1
+      }
+    }
+  }
+  issue4524: {
+    #B: {
+      x: 2
+    }
+    m1: (〈0;c1〉 & {
+      y: 3
+    })
+    c1: 〈0;#B〉...
+    if (〈0;c1〉.x == 2) {
+      c1: 〈1;#B〉
+    }
+  }
+}
+--- issue4550.cue
+{
+  issue4550: {
+    aux: {
+      if (〈1;X〉 != _|_(explicit error (_|_ literal) in source)) {
+        m: "xyz"
+      }
+    }
+    X: 〈0;aux〉.m
+    X: "abc"
+  }
+  issue4550Reordered: {
+    X: 〈0;aux〉.m
+    X: "abc"
+    aux: {
+      if (〈1;X〉 != _|_(explicit error (_|_ literal) in source)) {
+        m: "xyz"
+      }
+    }
+  }
+}
