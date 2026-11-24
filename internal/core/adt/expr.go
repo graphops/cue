@@ -3979,6 +3979,22 @@ type tryBody struct {
 	// yields, and nil for the binding form, whose expression is not inserted
 	// anywhere. See [OpContext.lookupInTryTarget].
 	target *Vertex
+
+	// awaiting holds the waits of the body's tasks for arc types that a
+	// running comprehension is still deciding, left in place by
+	// [mustAwaitProducer]. The body cannot be decided while any of them is
+	// unmet; see [TryClause.yield].
+	awaiting []tryWait
+}
+
+// unmetWait returns a wait in tb.awaiting that is not met, if any.
+func (tb *tryBody) unmetWait() (w tryWait, ok bool) {
+	for _, w := range tb.awaiting {
+		if !w.on.meets(w.needs) {
+			return w, true
+		}
+	}
+	return w, false
 }
 
 func (x *TryClause) Source() ast.Node {
@@ -4003,16 +4019,17 @@ func (x *TryClause) yield(s *compState) {
 	// the try expression early.
 
 	var expr Expr
-	tb := &tryBody{}
+	var target *Vertex
 	if x.Expr != nil {
 		expr = x.Expr
 	} else {
 		// Struct form: the body is inserted into the node the comprehension
 		// runs on, which [OpContext.yield] set as the current vertex.
 		expr = s.comp.Value
-		tb.target = c.vertex
+		target = c.vertex
 	}
 
+	tb := &tryBody{target: target}
 	v := c.newInlineVertex(env.DerefVertex(c), nil, Conjunct{env, expr, c.ci})
 
 	// Mark this body so a failed ?-marked reference is attributed to this try
@@ -4021,6 +4038,20 @@ func (x *TryClause) yield(s *compState) {
 	// [scheduler.inTryBody]).
 	v.getState(c).tryBody = tb
 	v.Finalize(c)
+
+	// The body may depend on the type of an arc that a running comprehension
+	// may still declare (see [mustAwaitProducer]). A wait that the evaluation
+	// settled has run its task, but deciding while one is unmet could be
+	// contradicted as soon as that comprehension resumes. Wait for the arc
+	// type instead, as an if clause waits for its condition: the
+	// comprehension runs again once it is known.
+	if w, ok := tb.unmetWait(); ok {
+		for _, u := range tb.awaiting {
+			u.cancel()
+		}
+		c.current().waitFor(w.on, w.needs)
+		w.on.yield()
+	}
 
 	// If any ?-marked reference belonging to this body failed, don't yield -
 	// the else clause (if present) runs instead.
