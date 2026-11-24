@@ -281,6 +281,52 @@ forwardShared: {
 		#S: {x: 2, sub: {x: 2}}
 	}
 }
+
+// A field sharing a reference that meets a disjunction may be evaluated in
+// part, such as for a selection, from within an evaluation the referenced
+// vertex depends on. The vertex is not finalized then, which would force
+// that evaluation before it adds its fields.
+// https://cuelang.org/issue/XXXX
+inProgress: {
+	#S: {...}
+	#A: #S | int
+
+	// A comprehension of the vertex selects from the field.
+	comprehension: {
+		x: {a: 1, if out.a == 1 {b: 2}}
+		out: x & #A
+	}
+	// The comprehension belongs to a vertex the shared vertex refers to.
+	reference: {
+		y: {a: 1, if out.a == 1 {b: 2}}
+		x: y
+		out: x & #A
+	}
+	// The comprehension belongs to a field of the shared vertex.
+	arc: {
+		y: x.sub.d
+		x: #B
+		#B: sub: {c: 1, if out.sub.c == 1 {d: 2}}
+		out: x & #A
+	}
+	// A field being finalized still finalizes a vertex declared later, so
+	// that it keeps sharing it.
+	finalized: {
+		#T: {a: int}
+		#N: #T | int
+		out: x & #N
+		x: #T & {a: 1}
+	}
+	// TODO: a field unified with a selection from the vertex misses what the
+	// comprehension adds to the selected field once the field has resolved
+	// its disjunction. This is a separate, older bug, which the forced
+	// evaluation reported as a cyclic reference instead.
+	// https://cuelang.org/issue/YYYY
+	selection: {
+		x: {args: a: 1, if out.a == 1 {args: b: 2}}
+		out: x.args & #A
+	}
+}
 -- issue3835.cue --
 // evalv3 regression with "cycle with field" error involving a comprehension
 // with a let that references a top-level field via a pattern constraint.
@@ -522,6 +568,67 @@ issue3903: noshare: {
           x: 2
         }
       }
+    }
+  }
+  inProgress: {
+    #S: {
+      ...
+    }
+    #A: (〈0;#S〉|int)
+    comprehension: {
+      x: {
+        a: 1
+        if (〈1;out〉.a == 1) {
+          b: 2
+        }
+      }
+      out: (〈0;x〉 & 〈1;#A〉)
+    }
+    reference: {
+      y: {
+        a: 1
+        if (〈1;out〉.a == 1) {
+          b: 2
+        }
+      }
+      x: 〈0;y〉
+      out: (〈0;x〉 & 〈1;#A〉)
+    }
+    arc: {
+      y: 〈0;x〉.sub.d
+      x: 〈0;#B〉
+      #B: {
+        sub: {
+          c: 1
+          if (〈2;out〉.sub.c == 1) {
+            d: 2
+          }
+        }
+      }
+      out: (〈0;x〉 & 〈1;#A〉)
+    }
+    finalized: {
+      #T: {
+        a: int
+      }
+      #N: (〈0;#T〉|int)
+      out: (〈0;x〉 & 〈0;#N〉)
+      x: (〈0;#T〉 & {
+        a: 1
+      })
+    }
+    selection: {
+      x: {
+        args: {
+          a: 1
+        }
+        if (〈1;out〉.a == 1) {
+          args: {
+            b: 2
+          }
+        }
+      }
+      out: (〈0;x〉.args & 〈1;#A〉)
     }
   }
 }

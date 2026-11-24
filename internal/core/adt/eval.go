@@ -358,6 +358,10 @@ type nodeContextState struct {
 	// progress.
 	isCompleting int
 
+	// isFinalizing indicates whether the innermost call to unify for this
+	// node in progress finalizes it. See sharesSingleValue.
+	isFinalizing bool
+
 	// runMode keeps track of what runMode a disjunct should run as. This is
 	// relevant for nested disjunctions, like the 2|3 in (1 | (2|3)) & (1 | 2),
 	// where the nested disjunction should _not_ be considered as final, as
