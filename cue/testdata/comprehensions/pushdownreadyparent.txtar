@@ -1,0 +1,84 @@
+# Tests that an arc that a pushed-down comprehension declares does not
+# complete before that comprehension is done.
+#
+# Iterating over x.paths creates the arc u as a pending placeholder, whose
+# only parent task is the if comprehension that declares it. paths does not
+# count that comprehension, as its dependency was pushed down onto u, so u
+# completed and froze its value while it still had no conjuncts or tasks.
+# The comprehension then added cfg.p to u too late: the interpolation saw only
+# the pattern string.
+# https://cuelang.org/issue/XXXX
+-- in.cue --
+forSource: {
+	out: [for k, p in x.paths {"s3://\(p)"}] @test(eq, ["s3://v"])
+	x: {
+		paths: [string]: string
+		paths: {if cfg.on {u: cfg.p}}
+	}
+	cfg: {on: true, p: "v"}
+}
+
+sibling: {
+	out: x.data @test(eq, {u: "s3://v"})
+	x: {
+		paths: [string]: string & !=""
+		paths: {if cfg.on {u: cfg.p}}
+		data: {for k, p in paths {(k): "s3://\(p)"}}
+	}
+	cfg: {on: true, p: "v"}
+}
+
+// The comprehension yields nothing, so the arc is not a field.
+yieldsNothing: {
+	out: [for k, p in x.paths {k}] @test(eq, [])
+	x: paths: {if cfg.on {u: cfg.p}}
+	cfg: {on: false, p: "v"}
+}
+
+// Each guard reads the field that the other comprehension declares. Both
+// comprehensions are running when the other reads the field, so waiting for
+// them would never end: the cycle is reported.
+cycle: {
+	b: {
+		if a.bar == _|_ {foo: ""}
+		@test(err, code=incomplete|cycle)
+	}
+	a: {
+		if b.foo == _|_ {bar: ""}
+		@test(err, code=incomplete|cycle)
+	}
+}
+// The comprehension adds the only conjunct of d, a disjunction, and d is
+// unified only after the comprehension is done. Releasing d must not complete
+// it then, before its own conjuncts are evaluated: the disjunction of p would
+// lose its default and the conjunct "v" along with it.
+unifiedAfterRelease: {
+	out: x.s.d.p @test(eq, *"v" | string)
+	x: #S & {
+		if true {
+			s: d: #D
+		}
+	}
+	#D: *{p: *"v" | string} | {}
+	#S: s?: #T
+	#T: d?: #U
+	#U: {...} | {}
+}
+-- out/errors.txt --
+[cycle] cycle.b: cyclic reference to field bar:
+    ./in.cue:32:8
+[cycle] cycle.a: undefined field: foo:
+    ./in.cue:36:8
+    ./in.cue:31:2
+-- out/eval/stats --
+Leaks:  2
+Freed:  62
+Reused: 39
+Allocs: 25
+Retain: 0
+
+Unifications: 46
+Conjuncts:    78
+Disjuncts:    16
+
+NumCloseIDs: 6

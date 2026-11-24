@@ -576,6 +576,10 @@ func (n *nodeContext) free() {
 // We leave it up to the caller to ensure it is safe to free the nodeContext for
 // a given status.
 func (c *OpContext) freeNodeContext(n *nodeContext) {
+	for _, t := range n.tasks {
+		// A comprehension that is not done will not run any more.
+		t.releasePushedDeps()
+	}
 	n.node.state = nil
 	c.stats.Freed++
 	n.nextFree = c.freeListNode

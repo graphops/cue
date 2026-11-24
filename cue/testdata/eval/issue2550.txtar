@@ -4,7 +4,7 @@
 # (let _bar = bar) inside the comprehension body verifies that let bindings in
 # comprehensions interacting with closed structs do not affect the error behavior.
 -- in.cue --
-foo: string    @test(eq, string)
+foo: string    @test(err, code=eval, contains="undefined field", pos=[3:8, 1:1])
 bar: close({}) @test(eq, {}) @test(closed)
 
 if bar.missing == "x" {
