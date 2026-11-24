@@ -463,6 +463,27 @@ a: [1]`,
 	//cue:path: #D
 	let D = {#x: a: int}
 }`,
+	}, {
+		// A let bound to self denotes #T here, but no struct is exported
+		// for #T, so the let clause cannot be declared again. The let is
+		// expanded as a copy of #T, which does not get the conjuncts that
+		// #T gets elsewhere, such as #T: in: a: 1.
+		// TODO: a reference to #T by its path, #T.in, would get them.
+		// See https://cuelang.org/issue/XXXX.
+		name: "let bound to self outside of any struct for its value",
+		in: `
+		#S: {
+			in!: [string]: int
+			let X = self
+			out: a: [for k, _ in X.in {k}]
+		}
+		#T: #S & {}
+		`,
+		path:    "#T.out.a",
+		options: o(cue.Raw()),
+		out: `[for k, _ in #S.in {
+	k
+}]`,
 	}}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {

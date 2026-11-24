@@ -1,0 +1,41 @@
+# The output of cue eval for a value unified from a struct literal with a let
+# bound to self must mean what the input means: unifying the printed T with
+# more fields gives the same result as unifying the original T.
+# https://cuelang.org/issue/XXXX
+
+exec cue eval -p p s.cue
+cp stdout t.cue
+exec cue export -e U.out s.cue u.cue
+cmp stdout want
+exec cue export -e U.out t.cue u.cue
+cmp stdout want
+cmp t.cue eval.golden
+
+-- s.cue --
+package p
+
+S: {
+	in!: _
+	let X = self
+	out: X.in
+}
+T: S & {}
+-- u.cue --
+package p
+
+U: T & {in: 1}
+-- eval.golden --
+package p
+
+S: {
+    let X = self
+    in!: _
+    out: X.in
+}
+T: {
+    let X_1 = self
+    in!: _
+    out: X_1.in
+}
+-- want --
+1
