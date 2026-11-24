@@ -263,6 +263,17 @@ type OpContext struct {
 	// run other resolver tasks.
 	lookupPendingParent bool
 
+	// argChains holds, for each vertex of a function argument that shares
+	// another vertex, the cycle-reference chain of the argument. See
+	// [OpContext.argChain].
+	argChains map[*Vertex]*RefNode
+
+	// argSelection is set by [OpContext.node] when the operand of a
+	// selection reaches a vertex shared by a vertex of a function argument.
+	// [processResolver] clears it before resolving, and saves and restores
+	// the previous value, like lookupPendingParent.
+	argSelection *argSelection
+
 	// list of vertices that need to be finalized.
 	// TODO: remove this again once we have a proper way of detecting references
 	// across optional boundaries in hasAncestorV3. We can probably do this
@@ -1019,6 +1030,13 @@ func (c *OpContext) wrapCycleError(src ast.Node, b *Bottom) *Bottom {
 //
 // TODO: maybe return *Vertex, *Bottom
 func (c *OpContext) unifyNode(expr Expr, state Flags) (result Value) {
+	result, _ = c.unifyNodeRef(expr, state)
+	return result
+}
+
+// unifyNodeRef is [OpContext.unifyNode], and also returns the vertex that a
+// resolver resolves to, before it is dereferenced.
+func (c *OpContext) unifyNodeRef(expr Expr, state Flags) (result Value, ref *Vertex) {
 	savedSrc := c.src
 	c.src = expr.Source()
 	err := c.errs
@@ -1059,13 +1077,14 @@ func (c *OpContext) unifyNode(expr Expr, state Flags) (result Value) {
 
 	switch x := expr.(type) {
 	case Value:
-		return x
+		return x, ref
 
 	case Evaluator:
-		return x.evaluate(c, state)
+		return x.evaluate(c, state), ref
 
 	case Resolver:
 		v = x.resolve(c, state)
+		ref = v
 
 	default:
 		// This can only happen, really, if v == nil, which is not allowed.
@@ -1073,10 +1092,10 @@ func (c *OpContext) unifyNode(expr Expr, state Flags) (result Value) {
 	}
 
 	if c.HasErr() {
-		return nil
+		return nil, ref
 	}
 	if v == nil {
-		return nil
+		return nil, ref
 	}
 	// Processing v may make it share a vertex not processed yet, which the
 	// lookup then reads in its place. Process that vertex too, rather than
@@ -1087,7 +1106,7 @@ func (c *OpContext) unifyNode(expr Expr, state Flags) (result Value) {
 		c.processRef(v)
 		w := v.DerefValue()
 		if w == v {
-			return v
+			return v, ref
 		}
 		v = w
 	}
@@ -1187,7 +1206,7 @@ func (c *OpContext) node(orig Node, x Expr, scalar bool, state Flags) *Vertex {
 
 	// TODO: always get the vertex. This allows a whole bunch of trickery
 	// down the line.
-	v := c.unifyNode(x, state)
+	v, ref := c.unifyNodeRef(x, state)
 
 	v, ok := c.getDefault(v)
 	if !ok {
@@ -1249,6 +1268,7 @@ func (c *OpContext) node(orig Node, x Expr, scalar bool, state Flags) *Vertex {
 		}
 	}
 
+	c.noteArgSelection(ref, node)
 	return node
 }
 

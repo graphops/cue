@@ -1,0 +1,64 @@
+# The fields of a function argument that structure shares another vertex keep
+# their order when the callee reaches them through a selection or a
+# comprehension: the chain of the argument, under which they are scheduled,
+# does not decide their order. An inline @test(eq) does not check the order
+# of fields, so this is checked here.
+
+exec cue export -e out --out json
+cmp stdout want.json
+
+-- cue.mod/module.cue --
+module: "mod.test"
+language: version: "v0.18.0"
+-- in.cue --
+@experiment(functions)
+
+package p
+
+apply: func(r: {...}) -> {...}: {
+	r
+	metadata: labels: {cluster: "c"}
+}
+
+// The function selects the argument of the call it makes.
+Select: func(o: {...}) -> {...}: apply(o.res)
+
+// The function iterates over a field of its parameter.
+Iterate: func(o: {...}) -> [...]: [for _, r in o.res {apply(r)}]
+
+res: {
+	kind: "NetworkPolicy"
+	metadata: {
+		name: "w"
+		labels: app: "w"
+	}
+}
+out: {
+	select:  Select({"res": res})
+	iterate: Iterate({"res": {a: res}})
+}
+-- want.json --
+{
+    "select": {
+        "kind": "NetworkPolicy",
+        "metadata": {
+            "name": "w",
+            "labels": {
+                "app": "w",
+                "cluster": "c"
+            }
+        }
+    },
+    "iterate": [
+        {
+            "kind": "NetworkPolicy",
+            "metadata": {
+                "name": "w",
+                "labels": {
+                    "app": "w",
+                    "cluster": "c"
+                }
+            }
+        }
+    ]
+}
