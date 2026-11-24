@@ -1,0 +1,436 @@
+# A comprehension embeds what it yields, so one that yields nothing adds
+# nothing to its struct literal: no field and no embedded value.
+# https://cuelang.org/issue/4577
+-- in.cue --
+@experiment(functions,try)
+
+// An embedded value is the value of the literal, as without the comprehension.
+embedded: {
+	scalar:    {int, if false {x: 1}}
+	validator: {=~"a", if false {x: 1}}
+	bound:     {<0, if false {x: 1}}
+	top:       {_, if false {("b"): 1}}
+	for:       {int, for k, v in {} {(k): v}}
+	yields:    {int, if true {x: 1}}
+	match:     {=~"a", if false {x: 1}} & "abc"
+	noMatch:   {=~"a", if false {x: 1}} & "xyz"
+	optional:  {int, if false {x?: 1}}
+	required:  {int, if false {x!: 1}}
+	nested:    {int, if true {if false {x: 1}}}
+	body:      {"b", for k in [1] {if false {x: 1}}}
+	bodyLet:   {"b", for k in [1] {let y = k, if false {y}}}
+}
+
+// A literal that embeds only comprehensions which yield nothing is the empty
+// struct, also next to top.
+top: {
+	static:     _ & {if false {x: 1}}
+	dynamic:    _ & {if false {("b"): 1}}
+	forEmpty:   _ & {for k, v in {} {(k): v}}
+	optional:   _ & {if false {("b")?: 1}}
+	pattern:    _ & {if false {[string]: int}}
+	definition: _ & {if false {#b: 1}}
+	hidden:     _ & {if false {_b: 1}}
+	scalar:     _ & {if false {1}}
+	two:        _ & {if false {1}, if false {2}}
+	topAfter:   {if false {("b"): 1}} & _
+	validator:  matchN(1, [{}]) & {if false {("b"): 1}}
+	notNull:    !=null & {if false {("b"): 1}}
+	elseEmpty:  _ & {if false {1} else {if false {2}}}
+
+	// The comprehensions of the body of a comprehension act as further
+	// clauses, as in {for k in [1] if false {1}}.
+	nested: _ & {if true {if false {("b"): 1}}}
+	body:   _ & {for k in [1] {if false {1}}}
+	clause: _ & {for k in [1] if false {1}}
+}
+
+// The same through a definition field and a function parameter, which add a
+// top conjunct to the argument.
+def: {
+	#D: v: _
+	labels: {}
+	empty:  (#D & {v: {for k, x in labels {(k): x}}}).v
+	direct: (#D & {v: {for x in [] {(x): 1}}}).v
+}
+call: {
+	_f:    func(v: _) -> _: v
+	empty: _f({for k, x in {} {(k): x}})
+}
+
+// Such a literal conflicts with a value of another kind, and rules out the
+// disjuncts of another kind, as {} does.
+kind: {
+	scalar:      {if false {x: 1}} & string
+	list:        {if false {[2]}} & [1]
+	embedded:    {"b", {if false {x: 1}}}
+	disjunction: {if false {("b"): 1}} & (null | {a?: int})
+	choice:      {x: {if false {y: 1}} | string} & {x: string}
+}
+
+// A comprehension that yields a value still determines the literal.
+yields: {
+	scalar:  _ & {if true {1}}
+	second:  _ & {if false {1}, if true {2}}
+	body:    {for k in [1, 2] {if k == 2 {"b"}}}
+	top:     _ & {if true {_}}
+	field:   _ & {if true {("b"): 1}}
+	elseVal: _ & {if false {1} else {2}}
+}
+
+// The body of a comprehension in a list is an element of its own, so it is
+// the empty struct if its comprehensions yield nothing.
+list: [for x in [1, 2] {if x > 1 {x}}]
+
+// A comprehension that cannot run yet leaves the node incomplete.
+incomplete: {
+	y:       {z: int}
+	dynamic: _ & {if y.z == 1 {("b"): 1}}
+	plain:   {if y.z == 1 {("b"): 1}}
+	scalar:  {int, if y.z == 1 {x: 1}}
+
+	// The guard reads the field set to which the comprehension adds b.
+	length: a: {if len(a) == 0 {("b"): 1}}
+}
+-- out/compile --
+--- in.cue
+{
+  embedded: {
+    scalar: {
+      int
+      if false {
+        x: 1
+      }
+    }
+    validator: {
+      =~"a"
+      if false {
+        x: 1
+      }
+    }
+    bound: {
+      <0
+      if false {
+        x: 1
+      }
+    }
+    top: {
+      _
+      if false {
+        "b": 1
+      }
+    }
+    for: {
+      int
+      for k, v in {} {
+        〈1;k〉: 〈1;v〉
+      }
+    }
+    yields: {
+      int
+      if true {
+        x: 1
+      }
+    }
+    match: ({
+      =~"a"
+      if false {
+        x: 1
+      }
+    } & "abc")
+    noMatch: ({
+      =~"a"
+      if false {
+        x: 1
+      }
+    } & "xyz")
+    optional: {
+      int
+      if false {
+        x?: 1
+      }
+    }
+    required: {
+      int
+      if false {
+        x!: 1
+      }
+    }
+    nested: {
+      int
+      if true {
+        if false {
+          x: 1
+        }
+      }
+    }
+    body: {
+      "b"
+      for _, k in [
+        1,
+      ] {
+        if false {
+          x: 1
+        }
+      }
+    }
+    bodyLet: {
+      "b"
+      for _, k in [
+        1,
+      ] {
+        let y#1multi = 〈1;k〉
+        if false {
+          〈1;let y#1〉
+        }
+      }
+    }
+  }
+  top: {
+    static: (_ & {
+      if false {
+        x: 1
+      }
+    })
+    dynamic: (_ & {
+      if false {
+        "b": 1
+      }
+    })
+    forEmpty: (_ & {
+      for k, v in {} {
+        〈1;k〉: 〈1;v〉
+      }
+    })
+    optional: (_ & {
+      if false {
+        "b"?: 1
+      }
+    })
+    pattern: (_ & {
+      if false {
+        [string]: int
+      }
+    })
+    definition: (_ & {
+      if false {
+        #b: 1
+      }
+    })
+    hidden: (_ & {
+      if false {
+        _b: 1
+      }
+    })
+    scalar: (_ & {
+      if false {
+        1
+      }
+    })
+    two: (_ & {
+      if false {
+        1
+      }
+      if false {
+        2
+      }
+    })
+    topAfter: ({
+      if false {
+        "b": 1
+      }
+    } & _)
+    validator: (matchN(1, [
+      {},
+    ]) & {
+      if false {
+        "b": 1
+      }
+    })
+    notNull: (!=null & {
+      if false {
+        "b": 1
+      }
+    })
+    elseEmpty: (_ & {
+      if false {
+        1
+      } else {
+        if false {
+          2
+        }
+      }
+    })
+    nested: (_ & {
+      if true {
+        if false {
+          "b": 1
+        }
+      }
+    })
+    body: (_ & {
+      for _, k in [
+        1,
+      ] {
+        if false {
+          1
+        }
+      }
+    })
+    clause: (_ & {
+      for _, k in [
+        1,
+      ] if false {
+        1
+      }
+    })
+  }
+  def: {
+    #D: {
+      v: _
+    }
+    labels: {}
+    empty: (〈0;#D〉 & {
+      v: {
+        for k, x in 〈2;labels〉 {
+          〈1;k〉: 〈1;x〉
+        }
+      }
+    }).v
+    direct: (〈0;#D〉 & {
+      v: {
+        for _, x in [] {
+          〈1;x〉: 1
+        }
+      }
+    }).v
+  }
+  call: {
+    _f: func(v: _) -> _: 〈0;v〉
+    empty: 〈0;_f〉({
+      for k, x in {} {
+        〈1;k〉: 〈1;x〉
+      }
+    })
+  }
+  kind: {
+    scalar: ({
+      if false {
+        x: 1
+      }
+    } & string)
+    list: ({
+      if false {
+        [
+          2,
+        ]
+      }
+    } & [
+      1,
+    ])
+    embedded: {
+      "b"
+      {
+        if false {
+          x: 1
+        }
+      }
+    }
+    disjunction: ({
+      if false {
+        "b": 1
+      }
+    } & (null|{
+      a?: int
+    }))
+    choice: ({
+      x: ({
+        if false {
+          y: 1
+        }
+      }|string)
+    } & {
+      x: string
+    })
+  }
+  yields: {
+    scalar: (_ & {
+      if true {
+        1
+      }
+    })
+    second: (_ & {
+      if false {
+        1
+      }
+      if true {
+        2
+      }
+    })
+    body: {
+      for _, k in [
+        1,
+        2,
+      ] {
+        if (〈1;k〉 == 2) {
+          "b"
+        }
+      }
+    }
+    top: (_ & {
+      if true {
+        _
+      }
+    })
+    field: (_ & {
+      if true {
+        "b": 1
+      }
+    })
+    elseVal: (_ & {
+      if false {
+        1
+      } else {
+        2
+      }
+    })
+  }
+  list: [
+    for _, x in [
+      1,
+      2,
+    ] {
+      if (〈1;x〉 > 1) {
+        〈2;x〉
+      }
+    },
+  ]
+  incomplete: {
+    y: {
+      z: int
+    }
+    dynamic: (_ & {
+      if (〈1;y〉.z == 1) {
+        "b": 1
+      }
+    })
+    plain: {
+      if (〈1;y〉.z == 1) {
+        "b": 1
+      }
+    }
+    scalar: {
+      int
+      if (〈1;y〉.z == 1) {
+        x: 1
+      }
+    }
+    length: {
+      a: {
+        if (len(〈1;a〉) == 0) {
+          "b": 1
+        }
+      }
+    }
+  }
+}

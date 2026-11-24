@@ -223,16 +223,96 @@ func (n *nodeContext) processComprehension(d *envYield, state vertexStatus) *Bot
 	t.inserting = true
 	defer func() { t.inserting = false }()
 
-	if len(d.envs) == 0 && d.comp.Fallback != nil {
-		n.scheduleConjunct(Conjunct{d.env, d.comp.Fallback, id}, id)
-		return nil
+	body, envs := d.comp.Value, d.envs
+	if len(envs) == 0 && d.comp.Fallback != nil {
+		body, envs = d.comp.Fallback, []*Environment{d.env}
 	}
 
-	for _, env := range d.envs {
-		n.scheduleConjunct(Conjunct{env, d.comp.Value, id}, id)
+	first := len(n.compLits)
+	for _, env := range envs {
+		n.scheduleConjunct(Conjunct{env, body, id}, id)
 	}
+	n.comprehensionDone(d.env, body, first, len(envs) > 0)
 
 	return nil
+}
+
+// A compLit is a struct literal whose only embeddings are comprehensions, as
+// in {if x {1}}. A comprehension embeds what it yields, so if none of them
+// yields a value, the literal embeds nothing and is a struct, like a literal
+// without embeddings. Whether they yield is known only once they have run, so
+// the literal is marked as a struct when the last of them has completed.
+//
+// The body of a comprehension, as {if y {1}} in {for x in a {if y {1}}}, is
+// not marked: a nested comprehension acts as a further clause, as in
+// {for x in a if y {1}}, so if it yields nothing, the comprehension of which
+// it is the body yields nothing either.
+type compLit struct {
+	env *Environment // the environment of the literal's comprehension tasks
+	s   *StructLit
+	ci  CloseInfo
+
+	pending int  // the number of comprehensions and bodies yet to complete
+	yielded bool // whether a comprehension yielded a value
+
+	isBody bool // the literal is the body of a comprehension
+	// parent is the index, plus one, of the compLit of whose comprehension
+	// this literal is the body, or 0 if there is none.
+	parent int
+}
+
+// comprehensionDone records that a comprehension of the struct literal with
+// environment env has completed. It yielded body if yields is set, and the
+// compLits from index first on were added while scheduling it.
+func (n *nodeContext) comprehensionDone(env *Environment, body *StructLit, first int, yields bool) {
+	p := -1
+	for i, l := range n.compLits[:first] {
+		if l.env == env {
+			p = i
+			break
+		}
+	}
+	for i := first; i < len(n.compLits); i++ {
+		if l := &n.compLits[i]; l.s == body {
+			l.isBody = true
+			l.parent = p + 1
+			if p >= 0 {
+				n.compLits[p].pending++
+			}
+		}
+	}
+	if p < 0 {
+		return
+	}
+	// A body which is a compLit itself reports whether it yields a value
+	// once its own comprehensions have completed.
+	if yields && body.numComprehensionEmbeds() == 0 {
+		n.compLits[p].yielded = true
+	}
+	n.compLitDone(p)
+}
+
+// compLitDone records that a comprehension or body of compLits[i] has
+// completed, and marks the node as a struct if that completes a literal
+// which is not a body and none of whose comprehensions yielded a value.
+func (n *nodeContext) compLitDone(i int) {
+	for {
+		l := &n.compLits[i]
+		if l.pending--; l.pending > 0 {
+			return
+		}
+		switch {
+		case !l.isBody:
+			if !l.yielded {
+				n.markStructLit(l.s, l.ci)
+			}
+			return
+		case l.parent == 0:
+			return
+		}
+		i = l.parent - 1
+		n.compLits[i].yielded = n.compLits[i].yielded || l.yielded
+	}
 }
 
 // pushDownDeps does a static analysis of the processed values and adjusts

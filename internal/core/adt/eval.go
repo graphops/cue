@@ -162,7 +162,9 @@ func (n *nodeContext) validateValue(state vertexStatus) {
 		//
 		// Here A is marked as Top by matchN. The other struct also has an
 		// embedding (the comprehension), and thus does not force it either.
-		// So the resulting kind is top, not struct.
+		// So the resulting kind is top, not struct. A struct literal that
+		// embeds only comprehensions is marked once they have yielded
+		// nothing; see [compLit].
 		// As an approximation, we at least mark the node as a struct if it has
 		// any regular fields, and not before its embeddings have completed:
 		// marking it early lets a reference cycle through an embedding, as in
@@ -177,8 +179,9 @@ func (n *nodeContext) validateValue(state vertexStatus) {
 			// be.
 			//
 			// TODO(evalv3): even better would be to ensure that all
-			// comprehensions are done before calling this.
-			if a.Label.IsRegular() && a.ArcType != ArcOptional {
+			// comprehensions are done before calling this. A pending arc
+			// counts only while a comprehension may still add it.
+			if a.Label.IsRegular() && a.ArcType != ArcOptional && !a.cannotBecomeMember() {
 				markStruct = true
 				break
 			}
@@ -212,6 +215,12 @@ func (n *nodeContext) validateValue(state vertexStatus) {
 	} else if state == finalized {
 		n.node.BaseValue = n.getValidators(finalized)
 	}
+}
+
+// cannotBecomeMember reports whether v is a pending arc that nothing may still
+// add, such as the arc of a field of a comprehension that yielded nothing.
+func (v *Vertex) cannotBecomeMember() bool {
+	return v.ArcType == ArcPending && v.state != nil && !v.state.hasActiveParentTask()
 }
 
 // TODO: this is now a sentinel. Use a user-facing error that traces where
@@ -303,6 +312,10 @@ type nodeContext struct {
 	minFlatReplaceIDTo defID       // minimum 'to' value in flatReplaceIDs, 0 if empty
 	conjunctInfo       []conjunctInfo
 	reqSets            reqSets
+
+	// compLits holds the struct literals of this node that embed only
+	// comprehensions; see [compLit].
+	compLits []compLit
 
 	// Checks is a list of conjuncts, as we need to preserve the context in
 	// which it was evaluated. The conjunct is always a validator (and thus
@@ -525,6 +538,7 @@ func (c *OpContext) newNodeContext(node *Vertex) *nodeContext {
 			replaceIDs:        reuse(n.replaceIDs),
 			flatReplaceIDs:    reuse(n.flatReplaceIDs),
 			conjunctInfo:      reuse(n.conjunctInfo),
+			compLits:          reuse(n.compLits),
 			reqSets:           reuse(n.reqSets),
 			disjunctions:      reuse(n.disjunctions),
 			disjunctErrs:      reuse(n.disjunctErrs),

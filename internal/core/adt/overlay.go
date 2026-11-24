@@ -335,6 +335,7 @@ func (ctx *overlayContext) cloneNodeContext(n *nodeContext) *nodeContext {
 	d.flatReplaceIDs = append(d.flatReplaceIDs, n.flatReplaceIDs...)
 	d.minFlatReplaceIDTo = n.minFlatReplaceIDTo
 	d.conjunctInfo = append(d.conjunctInfo, n.conjunctInfo...)
+	d.compLits = append(d.compLits, n.compLits...)
 
 	// TODO: do we need to add cyclicConjuncts? Typically, cyclicConjuncts
 	// gets cleared at the end of a unify call. There are cases, however, where
