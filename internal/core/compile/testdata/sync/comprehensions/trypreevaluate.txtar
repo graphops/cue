@@ -1,0 +1,626 @@
+# Tests that pre-evaluating the body of a try clause, which only decides
+# whether its comprehension yields, commits nothing that the comprehension
+# has yet to yield into.
+#
+# The comprehension of a try clause is a parent task of the fields it yields
+# into, and its body may reach those fields while it is pre-evaluated, as
+# x in try X = x? {x: a: <=2}. Finalizing such a field, freezing its field
+# set or its arc type, or resolving its disjunctions, then lost what the
+# comprehension yielded afterwards: a constraint or a conflict without an
+# error, a new field reported as a cyclic reference, or a field declared by
+# an enclosing try clause reported as a cyclic reference (see
+# issue4486.txtar).
+#
+# https://cuelang.org/issue/XXXX
+-- in.cue --
+@experiment(try)
+
+// =============================================================================
+// Finalization and field set
+// =============================================================================
+
+// The body reaches x through the reference x? or s?, which share it, or x.a
+// through x.a?.
+fields: {
+	constraint: {
+		x: a: 5
+		try X = x? {x: a: <=2}
+	}
+	selector: {
+		x: a: 5
+		try A = x.a? {x: a: <=2}
+	}
+	// The try form of the if comprehension of https://cuelang.org/issue/4425.
+	issue4425: {
+		local: {zone: "zrh1"}
+		try L = local? {local: _zones[L.zone]}
+		_zones: zrh1: sos_region: "ch-dk-2"
+	}
+	// The body form refers to x from within the body, not from the
+	// expression of the clause, and was not affected.
+	bodyForm: {
+		x: a: 5
+		try {x: a: <=2, _y: x?}
+	}
+	newField: {
+		x: a: 5
+		try X = x? {x: b: 1}
+	}
+	dynamicField: {
+		x: a: 5
+		try X = x? {x: ("b"): 1}
+	}
+	structForm: {
+		x: a: 5
+		s: x
+		try {y: s?, x: b: 1}
+	}
+	// The body reads the field through the binding.
+	bindingRead: {
+		x: a: 1
+		try X = x? {x: b: X.a + 1}
+	}
+	// Only the pre-evaluation is exempt: an if clause reading a field the
+	// body changes is still a cycle, as it is without the try clause.
+	guardAfterTry: {
+		y: 1
+		x: a: 5
+		try Y = y? if x != _|_ {x: b: 1}
+	}
+	guardWithoutTry: {
+		x: a: 5
+		if x != _|_ {x: b: 1}
+	}
+	// An if clause in the body, whose guard reads the field the body
+	// declares, is a cycle as it is without the try clause:
+	//
+	//	x: a: 1
+	//	if x.b == _|_ {x: b: 1}
+	guardInBody: {
+		x: a: 1
+		try X = x? {
+			if x.b == _|_ {x: b: 1}
+		}
+	}
+}
+
+// =============================================================================
+// Disjunctions
+// =============================================================================
+
+// The body starts with x.r?, whose inline vertex shares x.r. Evaluating it
+// resolved the disjunction of x.r without the conjunct the body yields.
+disjunctions: {
+	// The body adds a value that matches none of the disjuncts.
+	conflict: {
+		x: r: "4k" | "32k"
+		x: r: "32k"
+		try _ = x.r? {x: r: "zz"}
+	}
+
+	// The body adds a value that matches the remaining disjunct.
+	compatible: {
+		x: r: "4k" | "32k"
+		x: r: "32k"
+		try _ = x.r? {x: r: "32k"}
+	}
+
+	// The body selects one of two disjuncts, the first a default.
+	default: {
+		x: r: *"4k" | "32k"
+		try _ = x.r? {x: r: "32k"}
+	}
+
+	// The body fails explicitly, as when it states that the field is not
+	// allowed.
+	explicit: {
+		x: r: "4k" | "32k"
+		x: r: "32k"
+		try _ = x.r? {x: r: error("r is not allowed")}
+	}
+
+	// The disjunction is of structs.
+	structs: {
+		x: r: {a: 1} | {a: 2}
+		x: r: a: 2
+		try _ = x.r? {x: r: a: 3}
+	}
+
+	// The field is optional in a definition, as when a schema allows a set of
+	// values for a field only some configurations may set.
+	optional: {
+		#S: {r?: "4k" | "32k"}
+		x: #S & {r: "32k"}
+		try _ = x.r? {x: r: error("r is not allowed")}
+	}
+
+	// The try clause is in the definition.
+	definition: {
+		#R: {
+			x: r?: "4k" | "32k"
+			try _ = x.r? {x: r: error("r is not allowed")}
+		}
+		out: #R & {x: r: "32k"}
+	}
+
+	// The field is absent, so the try clause yields nothing.
+	absent: {
+		#S: {r?: "4k" | "32k", s?: int}
+		x: #S & {s: 1}
+		try _ = x.r? {x: r: error("r is not allowed")}
+	}
+
+	// A guard and an alias, as in a schema that rejects a field depending on
+	// another, applied to every entry of a map.
+	guarded: {
+		#Z: {
+			fstype!:     "zfs" | "ext4"
+			recordSize?: "4k" | "32k"
+		}
+		entries: [string]: {
+			zfs~(_, Z): #Z
+			if Z.fstype != "zfs" {
+				try _ = Z.recordSize? {zfs: recordSize: error("recordSize is for zfs datasets")}
+			}
+		}
+		entries: ok: zfs: {fstype: "zfs", recordSize: "32k"}
+		entries: none: zfs: {fstype: "ext4"}
+		entries: bad: zfs: {fstype: "ext4", recordSize: "32k"}
+	}
+
+	// The body reaches the field through a field that shares it.
+	viaShare: {
+		x: r: "4k" | "32k"
+		x: r: "32k"
+		s: x.r
+		try _ = s? {x: r: "zz"}
+	}
+
+	// The disjunction is of an ancestor of the field.
+	viaAncestor: {
+		x: {r: 1} | {r: 2}
+		try _ = x.r? {x: r: 3}
+	}
+}
+
+// =============================================================================
+// Arc types
+// =============================================================================
+
+arcTypes: {
+	// The inner try clause in #P pre-evaluates source.options?, which fails
+	// as options is absent. Its base, source, belongs to the body of the try
+	// clause in c, so the failed lookup is retried along the path d.source in
+	// c, where d exists only as the placeholder for the field that same try
+	// clause is about to declare. Such a placeholder does not exist
+	// independently of the body, so the retry fails and the else clause
+	// applies.
+	placeholderOnly: {
+		cfg: d: {}
+		#P: {
+			source: {options?: _}
+			try {options: source.options?} else {options: {}}
+		}
+		c: {
+			try {d: #P & {source: cfg.d?}}
+		}
+	}
+
+	// c.d.source.options exists on its own, and the retry finds it.
+	independentField: {
+		cfg: d: {}
+		#P: {
+			source: {options?: _}
+			try {options: source.options?} else {options: {}}
+		}
+		c: {
+			d: source: options: 1
+			try {d: #P & {source: cfg.d?}}
+		}
+	}
+
+	// The binding reads a field that only the else clause of the same
+	// comprehension declares: within the pre-evaluation, the field does not
+	// exist.
+	elseDeclares: {
+		x: a: 1
+		try X = x.b? {x: c: 1} else {x: b: 2}
+	}
+
+	// A try clause outside the body, run while the body is pre-evaluated,
+	// reads a field the pre-evaluating clause is about to declare. It waits
+	// for that clause rather than deciding that the field is absent.
+	unrelatedTry: {
+		x: a: 1
+		try X = x? {x: b: 1}
+		try Y = x.b? {x: c: Y}
+	}
+}
+-- out/compile --
+--- in.cue
+{
+  fields: {
+    constraint: {
+      x: {
+        a: 5
+      }
+      try X = 〈0;x〉? {
+        x: {
+          a: <=2
+        }
+      }
+    }
+    selector: {
+      x: {
+        a: 5
+      }
+      try A = 〈0;x〉.a? {
+        x: {
+          a: <=2
+        }
+      }
+    }
+    issue4425: {
+      local: {
+        zone: "zrh1"
+      }
+      try L = 〈0;local〉? {
+        local: 〈2;_zones〉[〈1;L〉.zone]
+      }
+      _zones: {
+        zrh1: {
+          sos_region: "ch-dk-2"
+        }
+      }
+    }
+    bodyForm: {
+      x: {
+        a: 5
+      }
+      try {
+        x: {
+          a: <=2
+        }
+        _y: 〈0;x〉?
+      }
+    }
+    newField: {
+      x: {
+        a: 5
+      }
+      try X = 〈0;x〉? {
+        x: {
+          b: 1
+        }
+      }
+    }
+    dynamicField: {
+      x: {
+        a: 5
+      }
+      try X = 〈0;x〉? {
+        x: {
+          "b": 1
+        }
+      }
+    }
+    structForm: {
+      x: {
+        a: 5
+      }
+      s: 〈0;x〉
+      try {
+        y: 〈1;s〉?
+        x: {
+          b: 1
+        }
+      }
+    }
+    bindingRead: {
+      x: {
+        a: 1
+      }
+      try X = 〈0;x〉? {
+        x: {
+          b: (〈2;X〉.a + 1)
+        }
+      }
+    }
+    guardAfterTry: {
+      y: 1
+      x: {
+        a: 5
+      }
+      try Y = 〈0;y〉? if (〈1;x〉 != _|_(explicit error (_|_ literal) in source)) {
+        x: {
+          b: 1
+        }
+      }
+    }
+    guardWithoutTry: {
+      x: {
+        a: 5
+      }
+      if (〈0;x〉 != _|_(explicit error (_|_ literal) in source)) {
+        x: {
+          b: 1
+        }
+      }
+    }
+    guardInBody: {
+      x: {
+        a: 1
+      }
+      try X = 〈0;x〉? {
+        if (〈2;x〉.b == _|_(explicit error (_|_ literal) in source)) {
+          x: {
+            b: 1
+          }
+        }
+      }
+    }
+  }
+  disjunctions: {
+    conflict: {
+      x: {
+        r: ("4k"|"32k")
+      }
+      x: {
+        r: "32k"
+      }
+      try {
+        x: {
+          r: "zz"
+        }
+      }
+    }
+    compatible: {
+      x: {
+        r: ("4k"|"32k")
+      }
+      x: {
+        r: "32k"
+      }
+      try {
+        x: {
+          r: "32k"
+        }
+      }
+    }
+    default: {
+      x: {
+        r: (*"4k"|"32k")
+      }
+      try {
+        x: {
+          r: "32k"
+        }
+      }
+    }
+    explicit: {
+      x: {
+        r: ("4k"|"32k")
+      }
+      x: {
+        r: "32k"
+      }
+      try {
+        x: {
+          r: error("r is not allowed")
+        }
+      }
+    }
+    structs: {
+      x: {
+        r: ({
+          a: 1
+        }|{
+          a: 2
+        })
+      }
+      x: {
+        r: {
+          a: 2
+        }
+      }
+      try {
+        x: {
+          r: {
+            a: 3
+          }
+        }
+      }
+    }
+    optional: {
+      #S: {
+        r?: ("4k"|"32k")
+      }
+      x: (〈0;#S〉 & {
+        r: "32k"
+      })
+      try {
+        x: {
+          r: error("r is not allowed")
+        }
+      }
+    }
+    definition: {
+      #R: {
+        x: {
+          r?: ("4k"|"32k")
+        }
+        try {
+          x: {
+            r: error("r is not allowed")
+          }
+        }
+      }
+      out: (〈0;#R〉 & {
+        x: {
+          r: "32k"
+        }
+      })
+    }
+    absent: {
+      #S: {
+        r?: ("4k"|"32k")
+        s?: int
+      }
+      x: (〈0;#S〉 & {
+        s: 1
+      })
+      try {
+        x: {
+          r: error("r is not allowed")
+        }
+      }
+    }
+    guarded: {
+      #Z: {
+        fstype!: ("zfs"|"ext4")
+        recordSize?: ("4k"|"32k")
+      }
+      entries: {
+        [string]: {
+          zfs: 〈2;#Z〉
+          if (〈0;zfs〉.fstype != "zfs") {
+            try {
+              zfs: {
+                recordSize: error("recordSize is for zfs datasets")
+              }
+            }
+          }
+        }
+      }
+      entries: {
+        ok: {
+          zfs: {
+            fstype: "zfs"
+            recordSize: "32k"
+          }
+        }
+      }
+      entries: {
+        none: {
+          zfs: {
+            fstype: "ext4"
+          }
+        }
+      }
+      entries: {
+        bad: {
+          zfs: {
+            fstype: "ext4"
+            recordSize: "32k"
+          }
+        }
+      }
+    }
+    viaShare: {
+      x: {
+        r: ("4k"|"32k")
+      }
+      x: {
+        r: "32k"
+      }
+      s: 〈0;x〉.r
+      try {
+        x: {
+          r: "zz"
+        }
+      }
+    }
+    viaAncestor: {
+      x: ({
+        r: 1
+      }|{
+        r: 2
+      })
+      try {
+        x: {
+          r: 3
+        }
+      }
+    }
+  }
+  arcTypes: {
+    placeholderOnly: {
+      cfg: {
+        d: {}
+      }
+      #P: {
+        source: {
+          options?: _
+        }
+        try {
+          options: 〈1;source〉.options?
+        } else {
+          options: {}
+        }
+      }
+      c: {
+        try {
+          d: (〈2;#P〉 & {
+            source: 〈3;cfg〉.d?
+          })
+        }
+      }
+    }
+    independentField: {
+      cfg: {
+        d: {}
+      }
+      #P: {
+        source: {
+          options?: _
+        }
+        try {
+          options: 〈1;source〉.options?
+        } else {
+          options: {}
+        }
+      }
+      c: {
+        d: {
+          source: {
+            options: 1
+          }
+        }
+        try {
+          d: (〈2;#P〉 & {
+            source: 〈3;cfg〉.d?
+          })
+        }
+      }
+    }
+    elseDeclares: {
+      x: {
+        a: 1
+      }
+      try X = 〈0;x〉.b? {
+        x: {
+          c: 1
+        }
+      } else {
+        x: {
+          b: 2
+        }
+      }
+    }
+    unrelatedTry: {
+      x: {
+        a: 1
+      }
+      try X = 〈0;x〉? {
+        x: {
+          b: 1
+        }
+      }
+      try Y = 〈0;x〉.b? {
+        x: {
+          c: 〈2;Y〉
+        }
+      }
+    }
+  }
+}

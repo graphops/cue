@@ -525,6 +525,11 @@ processNextTask:
 			// A comprehension still evaluating its clauses does not defer
 			// resolvers: its guards may depend on the resolver's conjuncts.
 			continue
+		case t.run == handleDisjunctions && s.hasPreEvaluatingParentTask():
+			// A comprehension pre-evaluating a try clause has yet to yield
+			// into this node. Resolving its disjunctions now would lose what
+			// it yields; see [scheduler.hasPreEvaluatingParentTask].
+			continue
 		case hasPendingDisjunction && t.isPushedDownComp():
 			// Defer pushed-down comprehensions until pending
 			// disjunctions have expanded the parent into disjuncts:
@@ -829,13 +834,14 @@ func (w tryWait) cancel() {
 // one of the arc's parent tasks in state taskRUNNING may still declare. As in
 // [scheduler.hasRunningSiblingParentTask], only a running parent task
 // matters: a READY one is run by unify, and a WAITING one is resolved by the
-// freeze cycle-breaker.
+// freeze cycle-breaker. A comprehension pre-evaluating the try clause body
+// that t belongs to is not such a producer (see [task.preEvaluates]).
 func (t *task) awaitsRunningProducer() bool {
 	if t.blockCondition&arcTypeKnown == 0 {
 		return false
 	}
 	for _, pt := range t.blockedOn.parentTasks {
-		if pt.state == taskRUNNING {
+		if pt.state == taskRUNNING && !pt.preEvaluates(t.node.node) {
 			return true
 		}
 	}
@@ -934,10 +940,18 @@ func (s *scheduler) freeze(c condition, by Node) {
 //
 // The current task is excluded from the parent-task check only: it may
 // freeze fieldSetKnown for the very node it is the parent task of (e.g. a
-// comprehension iterating over its own source node). A running resolver
+// comprehension iterating over its own source node). This does not hold while
+// it pre-evaluates a try clause, which only decides whether it yields and must
+// not commit the field set of the nodes it yields into. A running resolver
 // among this scheduler's own tasks still defers the freeze, as its result
 // may yet add fields to this node.
 func (s *scheduler) deferFieldSetKnown(c condition) condition {
+	// The arc type of a node that a comprehension pre-evaluating a try clause
+	// has yet to yield into is not committed either: the clause may still
+	// declare it. See [scheduler.hasPreEvaluatingParentTask].
+	if c&arcTypeKnown != 0 && s.hasPreEvaluatingParentTask() {
+		c &^= arcTypeKnown
+	}
 	if c&fieldSetKnown == 0 {
 		return c
 	}
@@ -947,7 +961,7 @@ func (s *scheduler) deferFieldSetKnown(c condition) condition {
 		case taskSUCCESS, taskFAILED, taskCANCELLED:
 			continue
 		}
-		if pt != cur {
+		if pt != cur || pt.preEvalBody != nil {
 			return c &^ fieldSetKnown
 		}
 	}
@@ -1003,6 +1017,19 @@ func (s *scheduler) hasActiveParentTask() bool {
 	return false
 }
 
+// hasActiveParentTaskFor is like [scheduler.hasActiveParentTask], for the
+// evaluation of v: a comprehension pre-evaluating the try clause body that
+// contains v is not a parent task that may still add to this node for v (see
+// [task.preEvaluates]).
+func (s *scheduler) hasActiveParentTaskFor(v *Vertex) bool {
+	for _, pt := range s.parentTasks {
+		if pt.state < taskSUCCESS && !pt.preEvaluates(v) {
+			return true
+		}
+	}
+	return false
+}
+
 // hasRunningSiblingParentTask reports whether a parent task other than the
 // currently running task is itself running. Such a task (e.g. a sibling
 // comprehension whose guard is still being evaluated) may yet add fields to
@@ -1022,6 +1049,35 @@ func (s *scheduler) hasRunningSiblingParentTask() bool {
 		}
 	}
 	return false
+}
+
+// hasPreEvaluatingParentTask reports whether a parent task is a comprehension
+// pre-evaluating a try clause (see [finalizeTryBody]). That comprehension has
+// yet to yield into this node, so the pre-evaluation, which only decides
+// whether it does, must not commit anything the yield may change: the node is
+// not finalized (see [Vertex.unify]), its disjunctions are not resolved, and
+// neither its field set nor its arc type is frozen (see
+// [scheduler.deferFieldSetKnown]). A later finalize completes it once the
+// comprehension has run.
+func (s *scheduler) hasPreEvaluatingParentTask() bool {
+	for _, pt := range s.parentTasks {
+		if pt.preEvalBody != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// preEvaluates reports whether t is a comprehension pre-evaluating a try
+// clause whose body contains v. For the tasks of that body, what t would
+// yield does not exist yet: t is not a producer they wait for (see
+// [task.awaitsRunningProducer]), nor one that may still declare a field they
+// look up (see [scheduler.hasActiveParentTaskFor]), and the arc types it may
+// still decide are not frozen (see [scheduler.deferFieldSetKnown]), so they
+// see such an arc as absent. Any other task waits for t like for any running
+// producer.
+func (t *task) preEvaluates(v *Vertex) bool {
+	return t.preEvalBody != nil && v.tryBodyRoot() == t.preEvalBody
 }
 
 // runner defines properties of a type of task, including a function to run it.
@@ -1053,6 +1109,11 @@ type task struct {
 	// inserting indicates that this comprehension task is inserting the
 	// conjuncts its clauses yielded; see hasInsertingComp in process.
 	inserting bool
+
+	// preEvalBody is the inline vertex of the try clause body this
+	// comprehension task is pre-evaluating, if any: it has not yielded yet.
+	// See [scheduler.hasPreEvaluatingParentTask] and [task.preEvaluates].
+	preEvalBody *Vertex
 
 	// retry requeues this task as READY instead of completing it.
 	retry bool

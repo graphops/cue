@@ -1,0 +1,49 @@
+# A try clause whose binding reads a field that only its else clause
+# declares. The comprehension is pushed down to the fields of both clauses,
+# x, x.b and x.c, and holds their values until it is done. Within the
+# pre-evaluation of the clause, x.b does not exist: the binding fails and the
+# else clause declares x.b.
+#
+# https://cuelang.org/issue/XXXX
+-- in.cue --
+@experiment(try)
+
+x: a: 1
+try X = x.b? {x: c: 1} else {x: b: 2}
+
+// The body uses the binding: it must not resolve to the pending x.b.
+binding: {
+	x: a: 1
+	try X = x.b? {y: c: X} else {x: b: 2}
+}
+
+-- out/compile --
+--- in.cue
+{
+  x: {
+    a: 1
+  }
+  try X = 〈0;x〉.b? {
+    x: {
+      c: 1
+    }
+  } else {
+    x: {
+      b: 2
+    }
+  }
+  binding: {
+    x: {
+      a: 1
+    }
+    try X = 〈0;x〉.b? {
+      y: {
+        c: 〈2;X〉
+      }
+    } else {
+      x: {
+        b: 2
+      }
+    }
+  }
+}

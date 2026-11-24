@@ -1,0 +1,32 @@
+# A try clause whose body dereferences an absent optional sibling, nested in
+# the body of another try clause.
+#
+# https://cuelang.org/issue/4486
+-- in.cue --
+@experiment(try)
+
+package repro
+
+out: {
+	try {
+		claim: {
+			a?: string
+			try {x: a?}
+		}
+	}
+}
+
+-- out/compile --
+--- in.cue
+{
+  out: {
+    try {
+      claim: {
+        a?: string
+        try {
+          x: 〈1;a〉?
+        }
+      }
+    }
+  }
+}
