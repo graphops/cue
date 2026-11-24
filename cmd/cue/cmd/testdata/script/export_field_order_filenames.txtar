@@ -1,0 +1,89 @@
+# The order of the fields of a value must not depend on how the names of
+# the files contributing to it compare, as the files of a dependency are
+# named by their path in the module cache, which may sort before or after
+# the files of the main module.
+# https://cuelang.org/issue/4596
+#
+# Each package below declares s in one file, and selects it in main.cue.
+# In ./a that file sorts before main.cue, in ./z after it.
+
+# Roots at equal positions keep the order in which they were added: more
+# than 12 roots, so that the sort is not an insertion sort.
+exec cue export -e out.x ./a
+cmp stdout want-x.json
+exec cue export -e out.x ./z
+cmp stdout want-x.json
+
+# The roots of one comprehension firing in two files keep the order of
+# the iteration.
+exec cue export -e out.y ./a
+cmp stdout want-y.json
+exec cue export -e out.y ./z
+cmp stdout want-y.json
+
+-- a/dep_a.cue --
+package p
+
+s: x: {
+	{a1: "v"}
+	{_b, _c}
+	{"\("d1")": "v", d2: "v"}
+	{("d3"): "v"}
+	{d4: "v"}
+	{_e, _f}
+	if true {g1: "v"}
+	{"\("h1")": "v", h2: "v"}
+}
+_b: {b1: "v"}
+_c: {c1: "v"}
+_e: {e1: "v"}
+_f: {f1: "v"}
+
+s: y: {for k in ["b", "a"] {{}, (k): "v"}}
+-- a/main.cue --
+package p
+
+out: s & {}
+-- z/zz_dep.cue --
+package p
+
+s: x: {
+	{a1: "v"}
+	{_b, _c}
+	{"\("d1")": "v", d2: "v"}
+	{("d3"): "v"}
+	{d4: "v"}
+	{_e, _f}
+	if true {g1: "v"}
+	{"\("h1")": "v", h2: "v"}
+}
+_b: {b1: "v"}
+_c: {c1: "v"}
+_e: {e1: "v"}
+_f: {f1: "v"}
+
+s: y: {for k in ["b", "a"] {{}, (k): "v"}}
+-- z/main.cue --
+package p
+
+out: s & {}
+-- want-x.json --
+{
+    "a1": "v",
+    "b1": "v",
+    "c1": "v",
+    "d4": "v",
+    "e1": "v",
+    "f1": "v",
+    "g1": "v",
+    "d1": "v",
+    "d2": "v",
+    "d3": "v",
+    "h1": "v",
+    "h2": "v"
+}
+-- want-y.json --
+{
+    "b": "v",
+    "a": "v"
+}
