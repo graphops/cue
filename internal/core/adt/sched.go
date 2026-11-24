@@ -710,7 +710,8 @@ func (s *scheduler) unblockTasks(deferred []taskBlock) []taskBlock {
 	// This walks up the parent chain, so compute it once per finalize.
 	inTryBody := s.inTryBody()
 	canUnblock := func(b taskBlock) bool {
-		return b.pending() && !s.mustDeferUnblock(b.task, inTryBody)
+		return b.pending() && !s.mustDeferUnblock(b.task, inTryBody) &&
+			!mustAwaitProducer(b.task)
 	}
 	numTasks := len(s.tasks)
 	// New waits, including those returned by nested finalizers, get their own
@@ -843,9 +844,12 @@ func (v *Vertex) tryBodyRoot() *Vertex {
 // them commit results that the deferred tasks later contradict.
 //
 // The tasks of the finalizing vertex itself, and of its descendants, are
-// never deferred, whatever they are blocked on: they are what the
+// not deferred here, whatever they are blocked on: they are what the
 // pre-evaluation is about, and a ?-marked reference among them left
-// blocked would hide the very failure the try clause looks for.
+// blocked would hide the very failure the try clause looks for. The one
+// exception, an arc type a running comprehension is still deciding, is
+// handled by [mustAwaitProducer], after which the try clause waits rather
+// than decides.
 func (s *scheduler) mustDeferUnblock(t *task, inTryBody bool) bool {
 	if !inTryBody || t.blockedOn.node == nil {
 		return false
@@ -860,6 +864,79 @@ func (s *scheduler) mustDeferUnblock(t *task, inTryBody bool) bool {
 		}
 	}
 	return true
+}
+
+// mustAwaitProducer reports whether the unblocking phase of a finalize must
+// leave blocked task t alone because t waits for the type of an arc that a
+// running parent task, such as a comprehension still evaluating its clauses,
+// may yet declare (see [task.awaitsRunningProducer]). Freezing the arc type
+// then would commit a type that the producer contradicts as soon as it
+// resumes: the arc becomes a member after t has already observed it as
+// absent. The producer is on the evaluation stack, so it completes once the
+// finalize returns, and settles the wait.
+//
+// This applies to two kinds of tasks:
+//
+//   - a task of a rooted vertex, which contributes to the configuration
+//     independently of the evaluation in progress, and can resume later;
+//   - a task of a try clause body being pre-evaluated (see
+//     [Vertex.tryBodyRoot]), such as one resolving a ?-marked reference of
+//     the body. The wait is recorded on the body, and the try clause then
+//     waits for the arc type instead of deciding (see [TryClause.yield]).
+//
+// Other tasks of inline vertices compute an operand on the stack, such as a
+// disjunct of a comprehension guard, which is consumed before the producer
+// resumes. Freezing remains their cycle-breaker, and a guard that a producer
+// contradicts is reported as a cycle by the post-checks of the comparison.
+func mustAwaitProducer(t *task) bool {
+	if !t.awaitsRunningProducer() {
+		return false
+	}
+	v := t.node.node
+	if v.Rooted() {
+		return true
+	}
+	root := v.tryBodyRoot()
+	if root == nil {
+		return false
+	}
+	tb := root.state.tryBody
+	tb.awaiting = append(tb.awaiting, tryWait{t, t.blockedOn, t.blockCondition})
+	return true
+}
+
+// tryWait is a wait of a task of a try clause body that [mustAwaitProducer]
+// left in place.
+type tryWait struct {
+	task  *task
+	on    *scheduler
+	needs condition
+}
+
+// cancel makes the wait inert. The body is discarded once evaluated, and its
+// tasks freed, but they remain in the blocking queue of the scheduler they
+// wait on: signaling it must not run them.
+func (w tryWait) cancel() {
+	if t := w.task; t.blockedOn == w.on {
+		t.blockedOn, t.blockCondition = nil, neverKnown
+	}
+}
+
+// awaitsRunningProducer reports whether t waits for the type of an arc that
+// one of the arc's parent tasks in state taskRUNNING may still declare. As in
+// [scheduler.hasRunningSiblingParentTask], only a running parent task
+// matters: a READY one is run by unify, and a WAITING one is resolved by the
+// freeze cycle-breaker.
+func (t *task) awaitsRunningProducer() bool {
+	if t.blockCondition&arcTypeKnown == 0 {
+		return false
+	}
+	for _, pt := range t.blockedOn.parentTasks {
+		if pt.state == taskRUNNING {
+			return true
+		}
+	}
+	return false
 }
 
 // yield causes the current task to be suspended until the given conditions

@@ -249,6 +249,15 @@ func (v *Vertex) unify(c *OpContext, flags Flags) bool {
 
 	n.process(nodeOnlyNeeds, mode)
 
+	// A try clause body whose tasks wait for an arc type is evaluated again
+	// once it is known (see [TryClause.yield]). Completing it now would only
+	// report the arcs that those tasks may still declare as missing.
+	if tb := n.tryBody; tb != nil && mode == finalize {
+		if _, ok := tb.unmetWait(); ok {
+			return false
+		}
+	}
+
 	if n.node.ArcType != ArcPending &&
 		n.meets(allAncestorsProcessed) &&
 		allTasksFinished(n) {

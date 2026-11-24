@@ -1,0 +1,192 @@
+# Tests that a lookup does not decide on the type of an arc that a running
+# comprehension may still declare.
+#
+# The guard of the comprehension that sets imp looks up x. That runs another
+# comprehension, a parent task of x, which reads imp while the first one, the
+# producer of imp, is still evaluating its guard. The freeze cycle-breaker
+# then committed imp as an optional arc before imp: true arrived. With an if
+# clause, this was reported as a spurious "changed after evaluation" cycle;
+# with a try clause, the try body was silently discarded.
+#
+# https://cuelang.org/issue/XXXX
+-- in.cue --
+@experiment(try)
+
+// imp becomes true, so the comprehension applies and conflicts with enabled.
+ifGuard: {
+	c: #If
+	c: {
+		if c.x != _|_ {imp: true}
+		enabled: false
+		x: {}
+	}
+	@test(err, code=eval, at=c.enabled, contains="conflicting values true and false")
+}
+
+// The same with a try clause.
+tryDiscarded: {
+	c: #Try
+	c: {
+		if c.x != _|_ {imp: true}
+		enabled: false
+		x: {}
+	}
+	@test(err, code=eval, at=c.enabled, contains="conflicting values true and false")
+}
+
+// The same with a definition-free struct and an existence check in the body.
+tryInline: {
+	c: {
+		if c.x != _|_ {imp: true}
+		enabled?: _
+		imp?:     bool
+		x?:       _
+		try I = imp? {
+			if I {
+				enabled: true
+				x?:      _
+			}
+		}
+		enabled: false
+		x: {}
+	}
+	@test(err, code=eval, at=c.enabled, contains="conflicting values true and false")
+}
+
+// The struct form, whose body reads imp itself.
+tryStruct: {
+	c: {
+		if c.x != _|_ {imp: true}
+		imp?: bool
+		x:    {}
+		try {
+			a:  imp?
+			x!: _
+		}
+	}
+	@test(eq, {c: {imp: true, x: {}, a: true}})
+}
+
+// The try clause that reads imp is nested in the body of another one.
+tryNested: {
+	c: {
+		if c.x != _|_ {imp: true}
+		imp?: bool
+		x:    {}
+		try {
+			a: imp?
+			try {
+				if imp? {x!: _}
+			}
+		}
+	}
+	@test(eq, {c: {imp: true, x: {}, a: true}})
+}
+
+// imp becomes true and the body holds.
+tryApplies: {
+	c: #Try
+	c: {
+		if c.x != _|_ {imp: true}
+		enabled: true
+		x: {}
+	}
+	@test(eq, {c: {enabled: true, imp: true, x: {}}})
+}
+
+// imp stays absent, so the try body is discarded.
+tryAbsent: {
+	c: #Try
+	c: {
+		if c.x != _|_ {imp: true}
+		enabled: false
+	}
+	@test(eq, {c: {enabled: false, imp?: bool, x?: _}})
+}
+
+// The nested try clause waits for imp, but the outer body has already
+// settled imp by the time its evaluation returns, so the outer one decides.
+settledInBody: {
+	c: {
+		if c.x != _|_ {imp: true}
+		if c.x != _|_ {imp2: true}
+		imp?:  bool
+		imp2?: bool
+		x:     {}
+		try {
+			a: imp2?
+			try {
+				if imp? {x!: _}
+			}
+		}
+	}
+	@test(eq, {c: {imp: true, imp2: true, x: {}, a: true}})
+}
+
+// The nested try clause waits for imp, and so does the outer one. The arcs
+// that the nested one may still declare in the outer body are not reported
+// as missing.
+suspendedInBody: {
+	c: {
+		if c.x != _|_ {imp: true}
+		if c.x != _|_ {imp2: true}
+		imp?:  bool
+		imp2?: bool
+		x:     {}
+		try {
+			try {
+				if imp? {x!: _}
+			}
+			a: imp2?
+		}
+	}
+	@test(eq, {c: {imp: true, imp2: true, x: {}, a: true}})
+}
+
+#If: {
+	enabled?: _
+	imp?:     bool
+	x?:       _
+	if imp != _|_ {
+		if imp {
+			enabled: true
+			x!:      _
+		}
+	}
+}
+
+#Try: {
+	enabled?: _
+	imp?:     bool
+	x?:       _
+	try I = imp? {
+		if I {
+			enabled: true
+			x!:      _
+		}
+	}
+}
+-- out/errors.txt --
+[eval] ifGuard.c.enabled: conflicting values true and false:
+    ./in.cue:5:5
+    ./in.cue:8:12
+    ./in.cue:140:13
+[eval] tryDiscarded.c.enabled: conflicting values true and false:
+    ./in.cue:16:5
+    ./in.cue:19:12
+    ./in.cue:152:13
+[eval] tryInline.c.enabled: conflicting values true and false:
+    ./in.cue:34:14
+    ./in.cue:38:12
+-- out/eval/stats --
+Leaks:  6
+Freed:  107
+Reused: 80
+Allocs: 33
+Retain: 0
+
+Unifications: 104
+Conjuncts:    172
+Disjuncts:    0
+
+NumCloseIDs: 4
