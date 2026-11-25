@@ -1178,7 +1178,12 @@ issue3784: full: {
 	}
 	@test(eq, {
 		#Schema: {
-			pages?: {build_type!: "legacy", source!: {branch!: string, path?: string}, cname?: string} | {build_type!: "workflow", source?: {branch?: string, path?: string}, cname?: string}
+			// The closed second disjunct does not allow source.
+			pages?: {build_type!: "legacy", source!: {branch!: string, path?: string}, cname?: string} | {
+				build_type!: "workflow"
+				source?:     _|_ @test(err, code=eval, contains="field not allowed")
+				cname?:      string
+			}
 		}
 		out: {
 			pages: {
