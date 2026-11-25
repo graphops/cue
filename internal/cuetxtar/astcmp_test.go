@@ -380,6 +380,30 @@ func TestAstCompare_ErrDirective(t *testing.T) {
 	})
 }
 
+// TestAstCompare_ErrorWithArcs verifies that a struct expectation does not
+// match a value with a permanent error of its own, even if the value keeps
+// arcs that the expected fields match, as an empty disjunction does.
+func TestAstCompare_ErrorWithArcs(t *testing.T) {
+	ctx := cuecontext.New()
+	v := ctx.CompileString(`
+		#D: {a: int}
+		empty: ({a: 2, b: 3} | {a: 1, c: 1}) & #D
+		incomplete: {a: bool, if a {b: 1}}
+	`)
+	empty := v.LookupPath(cue.ParsePath("empty"))
+	incomplete := v.LookupPath(cue.ParsePath("incomplete"))
+
+	t.Run("empty disjunction does not match its arcs", func(t *testing.T) {
+		checkErr(t, CompareExpr(parseExpr(t, `{a: int}`), empty), "value is an error")
+	})
+	t.Run("empty disjunction matches an embedded error", func(t *testing.T) {
+		checkErr(t, CompareExpr(parseExpr(t, `{_|_, a: int}`), empty), "")
+	})
+	t.Run("incomplete struct still compares", func(t *testing.T) {
+		checkErr(t, CompareExpr(parseExpr(t, `{a: bool}`), incomplete), "")
+	})
+}
+
 // TestAstCompare_HiddenFieldsInNonStruct verifies that hidden and definition
 // fields present in a value are not silently ignored when the expected
 // expression is a non-struct (list, scalar, or ident). The caller must use a

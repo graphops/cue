@@ -432,9 +432,17 @@ func (c *cmpCtx) cmpStruct(path cue.Path, s *ast.StructLit, val cue.Value) error
 		// retains its arcs falls through here — the field loop below
 		// finds the error at the child path. The lenient hasEmbedBottom
 		// path is the explicit way to opt into accepting an error here.
+		//
+		// Reject a value with a permanent error of its own as well, even
+		// if it retains arcs: the fields would otherwise match the arcs
+		// left over, as an empty disjunction keeps those of the conjuncts
+		// it was unified with. An incomplete error of the struct itself,
+		// such as an unresolved reference in a schema, still lets its
+		// shape be compared.
 		if vx := val.Core().V; vx != nil {
 			deref := vx.DerefValue()
-			if b, ok := deref.BaseValue.(*adt.Bottom); ok && len(deref.Arcs) == 0 {
+			b, ok := deref.BaseValue.(*adt.Bottom)
+			if ok && (len(deref.Arcs) == 0 || !b.ChildError && !b.IsIncomplete()) {
 				return pathErr(path, "value is an error (%v) but expected struct has no embedded _|_; use {_|_, ...} to assert error", b.Err)
 			}
 		}
