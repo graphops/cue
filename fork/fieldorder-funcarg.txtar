@@ -1,0 +1,57 @@
+# The fields of a function argument keep their declared order in the result
+# when the function body adds fields next to them: kind before metadata, and
+# name and namespace before labels and annotations, as _phases.policy and the
+# body of apply declare them. v0.18.0, master, v0.18.0-rc.4-graphops.2 and this
+# branch pass. The first version of share-funcarg-chain (dusk-to-dawn
+# 56f27cd7a, in graphops/v0.18.0-candidate3) put the fields the body adds
+# first: metadata before kind, labels and annotations before name, cluster
+# before app.
+exec cue export x.cue -e out --out json
+cmp stdout want.json
+
+-- want.json --
+[
+    {
+        "kind": "NetworkPolicy",
+        "metadata": {
+            "name": "w",
+            "namespace": "ns",
+            "labels": {
+                "app": "w",
+                "cluster": "c"
+            },
+            "annotations": {
+                "wave": "0"
+            }
+        }
+    }
+]
+-- x.cue --
+@experiment(functions)
+package p
+
+resourceSet: func(rules: {...}) -> {...}: {
+	for _, rule in rules {rule.set}
+}
+apply: func(m: {...}, r: {...}) -> {...}: {
+	r
+	metadata: {
+		labels:      resourceSet(m.labels)
+		annotations: resourceSet(m.annotations)
+	}
+}
+resources: func(o: {...}) -> [...]: [for _, r in o.phases {apply(o.m, r)}]
+
+ctx: m: {
+	labels: p: set: {cluster: "c"}
+	annotations: p: set: {wave: "0"}
+}
+_phases: policy: {
+	kind: "NetworkPolicy"
+	metadata: {
+		name:      "w"
+		namespace: "ns"
+		labels: app: "w"
+	}
+}
+out: resources({ctx, phases: _phases})

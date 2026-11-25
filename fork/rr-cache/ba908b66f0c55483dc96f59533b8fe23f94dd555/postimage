@@ -1,0 +1,1831 @@
+# Tests unification of CUE function values with function types (bodyless
+# signatures, possibly partial/open) and of function types with each other.
+# Static checks at unification time cover what is decidable from the
+# compiled signatures: parameter names, positions, closedness, whether a
+# parameter declares a default, and declared compatibility: the value must
+# accept, for each parameter, every value the type admits, and must declare
+# a result the type's result admits. Requiredness combines as for struct
+# fields and is enforced when a call omits a parameter. The type's
+# constraints restrict every call regardless of what the value accepts;
+# missing arguments surface when the function is called; two declared
+# defaults for the same parameter are unified when the signatures are.
+# try.cue holds the cases that need the try experiment.
+-- in.cue --
+@experiment(functions)
+
+import "strings"
+
+tighten: {
+	T: func(a: int, ...) -> number
+
+	// The value declares an extra parameter b; T's signature is open, so
+	// the extra parameter is allowed and kept.
+	f: T & (func(a: int, b: int) -> int: a + b)
+	x: f(1, 2) @test(eq, 3)
+	y: f(1) @test(err, code=eval, contains="missing argument b")
+
+	// Order of unification does not matter.
+	fRev: (func(a: int, b: int) -> int: a + b) & T
+	xRev: fRev(1, 2) @test(eq, 3)
+
+	// The type's result constraint is enforced on calls through the
+	// tightened value, and the value must declare a result the type admits.
+	r: (T & (func(a: int) -> int: a))(3) @test(eq, 3)
+	retConflict: (func(a: int, ...) -> string) & (func(a: int) -> int: a) @test(err, code=eval, contains="function returns int, but its signature requires string")
+	// A declared result wider than the signature's is rejected too, whatever
+	// the body returns.
+	retWide: (func(a: int, ...) -> int) & (func(a: int) -> number: 7) @test(err, code=eval, contains="function returns number, but its signature requires int")
+
+	// The value must accept every value the type admits for a parameter: a
+	// string-only value does not satisfy an int signature, whether or not
+	// it is ever called.
+	s: T & (func(a: string) -> int: 1) @test(err, code=eval, contains="parameter a of function accepts string, but its signature requires int")
+}
+
+closed: {
+	U: func(a: int) -> number
+
+	// Matching parameters and a narrower result are admitted: the
+	// implementation's int result is within the signature's number.
+	g:  U & (func(a: int) -> int: a)
+	gx: g(1) @test(eq, 1)
+
+	// A named type may add its contract label to an otherwise unnamed
+	// positional implementation slot.
+	gN:       U & (func(_~v: int) -> int: v)
+	gNx:      gN(1) @test(eq, 1)
+	gNByName: gN(a: 2) @test(eq, 2)
+
+	// Two different contract labels for the same positional slot conflict.
+	badName: U & (func(b: int) -> int: b) @test(err, code=eval, contains="conflicting parameter labels")
+
+	// The value requires an extra parameter b, which callers going through
+	// the closed type U can never provide.
+	bad2: U & (func(a: int, b: int) -> int: a+b) @test(err, code=eval, contains="parameter b of function not allowed by closed function type")
+
+	// An extra optional parameter is allowed even for a closed type.
+	ok3:  U & (func(a: int, b?: int) -> int: a)
+	ok3x: ok3(1) @test(eq, 1)
+}
+
+anonymous: {
+	// An anonymous type parameter matches the value's positional parameter
+	// in the same position, and its constraint applies to calls.
+	A:  func(int, ...) -> int
+	h:  A & (func(n: int) -> int: n + 1)
+	hx: h(1) @test(eq, 2)
+	he: h("x") @test(err, code=eval, contains="conflicting values")
+
+	// A named type parameter is positional too, so it is satisfied by an
+	// anonymous value parameter in the same position.
+	B:   func(m: int) -> int
+	bOk: B & (func(int) -> int: 1)
+	bx:  bOk(1) @test(eq, 1)
+
+	// A named positional parameter of the value may be covered by an
+	// anonymous parameter of a closed type in the same position.
+	C:   func(int) -> int
+	cOk: C & (func(n: int) -> int: n)
+	cx:  cOk(5) @test(eq, 5)
+
+	// A type constraint matched to an anonymous positional parameter of
+	// the value is enforced per call: the argument is bound to a synthetic
+	// parameter slot even though the body cannot reference it.
+	D:    func(int & <10, ...) -> int
+	d:    D & (func(int) -> int: 1)
+	dOk:  d(5) @test(eq, 1)
+	dOob: d(15) @test(err, code=eval, contains="invalid value 15 (out of bound <10)")
+	// The other way around is not admitted: an implementation accepting
+	// only integers below 10 does not cover a signature over every integer.
+	dNarrow: (func(int) -> int) & (func(int & <10) -> int: 1) @test(err, code=eval, contains="parameter 1 of function accepts (int & <10), but its signature requires int")
+
+	// The value's own constraint on an anonymous parameter is enforced on
+	// its argument as well.
+	f:    func(int) -> int: 1
+	fOk:  f(1) @test(eq, 1)
+	fBad: f("x") @test(err, code=eval, contains="conflicting values")
+
+	// Arity errors take precedence: missing and surplus arguments for
+	// anonymous parameters are still reported as such.
+	few:  f() @test(err, code=eval, contains="not enough arguments in function call")
+	many: f(1, 2) @test(err, code=eval, contains="too many positional arguments in function call")
+}
+
+contractLabels: {
+	// An attached signature supplies the contract label of the
+	// implementation's otherwise unnamed positional slot. The implementation
+	// may keep a separate body-local name.
+	add1: func(_~x: int) -> int: x + 1
+	add1: func(x: int) -> int
+	byLabel: add1(x: 2) @test(eq, 3)
+	byPosition: add1(2) @test(eq, 3)
+
+	// Another compatible signature may repeat the same contract label.
+	add1: func(x: int & <10) -> int
+	byRepeatedName: add1(x: 3) @test(eq, 4)
+
+	// Named and unnamed bodyless signatures compose in either order. Once a
+	// concrete implementation is attached, the single contract label names
+	// their shared slot.
+	Named:       func(x: int) -> int
+	Unnamed:     func(int) -> int
+	identity:    func(_~v: int) -> int: v
+	namedFirst:  Named & Unnamed & identity
+	unnamedFirst: Unnamed & Named & identity
+	namedCall:   namedFirst(x: 6) @test(eq, 6)
+	reverseCall: unnamedFirst(x: 7) @test(eq, 7)
+
+	// A constraint from a named signature attached to an unnamed slot follows
+	// the same positional match as its contract label.
+	limited: func(_~n: int) -> int: n
+	limited: func(input: int & <10) -> int
+	limitedOK: limited(input: 5) @test(eq, 5)
+
+	// A contributed contract label also binds partial applications.
+	sum: func(_~a: int, _~b: int) -> int: a + b
+	sum: func(x: int, y: int) -> int
+	addLeft: sum(x: 1, ...)
+	partial: addLeft(y: 2) @test(eq, 3)
+}
+
+meet: {
+	// The meet of two open types carries both signatures; the result is
+	// open only in the sense that both constituents are open.
+	n: (func(a: number, ...) -> number) & (func(a: int, ...) -> int)
+
+	// Calling a type, met or not, remains an error.
+	nc: n(1) @test(err, code=eval, contains="cannot call function without implementation")
+
+	// A value unified with the meet must satisfy both signatures: the number
+	// signature requires a value accepting every number, which an int-only
+	// value does not.
+	v:  n & (func(a: int) -> int: a) @test(err, code=eval, contains="parameter a of function accepts int, but its signature requires number")
+	// A value accepting every number is admitted; calls stay limited to
+	// integers by the int signature.
+	vn: n & (func(a: number) -> int: 1)
+	vx: vn(3) @test(eq, 1)
+
+	// Both types' parameter constraints apply on calls: a string conflicts
+	// with both, a float only with the int signature, although the value
+	// accepts any number. The value must also declare a result the
+	// signatures admit.
+	w:   n & (func(a: _) -> int: 1)
+	wx:  w("x") @test(err, code=eval, contains="conflicting values")
+	wx2: w(0.5) @test(err, code=eval, contains="conflicting values")
+	wr:  n & (func(a: _) -> _: a) @test(err, code=eval, contains="function returns _, but its signature requires")
+
+	// Positional parameters align by ordinal, but two different contract
+	// labels for the same slot are incompatible.
+	badName: (func(a: int) -> int) & (func(b: int) -> int) @test(err, code=eval, contains="conflicting parameter labels")
+	badNameRev: (func(b: int) -> int) & (func(a: int) -> int) @test(err, code=eval, contains="conflicting parameter labels")
+
+	// A required or optional parameter and a positional parameter with the
+	// same label are the same parameter, in either signature. Requiredness
+	// combines as for struct fields: a plain parameter is stricter than a
+	// required one, which is stricter than an optional one.
+	reqNamed:     (func(a!: int) -> int) & (func(a: int, ...) -> int)
+	reqNamedV:    (reqNamed & (func(a: int) -> int: a))(2) @test(eq, 2)
+	optNamed:     (func(a: int) -> int) & (func(a?: int) -> int)
+	optNamedV:    (optNamed & (func(a: int) -> int: a))(a: 3) @test(eq, 3)
+	optNamedOmit: (optNamed & (func(a: int) -> int: a))() @test(err, code=eval, contains="missing argument a")
+	optReq:       (func(a?: int) -> int) & (func(a!: int) -> int)
+	optReqV:      (optReq & (func(a?: int) -> int: [if a != _|_ {a}, 0][0]))(a: 4) @test(eq, 4)
+	optReqOmit:   (optReq & (func(a?: int) -> int: [if a != _|_ {a}, 0][0]))() @test(err, code=eval, contains="missing required argument a")
+
+	// The result does not depend on the order of unification.
+	T1:     func(a: int) -> int
+	T2:     func(a?: int) -> int
+	vA:     func(a: int) -> int: a
+	orderL: ((T1 & T2) & vA)(1) @test(eq, 1)
+	orderR: (T1 & (T2 & vA))(1) @test(eq, 1)
+	orderV: ((T2 & vA) & T1)(1) @test(eq, 1)
+
+	// A positional parameter of a type still needs a positional parameter of
+	// the value, which decides how the function can be called.
+	posNameOnly: (func(a: int) -> int) & (func(a?: int) -> int: 1) @test(err, code=eval, contains="parameter a of function type not allowed by closed function")
+
+	// A parameter present in only one signature is allowed if the other
+	// signature is open.
+	wider:  (func(a: int, ...) -> int) & (func(a: int, b: int, ...) -> int)
+	widerV: wider & (func(a: int, b: int, c?: int) -> int: a + b)
+	widerX: widerV(1, 2) @test(eq, 3)
+}
+
+// An extra parameter is admitted against a closed signature iff it is
+// optional (?): while unmatched it contributes no parameter, but no call
+// needs it either. A sibling positional signature may expose the same label
+// and carry its constraint to a slot. One rule governs function tightening
+// (both directions), function type meets, and subsumption (see
+// internal/core/subsume); see builtins.txtar for builtins.
+optionalExtra: {
+	// Tightening: an extra optional parameter of the value against a
+	// closed type (also covered by closed.ok3).
+	V:   func(a: int) -> number
+	v1:  V & (func(a: int, b?: int) -> int: a)
+	v1x: v1(1) @test(eq, 1)
+
+	// Tightening: an extra optional parameter of the type against a
+	// closed value signature.
+	W:   func(a: int, b?: int) -> number
+	w1:  W & (func(a: int) -> int: a)
+	w1x: w1(1) @test(eq, 1)
+
+	// Tightening: an extra plain parameter remains rejected in both
+	// directions (see closed.bad2), as does a required one.
+	badT: (func(a: int, b: int) -> number) & (func(a: int) -> int: a) @test(err, code=eval, contains="parameter b of function type not allowed by closed function")
+	badV: (func(a: int) -> number) & (func(a: int, b: int) -> int: a) @test(err, code=eval, contains="parameter b of function not allowed by closed function type")
+	badR: (func(a: int) -> number) & (func(a: int, b!: int) -> int: a) @test(err, code=eval, contains="parameter b of function not allowed by closed function type")
+
+	// Meet: an extra optional parameter of one closed signature is
+	// admitted by the other; an extra plain parameter is not.
+	m1:   (func(a: int) -> number) & (func(a: int, b?: int) -> int)
+	m2:   (func(a: int, b?: int) -> int) & (func(a: int) -> number)
+	mBad: (func(a: int) -> number) & (func(a: int, b: int) -> int) @test(err, code=eval, contains="parameter b of function type not allowed by closed function type")
+
+	// A value unified with the meet is checked against, and calls are
+	// constrained by, both signatures, regardless of the meet's order.
+	m1v:  m1 & (func(a: int) -> int: a)
+	m1vx: m1v(1) @test(eq, 1)
+	m2v:  m2 & (func(a: int) -> int: a)
+	m2vx: m2v(1) @test(eq, 1)
+
+	// Against an open signature, any extra parameter is admitted.
+	o1:  (func(a: int, ...) -> number) & (func(a: int, b: int, ...) -> int)
+	o1v: o1 & (func(a: int, b: int, c?: int) -> int: a + b)
+	o1x: o1v(1, 2) @test(eq, 3)
+	o2:  (func(a: int, ...) -> number) & (func(a: int, b?: int) -> int: a)
+	o2x: o2(1) @test(eq, 1)
+}
+
+values: {
+	f: func(a: int) -> int: a
+	g: func(a: int) -> int: a
+
+	// Distinct function values conflict, even with equal text (see compose
+	// below).
+	composed: f & g @test(err, code=eval, contains="conflicting function implementations")
+
+	// A function value unifies with itself.
+	same:  f & f
+	sameX: same(1) @test(eq, 1)
+
+	// A function value conflicts with a value of another kind, in either
+	// order.
+	fnNum: f & 1 @test(err, code=eval, contains="mismatched types int and func")
+	numFn: 1 & f @test(err, code=eval, contains="mismatched types int and func")
+
+	// Values tightened by the same type are equal and unify; the type
+	// constraint is recorded once.
+	T:     func(a: int, ...) -> number
+	t1:    T & f
+	t2:    T & f
+	both:  t1 & t2
+	bothX: both(1) @test(eq, 1)
+
+	// Equality of tightened values also holds for disjunction
+	// deduplication: t1 | t2 collapses to a single callable value.
+	pick:  t1 | t2
+	pickX: pick(1) @test(eq, 1)
+
+	// The order in which types tighten a value does not matter: the
+	// recorded type constraints compare as a set, so both orders unify
+	// and deduplicate in a disjunction.
+	U:      func(a: int & >=0, ...) -> number
+	o1:     T & U & f
+	o2:     U & T & f
+	both2:  o1 & o2
+	both2X: both2(1) @test(eq, 1)
+	pick2:  o1 | o2
+	pick2X: pick2(1) @test(eq, 1)
+}
+
+// Distinct function implementations do not unify: each function literal,
+// closed over its environment, is a value of its own, and two of them
+// conflict like two distinct concrete values. Pointwise composition,
+// (f & g)(x) = f(x) & g(x), is disabled for now.
+compose: {
+	f: func(a: int) -> {...}: {in: a}
+	g: func(a~x: int) -> {...}: {out: x + 1}
+
+	fg: f & g @test(err, code=eval, contains="conflicting function implementations")
+	gf: g & f @test(err, code=eval, contains="conflicting function implementations")
+
+	// The conflict is reported whether or not the function is called.
+	inc:   func(a: int) -> int: a + 1
+	id:    func(a: int) -> int: a
+	clash: inc & id @test(err, code=eval, contains="conflicting function implementations")
+
+	// The same function, reached by different paths, unifies with itself.
+	again:  f & f & f
+	againX: again(1) @test(eq, {in: 1})
+	#A: {h: func(x: int) -> int: x}
+	a1:    #A
+	a2:    #A
+	inst:  a1.h & a2.h
+	instX: inst(2) @test(eq, 2)
+	let L = f
+	viaLet:  L & f
+	viaLetX: viaLet(3) @test(eq, {in: 3})
+	// A partial application that binds nothing is the function itself.
+	emptyPartial:  f & f(...)
+	emptyPartialX: emptyPartial(4) @test(eq, {in: 4})
+
+	// Identity is that of the literal and of what it refers to outside
+	// itself. Two literals with the same text are distinct, and so are
+	// closures over two different values of a comprehension, while closures
+	// over equal fields of two instances are the same function.
+	dup: (func(s: string) -> string: s) & (func(s: string) -> string: s) @test(err, code=eval, contains="conflicting function implementations: each function literal is a distinct value")
+	#T: {n: int, get: func() -> int: n}
+	t1:        #T & {n: 1}
+	t2:        #T & {n: 1}
+	closures:  t1.get & t2.get
+	closuresX: closures() @test(eq, 1)
+	_caps: [for v in [1, 2] {func(n: int) -> int: n + v}]
+	captured: _caps[0] & _caps[1] @test(err, code=eval, contains="conflicting function implementations: the same function literal is closed over different values")
+
+	// Only what a closure refers to counts, not where it was evaluated: a
+	// field of a struct that an embedding may or may not share, a definition
+	// shared by two instances that differ elsewhere, or the parameter of two
+	// calls with equal arguments.
+	_k: {k: 1, f: func() -> int: k}
+	embedded:  _k.f & {_k}.f
+	embeddedX: embedded() @test(eq, 1)
+	#H: func(x: int) -> int: x + 1
+	#S: {n: int, v: func(x: int) -> int: #H(x)}
+	shared:  (#S & {n: 1}).v & (#S & {n: 2}).v
+	sharedX: shared(1) @test(eq, 2)
+	mk:     func(n: int) -> _: {f: func() -> int: n}
+	calls:  mk(1)
+	calls:  mk(1)
+	callsX: calls.f() @test(eq, 1)
+
+	// Captured values compare as data, so a number of another kind, a
+	// default, or a reference that unification evaluates again keeps two
+	// closures distinct, while a comprehension, a pattern, or a dynamic field
+	// in a closure is no obstacle.
+	mkn:     func(n: number) -> _: func() -> number: n
+	num:     mkn(1) & mkn(1.0) @test(err, code=eval, contains="the same function literal is closed over different values")
+	mkd:     func(x: _) -> _: func() -> _: x
+	dflt:    mkd(*1 | 2) & mkd(1 | 2) @test(err, code=eval, contains="the same function literal is closed over different values")
+	mkr:     func(x: _) -> _: func(n: int) -> _: (x & {y: n}).a
+	refs:    mkr({y: _, a: y}) & mkr({y: _, a: _}) @test(err, code=eval, contains="the same function literal is closed over different values")
+	mkc:     func(n: int) -> _: func(xs: [...int]) -> [...int]: [for v in xs let w = v * 2 if w > 0 {w + n}]
+	comp:    mkc(1) & mkc(1)
+	compX:   comp([1, 2]) @test(eq, [3, 5])
+	compBad: mkc(1) & mkc(2) @test(err, code=eval, contains="the same function literal is closed over different values")
+	mkpat:   func(n: int) -> _: func(xs: {[string]: int}) -> _: {for k, v in xs {"\(k)": val: v}} & {[string]~(X, _): {name: X, v: n}}
+	patc:    mkpat(1) & mkpat(1)
+	patcX:   patc({a: 1}) @test(eq, {a: {val: 1, name: "a", v: 1}})
+	patcBad: mkpat(1) & mkpat(2) @test(err, code=eval, contains="the same function literal is closed over different values")
+	mkdyn:   func(n: int) -> _: func(k: string) -> _: {"\(k)": n}
+	dyn:     mkdyn(1) & mkdyn(1)
+	dynX:    dyn("z") @test(eq, {z: 1})
+	dynBad:  mkdyn(1) & mkdyn(2) @test(err, code=eval, contains="the same function literal is closed over different values")
+	// Two instances of a pattern's function differ in the label they
+	// capture, though their environments are otherwise the same.
+	labeled: {[string]~(K, _): func() -> string: K, a: _, b: _}
+	labA:    labeled.a() @test(eq, "a")
+	labBad:  labeled.a & labeled.b @test(err, code=eval, contains="the same function literal is closed over different values")
+	// A function with a pattern or a dynamic field captures nothing.
+	mkpf:    func() -> _: func() -> _: {[string]: int, ("a"): 1}
+	pf:      mkpf() & mkpf()
+	pfX:     pf() @test(eq, {a: 1})
+
+	// A capture is found through any expression: closures over equal values
+	// are the same function, and closures that differ in a single captured
+	// value are not.
+	mkLet:   func(n: int) -> _: {let m = n, f: func() -> int: m}.f
+	letOK:   mkLet(1) & mkLet(1)
+	letX:    letOK() @test(eq, 1)
+	letBad:  mkLet(1) & mkLet(2) @test(err, code=eval, contains="the same function literal is closed over different values")
+	mkBLet:  func(n: int) -> _: func() -> _: {let m = n, v: m}
+	bLet:    mkBLet(1) & mkBLet(1)
+	bLetX:   bLet() @test(eq, {v: 1})
+	bLetBad: mkBLet(1) & mkBLet(2) @test(err, code=eval, contains="the same function literal is closed over different values")
+	mkIdx:   func(xs: _) -> _: func(i: int) -> int: xs[i]
+	idx:     mkIdx([1, 2]) & mkIdx([1, 2])
+	idxX:    idx(1) @test(eq, 2)
+	idxBad:  mkIdx([1, 2]) & mkIdx([1, 3]) @test(err, code=eval, contains="the same function literal is closed over different values")
+	mkIdxN:  func(n: int) -> _: func(xs: [...int]) -> int: xs[n]
+	idxN:    mkIdxN(0) & mkIdxN(0)
+	idxNX:   idxN([5, 6]) @test(eq, 5)
+	idxNBad: mkIdxN(0) & mkIdxN(1) @test(err, code=eval, contains="the same function literal is closed over different values")
+	mkSl:    func(lo: int, hi: int) -> _: func(xs: [...int]) -> _: xs[lo:hi]
+	sl:      mkSl(1, 2) & mkSl(1, 2)
+	slX:     sl([1, 2, 3]) @test(eq, [2])
+	slBad:   mkSl(1, 2) & mkSl(1, 3) @test(err, code=eval, contains="the same function literal is closed over different values")
+	mkBd:    func(n: int) -> _: func(x: int) -> int: x & <n
+	bd:      mkBd(3) & mkBd(3)
+	bdX:     bd(2) @test(eq, 2)
+	bdBad:   mkBd(3) & mkBd(4) @test(err, code=eval, contains="the same function literal is closed over different values")
+	mkNeg:   func(n: int) -> _: func() -> int: -n
+	neg:     mkNeg(1) & mkNeg(1)
+	negX:    neg() @test(eq, -1)
+	negBad:  mkNeg(1) & mkNeg(2) @test(err, code=eval, contains="the same function literal is closed over different values")
+	mkDis:   func(n: int) -> _: func() -> int: *0 | n
+	dis:     mkDis(1) & mkDis(1)
+	disX:    dis() @test(eq, *0 | 1)
+	disBad:  mkDis(1) & mkDis(2) @test(err, code=eval, contains="the same function literal is closed over different values")
+	mkStr:   func(n: int) -> _: func() -> string: "v\(n)"
+	str:     mkStr(1) & mkStr(1)
+	strX:    str() @test(eq, "v1")
+	strBad:  mkStr(1) & mkStr(2) @test(err, code=eval, contains="the same function literal is closed over different values")
+	one:     func() -> int: 1
+	two:     func() -> int: 2
+	// The design does not say when two function arguments are equal; two
+	// references to the same function are taken to be.
+	mkCall:  func(g: _) -> _: func() -> _: g()
+	call:    mkCall(one) & mkCall(one)
+	callX:   call() @test(eq, 1)
+	callBad: mkCall(one) & mkCall(two) @test(err, code=eval, contains="the same function literal is closed over different values")
+	mkArg:   func(n: int) -> _: func() -> string: strings.Repeat("a", n)
+	arg:     mkArg(2) & mkArg(2)
+	argX:    arg() @test(eq, "aa")
+	argBad:  mkArg(2) & mkArg(3) @test(err, code=eval, contains="the same function literal is closed over different values")
+	mkFn:    func(n: int) -> _: func() -> _: func(x: int & <n) -> int: x
+	fn:      mkFn(3) & mkFn(3)
+	fnX:     fn()(2) @test(eq, 2)
+	fnBad:   mkFn(3) & mkFn(4) @test(err, code=eval, contains="the same function literal is closed over different values")
+	mkFnB:   func(n: int) -> _: func() -> _: func(x: int) -> int: x + n
+	fnB:     mkFnB(1) & mkFnB(1)
+	fnBX:    fnB()(2) @test(eq, 3)
+	fnBBad:  mkFnB(1) & mkFnB(2) @test(err, code=eval, contains="the same function literal is closed over different values")
+	mkEl:    func(n: int) -> _: func() -> _: [...<n]
+	el:      mkEl(3) & mkEl(3)
+	elX:     el() & [1] @test(eq, [1])
+	elBad:   mkEl(3) & mkEl(4) @test(err, code=eval, contains="the same function literal is closed over different values")
+	mkFor:   func(n: int) -> _: func() -> _: [for x in [n] {x}]
+	forOK:   mkFor(1) & mkFor(1)
+	forX:    forOK() @test(eq, [1])
+	forBad:  mkFor(1) & mkFor(2) @test(err, code=eval, contains="the same function literal is closed over different values")
+	mkLetC:  func(n: int) -> _: func() -> _: [for x in [1] let y = x + n {y}]
+	letC:    mkLetC(1) & mkLetC(1)
+	letCX:   letC() @test(eq, [2])
+	letCBad: mkLetC(1) & mkLetC(2) @test(err, code=eval, contains="the same function literal is closed over different values")
+	// An if clause tells closures apart by what it captures, not by what it
+	// yields.
+	mkIf:    func(n: int) -> _: func() -> _: [if n > 0 {1}]
+	ifOK:    mkIf(1) & mkIf(1)
+	ifX:     ifOK() @test(eq, [1])
+	ifBad:   mkIf(1) & mkIf(2) @test(err, code=eval, contains="the same function literal is closed over different values")
+	mkSIf:   func(n: int) -> _: func() -> _: {if n > 0 {a: 1}}
+	sIf:     mkSIf(1) & mkSIf(1)
+	sIfX:    sIf() @test(eq, {a: 1})
+	sIfBad:  mkSIf(1) & mkSIf(2) @test(err, code=eval, contains="the same function literal is closed over different values")
+	mkOpen:  func(n: int) -> _: func() -> _: {a: n, ...}
+	open:    mkOpen(1) & mkOpen(1)
+	openX:   open() @test(eq, {a: 1, ...})
+	openBad: mkOpen(1) & mkOpen(2) @test(err, code=eval, contains="the same function literal is closed over different values")
+
+	// A function that refers to nothing outside itself is the same function
+	// wherever it is evaluated: reached through an embedding, or through an
+	// unrelated unification of its struct.
+	_x: h: func(a: int) -> int: a + 1
+	envs:     _x.h & {_x}.h
+	envsX:    envs(1) @test(eq, 2)
+	unified:  _x.h & (_x & {other: 1}).h
+	unifiedX: unified(6) @test(eq, 7)
+	_z: l: func(n: int) -> [...int]: [n]
+	listCopy:  _z.l & {_z}.l
+	listCopyX: listCopy(3) @test(eq, [3])
+
+	// A disjunction of functions can therefore select one by unification.
+	pick:  (f | g) & f
+	pickX: pick(1) @test(eq, {in: 1})
+
+	// Signatures still combine with an implementation.
+	T:   func(a: int) -> {...}
+	tf:  T & f
+	tfX: tf(1) @test(eq, {in: 1})
+
+	// Combining the results of two functions is written explicitly.
+	both:  func(a: int) -> {...}: f(a) & g(a)
+	bothX: both(1) @test(eq, {in: 1, out: 2})
+
+	// Builtins do not unify with function values either.
+	builtin: (func(x: number) -> number: x) & len @test(err, code=eval, contains="conflicting values")
+}
+
+// Errors arising in a call are reported at the field holding the call, not
+// at the parameter they concern; out/errors.txt records the paths.
+errorPaths: {
+	g:      func(x: int) -> int: x
+	arg:    g(1.5) @test(err, code=eval, contains="conflicting values")
+	s:      func(x: int) -> string: "\(x)"
+	interp: s(1.5) @test(err, code=eval, contains="invalid interpolation")
+	nested: inner: g(true) @test(err, code=eval, contains="conflicting values")
+	// An error from a call inside a function body is reported at the field
+	// holding the outer call, followed by its path within the result.
+	h:     func() -> {foo: int}: {foo: g("bad")}
+	outer: h() @test(err, code=eval, contains="conflicting values")
+}
+
+// Tightening must preserve all structural cycle semantics: the cycle
+// anchor and call-site identity remain those of the function value being
+// called.
+cycles: {
+	T: func(n: int, ...) -> number
+
+	recursive: {
+		fn:  T & (func(n: int) -> int: fn(n))
+		out: fn(1) @test(err, code=structural_cycle, contains="structural cycle")
+	}
+
+	nesting: {
+		sum:   func(a: int, b: int) -> int: a + b
+		twice: T & (func(n: int) -> int: sum(n, n))
+		out:   twice(twice(2)) @test(eq, 8)
+		deep:  twice(twice(twice(2))) @test(eq, 16)
+	}
+}
+
+// Tightening narrows the values a call accepts and returns, beyond mere
+// kind checks: bounds and struct restrictions of the type apply to every
+// call of the tightened value. The value must still accept the whole domain
+// the type declares, and declare a result within the type's result.
+narrow: {
+	// The type narrows the parameter to a bound, resolved in the type's
+	// own scope.
+	lim: 10
+	T:   func(n: <lim, ...) -> number
+	f:   T & (func(n: number) -> number: n + 1)
+
+	ok:  f(5) @test(eq, 6)
+	oob: f(15) @test(err, code=eval, contains="invalid value 15 (out of bound <10)")
+
+	// The type narrows the result: the value's result must satisfy it per
+	// call.
+	R:  func(n: int, ...) -> <100
+	sq: R & (func(n: int) -> int & <100: n * n)
+
+	small: sq(5) @test(eq, 25)
+	big:   sq(20) @test(err, code=eval, contains="invalid value 400 (out of bound <100)")
+
+	// The type restricts a struct parameter: a required field with a
+	// narrower type than the value itself demands.
+	S:    func(cfg: {name: string, port: >0 & <65536}, ...) -> string
+	srv:  S & (func(cfg: {...}) -> string: cfg.name)
+
+	good: srv({name: "db", port: 5432}) @test(eq, "db")
+	badField: srv({name: 42, port: 80}) @test(err, code=eval, contains="conflicting values string and 42")
+	badPort:  srv({name: "db", port: 0}) @test(err, code=eval, contains="invalid value 0 (out of bound >0)")
+
+	// Narrowing stacks across a chain of tightenings.
+	N:  func(n: >=0, ...) -> number
+	M:  func(n: <10, ...) -> number
+	g:  N & M & (func(n: number) -> number: n)
+
+	mid: g(5) @test(eq, 5)
+	neg: g(-1) @test(err, code=eval, contains="invalid value -1 (out of bound >=0)")
+	hi:  g(11) @test(err, code=eval, contains="invalid value 11 (out of bound <10)")
+}
+
+// Declared compatibility: a value unified with a bodyless signature must
+// accept every value the signature admits for each parameter and declare a
+// result the signature's result admits. Each value is checked against each
+// signature on its own, in any grouping; another value or the constraints
+// enforced per call cannot make up for a declaration that falls short, and
+// the signatures keep restricting calls regardless.
+admission: {
+	// A wider value satisfies an int signature, whose int constraint still
+	// fences calls.
+	#f: func(x: int) -> int
+	#f: func(x: number) -> int: 2
+	fOK:  #f(1) @test(eq, 2)
+	fBad: #f(1.5) @test(err, code=eval, contains="conflicting values 1.5 and int")
+
+	// Two signatures require int and number coverage while calls remain
+	// limited to int. An int-only value fails the number requirement in
+	// every grouping; a number-capable one passes.
+	I: func(x: int) -> string
+	N: func(x: number) -> string
+	b: func(x: int) -> string: "int"
+	w: func(x: number) -> string: "number"
+	bad1: I & (N & b) @test(err, code=eval, contains="parameter x of function accepts int, but its signature requires number")
+	bad2: (I & N) & b @test(err, code=eval, contains="parameter x of function accepts int, but its signature requires number")
+	bad3: (b & I) & N @test(err, code=eval, contains="parameter x of function accepts int, but its signature requires number")
+	ok1:  (I & (N & w))(1) @test(eq, "number")
+	ok2:  ((I & N) & w)(1) @test(eq, "number")
+	okF:  ((I & N) & w)(1.5) @test(err, code=eval, contains="conflicting values 1.5 and int")
+
+	// A value declaring a wider result than required fails, even though it
+	// would return 1; a call-side result constraint does not stand in for the
+	// declaration. A conforming implementation cannot rescue it, as two
+	// distinct implementations do not unify at all.
+	R:   func(x: int) -> int
+	W:   func(x: int) -> number: 1
+	C:   func(x: int) -> int: 1
+	rw:  R & W @test(err, code=eval, contains="function returns number, but its signature requires int")
+	rwc: R & W & C @test(err, code=eval, contains="function returns number, but its signature requires int")
+	wcr: W & (C & R) @test(err, code=eval, contains="conflicting function implementations")
+	rc:  (R & C)(1) @test(eq, 1)
+	rwx: (R & W)(1) @test(err, code=eval, contains="function returns number, but its signature requires int")
+
+	// An int-only callback does not satisfy a consumer entitled to call it
+	// with any number, whether or not the consumer does so.
+	apply:  func(f: func(number) -> int, x: number) -> int: f(x)
+	cbInt:  func(x: int) -> int: 1
+	cbNum:  func(x: number) -> int: 1
+	hofBad: apply(cbInt, 1) @test(err, code=eval, contains="parameter 1 of function accepts int, but its signature requires number")
+	hofOK:  apply(cbNum, 1.5) @test(eq, 1)
+
+	// Each parameter position reverses the comparison direction, and each
+	// result position preserves it. A parameter typed by a
+	// signature compares as a function type: the implementation's parameter
+	// must admit every function the signature's parameter admits. So an
+	// implementation that calls its callback with 1.5 cannot take one typed
+	// func(int) -> int, while one that calls it with 1 can take one typed
+	// func(number) -> int. One parameter level deeper the direction flips back.
+	n1Bad: (func(f: func(int) -> int) -> int) & (func(f: func(number) -> int) -> int: f(1.5)) @test(err, code=eval, contains="parameter f of function accepts func(number) -> int, but its signature requires func(int) -> int")
+	n1OK:  ((func(f: func(number) -> int) -> int) & (func(f: func(int) -> int) -> int: f(1)))(cbNum) @test(eq, 1)
+	n2Bad: (func(f: func(g: func(number) -> int) -> int) -> int) & (func(f: func(g: func(int) -> int) -> int) -> int: f(cbInt)) @test(err, code=eval, contains="parameter f of function accepts func(g: func(int) -> int) -> int, but its signature requires func(g: func(number) -> int) -> int")
+	hInt:  func(g: func(int) -> int) -> int: g(1)
+	n2OK:  ((func(f: func(g: func(int) -> int) -> int) -> int) & (func(f: func(g: func(number) -> int) -> int) -> int: f(cbNum)))(hInt) @test(eq, 1)
+	nrBad: (func(f: func(int) -> number) -> int) & (func(f: func(int) -> int) -> int: f(1)) @test(err, code=eval, contains="parameter f of function accepts func(int) -> int, but its signature requires func(int) -> number")
+
+	// A supplied callback's own signatures are compared the same way.
+	#CbN: func(h: func(number) -> int) -> int
+	cbN:  #CbN & (func(h: func(number) -> int) -> int: 1)
+	k:    func(g: func(h: func(int) -> int) -> int) -> int: 7
+	nEnt: k(cbN) @test(err, code=eval, contains="parameter h of the function supplied for parameter g permits only func(number) -> int, but parameter g permits func(int) -> int")
+
+	// A conjunction of signatures as a parameter type compares
+	// approximately, and the call checks what it binds.
+	nConj:  (func(f: (func(x: int) -> int) & (func(x: int) -> int)) -> int) & (func(f: func(x: number) -> int) -> int: 1)
+	nConjX: nConj(cbInt) @test(err, code=eval, contains="parameter x of function accepts int, but its signature requires number")
+
+	// The same signature literal in different closures still contributes
+	// distinct clauses. Neither conjunction order is a single signature.
+	nMake: func(t: _) -> _: func(x: t) -> int
+	nI: nMake(int)
+	nN: nMake(number)
+	nIN: nI & nN
+	nNI: nN & nI
+	nClosureIN: (func(f: nIN) -> int) & (func(f: func(number) -> int) -> int: 1)
+	nClosureNI: (func(f: nNI) -> int) & (func(f: func(number) -> int) -> int: 1)
+	nClosureINX: nClosureIN(cbNum) @test(eq, 1)
+	nClosureNIX: nClosureNI(cbNum) @test(eq, 1)
+	nClosureINBad: nClosureIN(cbInt) @test(err, code=eval, contains="accepts int, but its signature requires number")
+	nClosureNIBad: nClosureNI(cbInt) @test(err, code=eval, contains="accepts int, but its signature requires number")
+
+	// A signature that refers to itself compares without recursing forever.
+	#Rec: func(f: #Rec) -> int
+	rec:  #Rec & (func(f: #Rec) -> int: 1)
+	recX: rec(rec) @test(eq, 1)
+
+	// Distinct recursive signatures cannot use the identity shortcut. A pair
+	// of literals reached again while it is being compared admits, and the
+	// comparison is bounded in depth. These calls do not execute the
+	// callbacks.
+	#RecA: func(f: #RecA) -> int
+	#RecB: func(f: #RecB) -> int
+	recDistinct: (func(f: #RecA) -> int) & (func(f: #RecB) -> int: 1)
+	recDistinctX: recDistinct(#RecA) @test(eq, 1)
+	#RetA: func() -> #RetA
+	#RetB: func() -> #RetB
+	recResult: (func(f: #RetA) -> int) & (func(f: #RetB) -> int: 1)
+	recResultX: recResult(#RetA) @test(eq, 1)
+	#OpenA: func(f: #OpenA, ...) -> int
+	#OpenB: func(f: #OpenB, ...) -> int
+	recOpen: (func(f: #OpenA) -> int) & (func(f: #OpenB) -> int: 1)
+	recOpenX: recOpen(#OpenA) @test(eq, 1)
+
+	// Structural comparisons can reach recursive signatures inside a field
+	// or element. An undecided function comparison must not hide a definite
+	// mismatch in a later field or element.
+	recStruct: (func(v: {f: #RecA}) -> int) & (func(v: {f: #RecB}) -> int: 1)
+	recStructX: recStruct({f: #RecA}) @test(eq, 1)
+	recList: (func(v: [#RecA]) -> int) & (func(v: [#RecB]) -> int: 1)
+	recListX: recList([#RecA]) @test(eq, 1)
+	recStructBad: (func(v: {f: #RecA, x: string}) -> int) & (func(v: {f: #RecB, x: int}) -> int: 1) @test(err, code=eval, contains="parameter v of function accepts")
+	recListBad: (func(v: [#RecA, string]) -> int) & (func(v: [#RecB, int]) -> int: 1) @test(err, code=eval, contains="parameter v of function accepts")
+	recKindBad: (func(v: int) -> int) & (func(v: #RecA) -> int: 1) @test(err, code=eval, contains="parameter v of function accepts")
+	recKindReverseBad: (func(v: #RecA) -> int) & (func(v: int) -> int: 1) @test(err, code=eval, contains="parameter v of function accepts")
+	recStructKindBad: (func(v: {f: int}) -> int) & (func(v: {f: #RecA}) -> int: 1) @test(err, code=eval, contains="parameter v of function accepts")
+	recListKindBad: (func(v: [int]) -> int) & (func(v: [#RecA]) -> int: 1) @test(err, code=eval, contains="parameter v of function accepts")
+
+	// A signature over any value requires a value accepting any value.
+	Any:    func(_) -> _
+	anyBad: Any & (func(x: int) -> int: x) @test(err, code=eval, contains="parameter 1 of function accepts int, but its signature requires _")
+	anyOK:  (Any & (func(x: _) -> _: x))("s") @test(eq, "s")
+
+	// A value without a signature is bound by its own declaration alone.
+	direct: func(x: int) -> int: x
+	dOK:    direct(1) @test(eq, 1)
+	dBad:   direct(1.5) @test(err, code=eval, contains="conflicting values")
+
+	// Constraints referring to definitions are compared by their values:
+	// int covers an integer bound, while a positive bound does not cover it.
+	#Small: int & <10
+	S:    func(x: #Small) -> int
+	sOK:  (S & (func(x: int) -> int: x))(3) @test(eq, 3)
+	sBad: S & (func(x: #Small & >0) -> int: x) @test(err, code=eval, contains="parameter x of function accepts")
+
+	// A declaration referring to a definition means its final value: with
+	// #Res narrowed to int, a value declared to return #Res satisfies an int
+	// requirement.
+	#Res: number
+	#Res: int
+	Q:    func(x: int) -> int
+	q:    (Q & (func(x: int) -> #Res: x))(2) @test(eq, 2)
+
+	// Compound constraints compare by their evaluated values.
+	sp:  func(x: {n: int}) -> {m: int}
+	sp:  func(x: {n: int}) -> {m: int}: {m: x.n}
+	spX: sp({n: 1}) @test(eq, {m: 1})
+	lp:  func(x: [int, int]) -> int
+	lp:  func(x: [int, int]) -> int: x[0] + x[1]
+	lpX: lp([1, 2]) @test(eq, 3)
+
+	// A reference to an open list is the same constraint as the literal.
+	#L:  [...]
+	la:  func(x: int) -> #L
+	la:  func(x: int) -> [...]: [x]
+	laX: la(1) @test(eq, [1])
+
+	// A union of bounds covers the required domain although no single
+	// disjunct does: no witness refutes it. A union of concrete values is
+	// refuted by a value it misses.
+	dc:  func(x: number) -> int
+	dc:  func(x: <=0 | >0) -> int: 1
+	dcX: dc(1) @test(eq, 1)
+	ec:  func(x: string) -> int
+	ec:  func(x: "a" | "b") -> int: 1 @test(err, code=eval, contains="parameter x of function accepts")
+
+	// A constraint referring to a value that a comprehension in the same
+	// scope refines is checked against the refined value.
+	rf: {
+		#R: number
+		f:  func(x: int) -> #R: 1
+		f:  func(x: int) -> int
+		if f(1) == 1 {
+			#R: int
+		}
+		out: f(2) @test(eq, 1)
+	}
+
+	// A callback is checked where it is bound, whether or not the callee
+	// calls it.
+	consume: func(f: func(number) -> int) -> int: 7
+	cBad:    consume(cbInt) @test(err, code=eval, contains="parameter 1 of function accepts int, but its signature requires number")
+
+	// Validators and regular-expression bounds are decided by witnesses: no
+	// candidate value is admitted by these signatures and rejected by their
+	// implementations.
+	mv:  func(s: strings.MinRunes(1)) -> int
+	mv:  func(s: strings.MinRunes(1)) -> int: 1
+	mvX: mv("a") @test(eq, 1)
+	re:  func(s: =~"^a$") -> int
+	re:  func(s: =~"^[a-z]+$") -> int: 1
+	reX: re("a") @test(eq, 1)
+	// They still reject on kind: an implementation accepting only
+	// integers covers neither a validator nor a pattern on strings.
+	vk: (func(s: strings.MinRunes(1)) -> int) & (func(s: int) -> int: 1) @test(err, code=eval, contains="parameter s of function accepts int, but its signature requires strings.MinRunes(1)")
+	rk: (func(s: =~"a") -> int) & (func(s: int) -> int: 1) @test(err, code=eval, contains="parameter s of function accepts int, but its signature requires =~\"a\"")
+	// A string implementation covers both pattern signatures, and calls
+	// still satisfy both: "c" fails each pattern, "ab" matches both.
+	#rx:  func(x: =~"a") -> int
+	#rx:  func(x: =~"b") -> int
+	#rx:  func(x: string) -> int: 1
+	rxC:  #rx("c") @test(err, code=eval, contains="invalid value \"c\" (out of bound =~\"a\")")
+	rxAB: #rx("ab") @test(eq, 1)
+
+	// A disjunct that fails admission is eliminated like any other
+	// erroneous alternative.
+	alt: (((func(x: number) -> int) & (func(x: int) -> int: x)) | *7) @test(eq, 7)
+
+	// A reference to a value that an outer scope refines after a call
+	// leaves the check undone rather than rejecting on the provisional
+	// value.
+	#O: number
+	ov: {
+		f:   (func(x: int) -> #O: 1) & (func(x: int) -> int)
+		out: f(1) @test(eq, 1)
+	}
+	if ov.out == 1 {
+		#O: int
+	}
+
+	// Function types compare as function types, so a result typed
+	// func(number) -> int is within one typed func(int) -> int, and a
+	// bound admitting every value of a kind admits that kind.
+	hs:  func(g: func({n: int}) -> int) -> int
+	hs:  func(g: func({n: int}) -> int) -> int: g({n: 1})
+	hsX: hs(func(v: {n: int}) -> int: v.n) @test(eq, 1)
+	hv:  func(x: int) -> (func(int) -> int)
+	hv:  func(x: int) -> (func(number) -> int): func(y: number) -> int: x
+	hvX: hv(2)(3) @test(eq, 2)
+	nn:  func() -> !=null
+	nn:  func() -> int: 1
+	nnX: nn() @test(eq, 1)
+	lsp:  func(x: [...{n: int}]) -> int
+	lsp:  func(x: [...{n: int}]) -> int: len(x)
+	lspX: lsp([{n: 1}]) @test(eq, 1)
+
+	// A pending reference inside a compound constraint is recognized too.
+	#P: number
+	pc: {
+		f:   (func(x: int) -> (#P & number): 1) & (func(x: int) -> int)
+		out: f(1) @test(eq, 1)
+	}
+	if pc.out == 1 {
+		#P: int
+	}
+
+	// An exhaustive union of concrete values covers a finite kind; a default
+	// preference is no obligation; a struct is not null.
+	bl:  func(x: bool) -> int
+	bl:  func(x: true | false) -> int: 1
+	blX: bl(true) @test(eq, 1)
+	#A:  *"a" | "b"
+	da:  func(x: #A) -> int
+	da:  func(x: "a" | "b") -> int: 1
+	daX: da("b") @test(eq, 1)
+	ns:  func() -> !=null
+	ns:  func() -> {}: {}
+	nsX: ns() @test(eq, {})
+
+	// A pending reference inside a struct literal is recognized too.
+	#Q: number
+	qc: {
+		f:   (func() -> {v: #Q}: {v: 1}) & (func() -> {v: int})
+		out: f().v @test(eq, 1)
+	}
+	if qc.out == 1 {
+		#Q: int
+	}
+
+	// Bounds compare with bytes, with other bounds, and with whole kinds.
+	by:  func() -> !='bad'
+	by:  func() -> 'ok': 'ok'
+	byX: by() @test(eq, 'ok')
+	nb:  func(x: >0) -> int
+	nb:  func(x: !=null) -> int: 1
+	nbX: nb(1) @test(eq, 1)
+	ge:  func(x: string) -> int
+	ge:  func(x: >="") -> int: 1
+	geX: ge("a") @test(eq, 1)
+
+	// A pending reference inside a pattern constraint is recognized too.
+	#W: number
+	wc: {
+		f:   (func() -> {[string]: #W}: {v: 1}) & (func() -> {[string]: int})
+		out: f().v @test(eq, 1)
+	}
+	if wc.out == 1 {
+		#W: int
+	}
+
+	// Integers and floats are comparable, and a numeric bound admits only
+	// numbers: != 5.0 admits neither every int nor any string.
+	ne:  func() -> !=5.0
+	ne:  func() -> int: 1 @test(err, code=eval, contains="function returns int, but its signature requires !=5.0")
+	nes: func() -> !=5.0
+	nes: func() -> string: "a" @test(err, code=eval, contains="function returns string, but its signature requires !=5.0")
+
+	// Only a proof rejects: a kind that the implementation excludes, or a
+	// value that the signature admits and the implementation does not. So an
+	// open struct naming some of a definition's fields covers it, a regular
+	// field covers a required one, a field the implementation adds or
+	// defaults covers its absence, an enumeration covers a pattern or bounds
+	// admitting exactly its values, a value covers a constraint admitting
+	// only it, and a constraint covers only the kinds it actually admits.
+	#Person: {first: string, last: string, full: "\(first) \(last)"}
+	greet:   func(p: #Person) -> string
+	greet:   func(p: {first: string, ...}) -> string: "hi \(p.first)"
+	greetX:  greet({first: "A", last: "B"}) @test(eq, "hi A")
+	pat:     (func(p: {[string]~V: {name: V}}) -> int) & (func(p: {[string]~V: {name: V}}) -> int: 1)
+	patX:    pat({}) @test(eq, 1)
+	req:     (func(x: {a!: int}) -> int) & (func(x: {a: int}) -> int: x.a)
+	reqX:    req({a: 2}) @test(eq, 2)
+	rxe:     (func(x: =~"^[ab]$") -> int) & (func(x: "a" | "b") -> int: 1)
+	rxeX:    rxe("b") @test(eq, 1)
+	bde:     (func(x: int & >=0 & <=2) -> int) & (func(x: 0 | 1 | 2) -> int: 1)
+	bdeX:    bde(2) @test(eq, 1)
+	one:     (func(x: =~"^a$") -> int) & (func(x: "a") -> int: 1)
+	oneX:    one("a") @test(eq, 1)
+	oneN:    (func(x: int & >=1 & <2) -> int) & (func(x: 1) -> int: 1)
+	oneNX:   oneN(1) @test(eq, 1)
+	cfg:     (func(c: {port?: int}) -> int) & (func(c: {port: *8080 | int}) -> int: c.port)
+	cfgX:    cfg({}) @test(eq, *8080 | int)
+	pr:      (func() -> {in: int, ...}) & (func() -> {...}: {in: 1})
+	prX:     pr().in @test(eq, 1)
+	#ID:     matchN(1, [int, string])
+	id:      (func(x: #ID) -> int) & (func(x: int | string) -> int: 1)
+	idX:     id(3) @test(eq, 1)
+	unit:    (func(x: >0 & <1) -> int) & (func(x: float) -> int: 1)
+	unitX:   unit(0.5) @test(eq, 1)
+	// The same comparisons reject where the signature admits more.
+	rxeBad: (func(x: =~"^[a-z]$") -> int) & (func(x: "a" | "b") -> int: 1) @test(err, code=eval, contains="parameter x of function accepts")
+	bdeBad: (func(x: int & >=0 & <=3) -> int) & (func(x: 0 | 1 | 2) -> int: 1) @test(err, code=eval, contains="parameter x of function accepts")
+	stBad:  (func(p: {n: int}) -> int) & (func(p: {n: string}) -> int: 1) @test(err, code=eval, contains="parameter p of function accepts")
+	idBad:  (func(x: #ID) -> int) & (func(x: bool) -> int: 1) @test(err, code=eval, contains="parameter x of function accepts bool, but its signature requires #ID")
+	tlBad:  (func(x: [...string]) -> int) & (func(x: [...int]) -> int: 1) @test(err, code=eval, contains="parameter x of function accepts")
+	lnBad:  (func(x: [int, int]) -> int) & (func(x: [int]) -> int: 1) @test(err, code=eval, contains="parameter x of function accepts")
+
+	// A field that another part of the signature's struct refers to may be
+	// restricted beyond its own constraint, so a value it admits alone is no
+	// witness; fields nothing refers to still are. A constraint that admits
+	// no value of a kind it names, as no string is below "", refutes nothing
+	// of that kind, and neither does a list no value satisfies.
+	corr:    (func(x: {a: int, b: 0 & a}) -> int) & (func(x: {a: 0, b: 0}) -> int: 0)
+	corrX:   corr({a: 0}) @test(eq, 0)
+	corrIf:  (func(x: {a: int, if a > 0 {b: 1}}) -> int) & (func(x: {a: 0, ...}) -> int: 0)
+	corrIfX: corrIf({a: 0}) @test(eq, 0)
+	corrBad: (func(x: {a: int, b: 0 & a, d: string}) -> int) & (func(x: {a: 0, b: 0, d: int}) -> int: 0) @test(err, code=eval, contains="parameter x of function accepts")
+	// The field a that _ci narrows is compared unless another part of the
+	// signature's struct refers to it, through any expression, or through
+	// the literals the struct is built from.
+	_ci:       func(x: {a: 0, ...}) -> int: 0
+	corrNone:  ((func(x: {a: int, b: 0}) -> int) & _ci)({a: 0}) @test(err, code=eval, contains="parameter x of function accepts")
+	corrIdx:   ((func(x: {a: int, b: [0][a]}) -> int) & _ci)({a: 0}) @test(eq, 0)
+	corrSlice: ((func(x: {a: int, b: [0][a:]}) -> int) & _ci)({a: 0}) @test(eq, 0)
+	corrBound: ((func(x: {a: int, b: 0 & >=a}) -> int) & _ci)({a: 0}) @test(eq, 0)
+	corrNeg:   ((func(x: {a: int, b: 0 & -a}) -> int) & _ci)({a: 0}) @test(eq, 0)
+	corrStr:   ((func(x: {a: int, b: "0" & "\(a)"}) -> int) & _ci)({a: 0}) @test(eq, 0)
+	corrDis:   ((func(x: {a: int, b: null | 0 & a}) -> int) & _ci)({a: 0}) @test(eq, 0)
+	corrCall:  ((func(x: {a: int, b: "" & strings.Repeat("x", a)}) -> int) & _ci)({a: 0}) @test(eq, 0)
+	corrFn:    ((func(x: {a: int, b: (func() -> int: 0 & a)()}) -> int) & _ci)({a: 0}) @test(eq, 0)
+	corrFnP:   ((func(x: {a: int, b: func(y: 0 & a) -> int}) -> int) & _ci)({a: 0}) @test(eq, 0)
+	corrList:  ((func(x: {a: int, b: [0 & a]}) -> int) & _ci)({a: 0}) @test(eq, 0)
+	corrEll:   ((func(x: {a: int, b: [...0 & a]}) -> int) & _ci)({a: 0}) @test(eq, 0)
+	corrLet:   ((func(x: {a: int, let y = a, b: 0 & y}) -> int) & _ci)({a: 0}) @test(eq, 0)
+	corrDyn:   ((func(x: {a: int, b: {"\(a)": 0}}) -> int) & _ci)({a: 0}) @test(eq, 0)
+	corrPat:   ((func(x: {a: int, b: {[=~"\(a)"]: 0}}) -> int) & _ci)({a: 0}) @test(eq, 0)
+	corrSt:    ((func(x: {a: int, b: {c: 0 & a}}) -> int) & _ci)({a: 0}) @test(eq, 0)
+	#Corr:     {a: int, b: 0 & a}
+	corrRef:   ((func(x: #Corr) -> int) & _ci)({a: 0}) @test(eq, 0)
+	corrEmb:   ((func(x: {#Corr}) -> int) & _ci)({a: 0}) @test(eq, 0)
+	corrTwice: ((func(x: {p: #Corr, q: #Corr}) -> int) & (func(x: {p: {a: 0, ...}, q: {a: 0, ...}}) -> int: 0))({p: a: 0, q: a: 0}) @test(eq, 0)
+	// A comprehension in a literal leaves the constraint pending, but one in
+	// a struct the constraint refers to correlates fields through its
+	// clauses and its value.
+	#CorrC:    {a: int, for v in [a] if true let w = v {b: 0 & w}}
+	corrC:     ((func(x: #CorrC) -> int) & _ci)({a: 0}) @test(eq, 0)
+	_corrC:    #CorrC
+	_corrC:    {}
+	corrCRef:  ((func(x: _corrC) -> int) & _ci)({a: 0}) @test(eq, 0)
+	#CorrL:    {a: int, b: [for v in [a] {0 & v}]}
+	corrL:     ((func(x: #CorrL) -> int) & _ci)({a: 0}) @test(eq, 0)
+	#CorrNone: {a: int, for v in [1] {b: v}}
+	corrCNone: ((func(x: #CorrNone) -> int) & _ci)({a: 0}) @test(err, code=eval, contains="parameter x of function accepts")
+	// A field nothing refers to is still compared.
+	corrSBad:  (func(x: {a: int, b: {c: 0 & a}, d: string}) -> int) & (func(x: {a: 0, d: int, ...}) -> int: 0) @test(err, code=eval, contains="parameter x of function accepts")
+	emp:     (func(x: int | <"") -> int) & (func(x: int) -> int: x)
+	empX:    emp(1) @test(eq, 1)
+	empL:    (func(x: [...<""]) -> int) & (func(x: []) -> int: 1)
+	empLX:   empL([]) @test(eq, 1)
+	empN:    (func(x: [<""]) -> int) & (func(x: [int, int]) -> int: 1)
+	empNX:   len([empN]) @test(eq, 1)
+	empBad:  (func(x: int | <"b") -> int) & (func(x: int) -> int: x) @test(err, code=eval, contains="parameter x of function accepts int, but its signature requires (int|<\"b\")")
+
+	// A value that a comprehension refines is pending behind a call too. The call has read it by then, so the refinement is reported as late.
+	#PC: number
+	getPC: func() -> _: #PC
+	pcall: {
+		f:   (func() -> getPC(): 1) & (func() -> int)
+		out: f() @test(eq, 1)
+	}
+	if pcall.out == 1 {
+		#PC: int
+	}
+
+	// Whether a constraint is pending does not depend on the order of
+	// fields: a definition that has not been evaluated yet is decided like
+	// one that has.
+	late:   (func(x: #Late) -> int) & (func(x: string) -> int: 1) @test(err, code=eval, contains="parameter x of function accepts string, but its signature requires #Late")
+	#Late:  int
+	#Early: int
+	early:  (func(x: #Early) -> int) & (func(x: string) -> int: 1) @test(err, code=eval, contains="parameter x of function accepts string, but its signature requires #Early")
+
+	// A pending reference inside a list comprehension or a let of a struct
+	// literal is recognized too.
+	#LC: number
+	lc: {
+		f:   (func() -> [for x in [1] {#LC}]: [1]) & (func() -> [int])
+		out: f()[0] @test(eq, 1)
+	}
+	if lc.out == 1 {
+		#LC: int
+	}
+	#LT: number
+	lt: {
+		f:   (func() -> {let y = #LT, v: y}: {v: 1}) & (func() -> {v: int})
+		out: f().v @test(eq, 1)
+	}
+	if lt.out == 1 {
+		#LT: int
+	}
+}
+// Declared defaults are part of a signature. A default on one side carries
+// over to a call; defaults on both sides must unify and conflict when the
+// signatures are unified; a defaulted parameter is admitted beyond a closed
+// type like an optional one; a partial application keeps the defaults of the
+// parameters it leaves unbound.
+defaults: {
+	T: func(a: int = 2) -> int
+
+	// The type's default fills a value parameter that declares none.
+	fill:  T & (func(a: int) -> int: a)
+	fillX: fill() @test(eq, 2)
+	fillS: fill(5) @test(eq, 5)
+
+	// Order of unification does not matter.
+	fillRev:  (func(a: int) -> int: a) & T
+	fillRevX: fillRev() @test(eq, 2)
+
+	// Equal defaults agree.
+	same:  T & (func(a: int = 2) -> int: a)
+	sameX: same() @test(eq, 2)
+
+	// Differing defaults conflict when the signatures are unified.
+	differ: T & (func(a: int = 3) -> int: a) @test(err, code=eval, contains="conflicting defaults for parameter a")
+	differRev: (func(a: int = 3) -> int: a) & T @test(err, code=eval, contains="conflicting defaults for parameter a")
+
+	// Two types with defaults for different parameters: each one-sided
+	// default carries over, and a value's own default must agree with the
+	// type's for the same parameter.
+	A:      func(a: int = 2, ...) -> string
+	B:      func(a: int, b: string = "x") -> string
+	three:  A & B & (func(a: int, b: string) -> string: "\(a)\(b)")
+	threeX: three() @test(eq, "2x")
+	threeRev:  B & (func(a: int, b: string) -> string: "\(a)\(b)") & A
+	threeRevX: threeRev() @test(eq, "2x")
+	threeBad:  A & (func(a: int = 4, b: string) -> string: "\(a)\(b)") & B @test(err, code=eval, contains="conflicting defaults for parameter a")
+
+	// A value's extra defaulted parameter is admitted beyond a closed type,
+	// as an optional one is: no call through the type ever needs it.
+	C:      func(a: int) -> int
+	extra:  C & (func(a: int, b: int = 2) -> int: a + b)
+	extraX: extra(1) @test(eq, 3)
+	extraBad: C & (func(a: int, b: int) -> int: a + b) @test(err, code=eval, contains="parameter b of function not allowed by closed function type")
+
+	// The reverse: a type's defaulted parameter that the value does not
+	// declare is admitted like an optional one.
+	D:      func(a: int, b: int = 2) -> int
+	lacks:  D & (func(a: int) -> int: a)
+	lacksX: lacks(1) @test(eq, 1)
+
+	// A partial application binds arguments, not defaults: bound parameters
+	// lose their default, the remaining ones keep it until completion.
+	add3: func(a: int, b: int = 10, c: int = 100) -> int: a + b + c
+	f:    add3(1, ...)
+	all:  f() @test(eq, 111)
+	one:  f(2) @test(eq, 103)
+	lab:  f(c: 3) @test(eq, 14)
+	two:  add3(1, 2, ...)() @test(eq, 103)
+
+	// Agreement does not depend on the operand order, also when a named
+	// and a positional-only parameter share a slot.
+	Bn:     func(_~x: int = 3) -> int
+	orderX: T & Bn @test(err, code=eval, contains="conflicting defaults for parameter")
+	orderY: Bn & T @test(err, code=eval, contains="conflicting defaults for parameter")
+
+	// Admission beyond a closed type depends on the value's own declaration.
+	// A default declared only by another attached type does not admit the
+	// parameter, so the outcome does not depend on the order in which the
+	// signatures are attached: a closed type restricts the value whatever
+	// else is attached, as a closed struct restricts its fields.
+	v2:      func(a: int, b: int) -> int: a + b
+	D2:      func(a: int, b: int = 2) -> int
+	C2:      func(a: int) -> int
+	orderDC: (v2 & D2) & C2 @test(err, code=eval, contains="parameter b of function not allowed by closed function type")
+	orderCD: (v2 & C2) & D2 @test(err, code=eval, contains="parameter b of function not allowed by closed function type")
+	orderTV: C2 & D2 & v2 @test(err, code=eval, contains="parameter b of function not allowed by closed function type")
+
+	// The value's own default admits it, in any order, and the two types
+	// agree with each other on their own: D2's default admits b beyond C2.
+	v3:    func(a: int, b: int = 2) -> int: a + b
+	ownDC: ((v3 & D2) & C2)(1) @test(eq, 3)
+	ownCD: ((v3 & C2) & D2)(1) @test(eq, 3)
+	ownTV: ((C2 & D2) & v3)(1) @test(eq, 3)
+
+	// A default attached by a type carries into a call made as the argument
+	// of another call.
+	id:           func(x: int) -> int: x
+	nestedDirect: fill() @test(eq, 2)
+	nestedCall:   id(fill()) @test(eq, 2)
+}
+// A consumer's parameter signature entitles it to call the argument with
+// every value the signature admits. A caller clause of the supplied function
+// that permits less is rejected where the argument is bound, whether or not
+// the consumer makes such a call (the implementation's own declaration is
+// checked separately, see admission.hofBad).
+entitlement: {
+	#Cb:   func(x: int) -> int
+	cb:    #Cb & (func(x: number) -> int: 1)
+	loud:  func(g: func(number) -> int) -> int: g(1.5)
+	quiet: func(g: func(number) -> int) -> int: 7
+	bad1:  loud(cb) @test(err, code=eval, contains="parameter x of the function supplied for parameter g permits only int, but parameter g permits number")
+	bad2:  quiet(cb) @test(err, code=eval, contains="parameter x of the function supplied for parameter g permits only int, but parameter g permits number")
+
+	// No clause, or a clause as wide as the entitlement, is admitted.
+	cbW:  func(x: number) -> int: 1
+	#CbN: func(x: number) -> int
+	cbN:  #CbN & cbW
+	ok1:  loud(cbW) @test(eq, 1)
+	ok2:  quiet(cbN) @test(eq, 7)
+	ok3:  loud(cbN) @test(eq, 1)
+
+	// An entitlement no wider than the clause is admitted; the clause keeps
+	// fencing the consumer's calls.
+	narrow: func(g: func(int) -> int) -> int: g(2)
+	ok4:    narrow(cb) @test(eq, 1)
+	nFrac:  func(g: func(int) -> int) -> int: g(1.5)
+	bad3:   nFrac(cb) @test(err, code=eval, contains="conflicting values 1.5 and int")
+
+	// The signature may be reached through a definition or a conjunction;
+	// every signature counts.
+	#G:     func(number) -> int
+	viaDef: func(g: #G) -> int: 7
+	bad4:   viaDef(cb) @test(err, code=eval, contains="permits only int, but parameter g permits number")
+	conj:   func(g: #G & func(_) -> int) -> int: 7
+	cbAny:  func(x: _) -> int: 1
+	bad5:   conj(cbN) @test(err, code=eval, contains="parameter x of the function supplied for parameter g permits only number, but parameter g permits _")
+	ok5:    conj(cbAny) @test(eq, 7)
+	// The implementation's own declaration is still checked by admission.
+	bad5b:  conj(cbW) @test(err, code=eval, contains="parameter 1 of function accepts number, but its signature requires _")
+
+	// A signature attached to the consumer constrains its parameters too:
+	// the implementation alone would accept an int-only callback, so only
+	// the attached signature rejects cb.
+	#Consumer: func(g: func(number) -> int) -> int
+	attached:  #Consumer & (func(g: func(int) -> int) -> int: 7)
+	bad6:      attached(cb) @test(err, code=eval, contains="permits only int, but parameter g permits number")
+	ok6:       attached(cbAny) @test(eq, 7)
+
+	// A supplied builtin is checked through its attached signatures.
+	up:    (func(s: string) -> string) & strings.ToUpper
+	anyIn: func(g: func(_) -> string) -> string: g("x")
+	bad7:  anyIn(up) @test(err, code=eval, contains="parameter s of the function supplied for parameter g permits only string, but parameter g permits _")
+	strIn: func(g: func(string) -> string) -> string: g("x")
+	ok7:   strIn(up) @test(eq, "X")
+
+	// A partial application binds and checks the argument at once.
+	apply2: func(g: func(number) -> int, x: number) -> int: g(x)
+	bad8:   apply2(cb, ...) @test(err, code=eval, contains="permits only int, but parameter g permits number")
+	ok8:    apply2(cbW, ...)(1.5) @test(eq, 1)
+	// A partially applied argument is left to the binding, which cannot
+	// tighten it; its clauses still describe the parameter it has bound.
+	#Ap:    func(g: func(number) -> int, x: number) -> int
+	ap:     #Ap & (func(g: func(number) -> int, x: number) -> int: g(x))
+	part:   ap(cbW, ...)
+	bad15:  quiet(part) @test(err, code=eval, contains="cannot tighten a partially applied function")
+
+	// A clause that no witness refutes admits; the call still fences.
+	#CbD: func(x: <=0 | >0) -> int
+	cbD:  #CbD & cbW
+	ok9:  loud(cbD) @test(eq, 1)
+
+	// A labeled entitlement matches the clause's parameter in the slot the
+	// label binds.
+	#CbL: func(a: int) -> int
+	cbL:  #CbL & (func(a: number) -> int: 1)
+	lab:  func(g: func(a: number) -> int) -> int: g(a: 1.5)
+	bad9: lab(cbL) @test(err, code=eval, contains="parameter a of the function supplied for parameter g permits only int, but parameter g permits number")
+
+	// The supplied function may be reached through an alias or a field.
+	alias: cb
+	obj: {f: cb}
+	bad10: quiet(alias) @test(err, code=eval, contains="permits only int, but parameter g permits number")
+	bad11: quiet(obj.f) @test(err, code=eval, contains="permits only int, but parameter g permits number")
+
+	// A default supplies the argument and is checked the same way, whether
+	// the function or an attached signature declares it.
+	dq:    func(g: func(number) -> int = cb) -> int: 7
+	bad12: dq() @test(err, code=eval, contains="permits only int, but parameter g permits number")
+	ok10:  dq(cbW) @test(eq, 7)
+	#DQ:   func(g: func(number) -> int = cb) -> int
+	dq2:   #DQ & (func(g: func(number) -> int) -> int: 7)
+	bad13: dq2() @test(err, code=eval, contains="permits only int, but parameter g permits number")
+
+	// A label the consumer's signature introduces binds a clause parameter
+	// that matched no slot before.
+	cbOpt:  (func(a?: int, ...) -> int) & (func(number) -> int: 1)
+	labOpt: func(g: func(a: number) -> int) -> int: g(a: 1.5)
+	bad14:  labOpt(cbOpt) @test(err, code=eval, contains="parameter a of the function supplied for parameter g permits only int, but parameter g permits number")
+
+	// Only a literal or a reference is inspected at the binding. An argument
+	// or a signature computed by an expression is left to the call, which
+	// still enforces the fence; evaluating it at the binding would run ahead
+	// of the call's cycle detection (see rec below).
+	lim1:   quiet(cb | cb) @test(eq, 7)
+	mkSig:  func() -> _: func(number) -> int
+	made:   func(g: mkSig()) -> int: 7
+	lim2:   made(cb) @test(eq, 7)
+	madeL:  func(g: mkSig()) -> int: g(1.5)
+	lim3:   madeL(cb) @test(err, code=eval, contains="conflicting values 1.5 and int")
+	rec:    func(g: func() -> int = rec()) -> _: (func() -> int: 1)
+	recBad: rec() @test(err, contains="structural cycle")
+	rec2:    func(g: func() -> int = rec2().a) -> _: {a: func() -> int: 1}
+	rec2Bad: rec2() @test(err, contains="structural cycle")
+	// A constraint that would call the function is not compared either,
+	// whatever form the call takes.
+	fcb:      func(g: func(x: fcb(cb)) -> int) -> int: 1
+	fcbOut:   fcb(cb) @test(eq, 1)
+	cbA:      #Cb & cbAny
+	fsl:      func(g: func(x: fsl(cbA)[:]) -> int) -> _: [1]
+	fslOut:   fsl(cbA)[0] @test(eq, 1)
+	fcomp:    func(g: func(x: [for y in fcomp(cbA) {y}]) -> int) -> _: [1]
+	fcompOut: fcomp(cbA)[0] @test(eq, 1)
+	// Constraints composed of call-free parts are compared, so the int-only
+	// clause of cbA is rejected for them; one with a call or a comprehension
+	// in any part is left to the call.
+	#Half:    1.5
+	_n:       func() -> _: number
+	cfUnary:  (func(g: func(-#Half) -> int) -> int: 7)(cbA) @test(err, code=eval, contains="permits only int, but parameter g permits")
+	cfInterp: (func(g: func("\(#Half)") -> int) -> int: 7)(cbA) @test(err, code=eval, contains="permits only int, but parameter g permits")
+	cfFunc:   (func(g: func(func(y: number = 1) -> int) -> int) -> int: 7)(cbA) @test(err, code=eval, contains="permits only int, but parameter g permits")
+	cfStruct: (func(g: func({a: number, let l = 1, b: l, [=~"x"]: _, ("d"): 1, {c: 1}, ...}) -> int) -> int: 7)(cbA) @test(err, code=eval, contains="permits only int, but parameter g permits")
+	cfList:   (func(g: func([number, ...number]) -> int) -> int: 7)(cbA) @test(err, code=eval, contains="permits only int, but parameter g permits")
+	cfSel:    (func(g: func(#Sel.a.b) -> int) -> int: 7)(cbA) @test(err, code=eval, contains="permits only int, but parameter g permits")
+	cfIdx:    (func(g: func(#Sel.l[0]) -> int) -> int: 7)(cbA) @test(err, code=eval, contains="permits only int, but parameter g permits")
+	#Sel: {a: b: number, l: [number]}
+	ncUnary:  (func(g: func(-_n()) -> int) -> int: 7)(cbA) @test(eq, 7)
+	ncInterp: (func(g: func("\(_n())") -> int) -> int: 7)(cbA) @test(eq, 7)
+	ncDisj:   (func(g: func(string | _n()) -> int) -> int: 7)(cbA) @test(eq, 7)
+	ncParam:  (func(g: func(func(y: _n()) -> int) -> int) -> int: 7)(cbA) @test(eq, 7)
+	ncDflt:   (func(g: func(func(y: number = _n()) -> int) -> int) -> int: 7)(cbA) @test(eq, 7)
+	ncField:  (func(g: func({a: _n()}) -> int) -> int: 7)(cbA) @test(eq, 7)
+	ncComp:   (func(g: func({if true {a: 1}}) -> int) -> int: 7)(cbA) @test(eq, 7, hint="a comprehension is taken to call, even one that calls nothing")
+	ncElem:   (func(g: func([_n()]) -> int) -> int: 7)(cbA) @test(eq, 7)
+	ncEll:    (func(g: func([..._n()]) -> int) -> int: 7)(cbA) @test(eq, 7)
+	ncLComp:  (func(g: func([for v in [1] {v}]) -> int) -> int: 7)(cbA) @test(eq, 7, hint="a comprehension is taken to call, even one that calls nothing")
+	ncIdx:    (func(g: func(#Sel.l[_n()]) -> int) -> int: 7)(cbA) @test(eq, 7)
+}
+
+// An error below an argument, rather than at the argument itself (see
+// errorPaths), names its path within the argument, starting with the
+// parameter: a closedness error names the field it rejects, and distinct
+// errors at the same call are reported apart.
+argumentPaths: {
+	#C:      {a: int}
+	c:       func(x: #C) -> int: 1
+	atArg:   c(1) @test(err, code=eval, contains="atArg: conflicting values")
+	closed:  c({a: 1, b: 2, d: 3}) @test(err, code=eval, contains="x.b: field not allowed")
+	m:       func(x: {n: matchN(1, [>0, <10])}) -> int: 1
+	matched: m({n: 5}) @test(err, code=eval, contains="x.n: invalid value 5 (does not satisfy matchN)")
+	take:    func(w: {...}) -> int: 1
+	inArg:   take({k: c({a: 1, b: 2})}) @test(err, code=eval, contains="w.k: x.b: field not allowed")
+	r:       func() -> {foo: #C}: {foo: {a: 1, b: 2}}
+	inRes:   take({k: r()}) @test(err, code=eval, contains="w.k.foo.b: field not allowed")
+	len2:    (func(v: #C) -> int) & len
+	builtin: len2({a: 1, b: 2}) @test(err, code=eval, contains="v.b: field not allowed")
+}
+-- try.cue --
+@experiment(functions)
+@experiment(try)
+
+// Cases using the try and fallback clauses of the try experiment.
+
+compose: {
+	mkFb:  func(n: int) -> _: func(xs: [...int]) -> _: {for x in xs {a: x} fallback {a: n}}
+	fb:    mkFb(1) & mkFb(1)
+	fbX:   fb([]) @test(eq, {a: 1})
+	fbBad: mkFb(1) & mkFb(2) @test(err, code=eval, contains="the same function literal is closed over different values")
+	// Captures are found through a try clause too, in either form.
+	mkTry:    func(n: int) -> _: func() -> _: {try {a: n}}
+	tryEq:    mkTry(1) & mkTry(1)
+	tryX:     tryEq() @test(eq, {a: 1})
+	tryBad:   mkTry(1) & mkTry(2) @test(err, code=eval, contains="the same function literal is closed over different values")
+	mkTryAs:  func(n: int) -> _: func() -> _: {try m = 1 {a: n + m}}
+	tryAs:    mkTryAs(1) & mkTryAs(1)
+	tryAsX:   tryAs() @test(eq, {a: 2})
+	tryAsBad: mkTryAs(1) & mkTryAs(2) @test(err, code=eval, contains="the same function literal is closed over different values")
+}
+
+admission: {
+	// Try and fallback clauses correlate fields too, but a try assignment is
+	// not walked, so the field it refers to is still compared.
+	#CorrFb:    {a: int, for v in [] {} fallback {b: 0 & a}}
+	corrFb:     ((func(x: #CorrFb) -> int) & admission._ci)({a: 0}) @test(eq, 0)
+	#CorrTry:   {a: int, try {b: 0 & a?}}
+	corrTry:    ((func(x: #CorrTry) -> int) & admission._ci)({a: 0}) @test(eq, 0)
+	#CorrTryAs: {a: int, try y = a? {b: 0 & y}}
+	corrTryAs:  ((func(x: #CorrTryAs) -> int) & admission._ci)({a: 0}) @test(err, code=eval, contains="but its signature requires #CorrTryAs", incorrect) @test(eq:todo, 0)
+	#TryNone:   {a: int, try y = 0 {b: 0 & y}}
+	tryNone:    ((func(x: #TryNone) -> int) & admission._ci)({a: 0}) @test(err, code=eval, contains="parameter x of function accepts")
+}
+-- out/errors.txt --
+[eval] tighten.y: missing argument b:
+    ./in.cue:12:5
+[eval] tighten.retConflict: function returns int, but its signature requires string:
+    ./in.cue:21:48
+    ./in.cue:21:16
+[eval] tighten.retWide: function returns number, but its signature requires int:
+    ./in.cue:24:41
+    ./in.cue:24:12
+[eval] tighten.s: parameter a of function accepts string, but its signature requires int:
+    ./in.cue:29:10
+    ./in.cue:6:5
+[eval] closed.badName: conflicting parameter labels a and b for positional parameter 1 in function type and function:
+    ./in.cue:33:5
+    ./in.cue:47:16
+[eval] closed.bad2: parameter b of function not allowed by closed function type:
+    ./in.cue:33:5
+    ./in.cue:51:13
+[eval] anonymous.he: conflicting values "x" and int (mismatched types string and int):
+    ./in.cue:62:19
+    ./in.cue:64:8
+[eval] anonymous.dOob: invalid value 15 (out of bound <10):
+    ./in.cue:81:19
+    ./in.cue:84:10
+[eval] anonymous.dNarrow: parameter 1 of function accepts (int & <10), but its signature requires int:
+    ./in.cue:87:33
+    ./in.cue:87:12
+[eval] anonymous.fBad: conflicting values "x" and int (mismatched types string and int):
+    ./in.cue:91:13
+    ./in.cue:93:10
+[eval] anonymous.few: not enough arguments in function call:
+    ./in.cue:97:8
+[eval] anonymous.many: too many positional arguments in function call:
+    ./in.cue:98:8
+[eval] meet.nc: cannot call function without implementation:
+    ./in.cue:144:6
+[eval] meet.v: parameter a of function accepts int, but its signature requires number:
+    ./in.cue:149:11
+    ./in.cue:141:6
+[eval] meet.wx: conflicting values "x" and number (mismatched types string and number):
+    ./in.cue:141:14
+    ./in.cue:160:9
+[eval] meet.wx2: conflicting values 0.5 and int (mismatched types float and int):
+    ./in.cue:141:49
+    ./in.cue:161:9
+[eval] meet.wr: function returns _, but its signature requires int:
+    ./in.cue:162:12
+    ./in.cue:141:41
+meet.wr: function returns _, but its signature requires number:
+    ./in.cue:162:12
+    ./in.cue:141:6
+[eval] meet.badName: conflicting parameter labels b and a for positional parameter 1 in function type and function type:
+    ./in.cue:166:36
+    ./in.cue:166:12
+[eval] meet.badNameRev: conflicting parameter labels a and b for positional parameter 1 in function type and function type:
+    ./in.cue:167:39
+    ./in.cue:167:15
+[eval] meet.optNamedOmit: missing argument a:
+    ./in.cue:177:16
+[eval] meet.optReqOmit: missing required argument a:
+    ./in.cue:180:16
+[eval] meet.posNameOnly: parameter a of function type not allowed by closed function:
+    ./in.cue:192:40
+    ./in.cue:192:16
+[eval] optionalExtra.badT: parameter b of function type not allowed by closed function:
+    ./in.cue:222:44
+    ./in.cue:222:9
+[eval] optionalExtra.badV: parameter b of function not allowed by closed function type:
+    ./in.cue:223:36
+    ./in.cue:223:9
+[eval] optionalExtra.badR: parameter b of function not allowed by closed function type:
+    ./in.cue:224:36
+    ./in.cue:224:9
+[eval] optionalExtra.mBad: parameter b of function type not allowed by closed function type:
+    ./in.cue:230:36
+    ./in.cue:230:9
+[eval] values.composed: conflicting function implementations: each function literal is a distinct value:
+    ./in.cue:248:5
+    ./in.cue:249:5
+    ./in.cue:253:12
+    ./in.cue:253:16
+[eval] values.fnNum: conflicting values 1 and func(a: int) -> int: ... (mismatched types int and func):
+    ./in.cue:248:5
+    ./in.cue:261:9
+    ./in.cue:261:13
+[eval] values.numFn: conflicting values 1 and func(a: int) -> int: ... (mismatched types int and func):
+    ./in.cue:248:5
+    ./in.cue:262:9
+    ./in.cue:262:13
+[eval] compose.fg: conflicting function implementations: each function literal is a distinct value:
+    ./in.cue:294:5
+    ./in.cue:295:5
+    ./in.cue:297:6
+    ./in.cue:297:10
+[eval] compose.gf: conflicting function implementations: each function literal is a distinct value:
+    ./in.cue:295:5
+    ./in.cue:294:5
+    ./in.cue:298:6
+    ./in.cue:298:10
+[eval] compose.clash: conflicting function implementations: each function literal is a distinct value:
+    ./in.cue:301:9
+    ./in.cue:302:9
+    ./in.cue:303:9
+    ./in.cue:303:15
+[eval] compose.dup: conflicting function implementations: each function literal is a distinct value:
+    ./in.cue:324:8
+    ./in.cue:324:41
+[eval] compose.captured: conflicting function implementations: the same function literal is closed over different values:
+    ./in.cue:330:27
+    ./in.cue:331:12
+    ./in.cue:331:23
+[eval] compose.num: conflicting function implementations: the same function literal is closed over different values:
+    ./in.cue:353:33
+[eval] compose.dflt: conflicting function implementations: the same function literal is closed over different values:
+    ./in.cue:355:28
+[eval] compose.refs: conflicting function implementations: the same function literal is closed over different values:
+    ./in.cue:357:28
+[eval] compose.compBad: conflicting function implementations: the same function literal is closed over different values:
+    ./in.cue:359:30
+[eval] compose.patcBad: conflicting function implementations: the same function literal is closed over different values:
+    ./in.cue:363:30
+[eval] compose.dynBad: conflicting function implementations: the same function literal is closed over different values:
+    ./in.cue:367:30
+[eval] compose.labBad: conflicting function implementations: the same function literal is closed over different values:
+    ./in.cue:373:29
+    ./in.cue:375:11
+    ./in.cue:375:23
+[eval] compose.letBad: conflicting function implementations: the same function literal is closed over different values:
+    ./in.cue:384:45
+    ./in.cue:384:30
+[eval] compose.bLetBad: conflicting function implementations: the same function literal is closed over different values:
+    ./in.cue:388:30
+[eval] compose.idxBad: conflicting function implementations: the same function literal is closed over different values:
+    ./in.cue:392:29
+[eval] compose.idxNBad: conflicting function implementations: the same function literal is closed over different values:
+    ./in.cue:396:30
+[eval] compose.slBad: conflicting function implementations: the same function literal is closed over different values:
+    ./in.cue:400:40
+[eval] compose.bdBad: conflicting function implementations: the same function literal is closed over different values:
+    ./in.cue:404:30
+[eval] compose.negBad: conflicting function implementations: the same function literal is closed over different values:
+    ./in.cue:408:30
+[eval] compose.disBad: conflicting function implementations: the same function literal is closed over different values:
+    ./in.cue:412:30
+[eval] compose.strBad: conflicting function implementations: the same function literal is closed over different values:
+    ./in.cue:416:30
+[eval] compose.callBad: conflicting function implementations: the same function literal is closed over different values:
+    ./in.cue:424:28
+[eval] compose.argBad: conflicting function implementations: the same function literal is closed over different values:
+    ./in.cue:428:30
+[eval] compose.fnBad: conflicting function implementations: the same function literal is closed over different values:
+    ./in.cue:432:30
+[eval] compose.fnBBad: conflicting function implementations: the same function literal is closed over different values:
+    ./in.cue:436:30
+[eval] compose.elBad: conflicting function implementations: the same function literal is closed over different values:
+    ./in.cue:440:30
+[eval] compose.forBad: conflicting function implementations: the same function literal is closed over different values:
+    ./in.cue:444:30
+[eval] compose.letCBad: conflicting function implementations: the same function literal is closed over different values:
+    ./in.cue:448:30
+[eval] compose.ifBad: conflicting function implementations: the same function literal is closed over different values:
+    ./in.cue:454:30
+[eval] compose.sIfBad: conflicting function implementations: the same function literal is closed over different values:
+    ./in.cue:458:30
+[eval] compose.openBad: conflicting function implementations: the same function literal is closed over different values:
+    ./in.cue:462:30
+[eval] compose.builtin: conflicting values func(x: number) -> number: ... and len:
+    ./in.cue:493:12
+[eval] compose.fbBad: conflicting function implementations: the same function literal is closed over different values:
+    ./try.cue:7:28
+[eval] compose.tryBad: conflicting function implementations: the same function literal is closed over different values:
+    ./try.cue:12:31
+[eval] compose.tryAsBad: conflicting function implementations: the same function literal is closed over different values:
+    ./try.cue:16:31
+[eval] errorPaths.arg: conflicting values int and 1.5 (mismatched types int and float):
+    ./in.cue:499:26
+    ./in.cue:499:31
+    ./in.cue:500:12
+[eval] errorPaths.interp: invalid interpolation: conflicting values 1.5 and int (mismatched types float and int):
+    ./in.cue:501:34
+    ./in.cue:501:18
+    ./in.cue:502:12
+[eval] errorPaths.nested.inner: conflicting values int and true (mismatched types int and bool):
+    ./in.cue:499:26
+    ./in.cue:499:31
+    ./in.cue:503:19
+[eval] errorPaths.outer.foo: conflicting values int and "bad" (mismatched types int and string):
+    ./in.cue:499:26
+    ./in.cue:499:31
+    ./in.cue:506:39
+[structural_cycle] cycles.recursive.out: structural cycle:
+    ./in.cue:517:34
+[eval] narrow.oob: invalid value 15 (out of bound <10):
+    ./in.cue:537:15
+    ./in.cue:541:9
+[eval] narrow.big: invalid value 400 (out of bound <100):
+    ./in.cue:546:33
+    ./in.cue:546:39
+[eval] narrow.badField: conflicting values string and 42 (mismatched types string and int):
+    ./in.cue:553:61
+    ./in.cue:554:41
+    ./in.cue:557:23
+[eval] narrow.badPort: cfg.port: invalid value 0 (out of bound >0):
+    ./in.cue:553:39
+    ./in.cue:558:35
+[eval] narrow.neg: invalid value -1 (out of bound >=0):
+    ./in.cue:561:14
+    ./in.cue:566:9
+[eval] narrow.hi: invalid value 11 (out of bound <10):
+    ./in.cue:562:14
+    ./in.cue:567:9
+[eval] admission.fBad: conflicting values 1.5 and int (mismatched types float and int):
+    ./in.cue:579:14
+    ./in.cue:582:11
+[eval] admission.bad1: parameter x of function accepts int, but its signature requires number:
+    ./in.cue:589:5
+    ./in.cue:587:5
+    ./in.cue:588:5
+[eval] admission.bad2: parameter x of function accepts int, but its signature requires number:
+    ./in.cue:589:5
+    ./in.cue:587:5
+    ./in.cue:588:5
+[eval] admission.bad3: parameter x of function accepts int, but its signature requires number:
+    ./in.cue:589:5
+    ./in.cue:588:5
+[eval] admission.okF: conflicting values 1.5 and int (mismatched types float and int):
+    ./in.cue:587:13
+    ./in.cue:596:22
+[eval] admission.rw: function returns number, but its signature requires int:
+    ./in.cue:603:7
+    ./in.cue:602:7
+[eval] admission.rwc: function returns number, but its signature requires int:
+    ./in.cue:603:7
+    ./in.cue:602:7
+[eval] admission.wcr: conflicting function implementations: each function literal is a distinct value:
+    ./in.cue:603:7
+    ./in.cue:604:7
+    ./in.cue:607:7
+    ./in.cue:607:12
+admission.wcr: function returns number, but its signature requires int:
+    ./in.cue:603:7
+    ./in.cue:602:7
+[eval] function returns number, but its signature requires int:
+    ./in.cue:603:7
+    ./in.cue:602:7
+[eval] admission.hofBad: parameter 1 of function accepts int, but its signature requires number:
+    ./in.cue:614:10
+    ./in.cue:613:18
+[eval] admission.n1Bad: parameter f of function accepts func(number) -> int, but its signature requires func(int) -> int:
+    ./in.cue:626:47
+    ./in.cue:626:10
+[eval] admission.n2Bad: parameter f of function accepts func(g: func(int) -> int) -> int, but its signature requires func(g: func(number) -> int) -> int:
+    ./in.cue:628:66
+    ./in.cue:628:10
+[eval] admission.nrBad: parameter f of function accepts func(int) -> int, but its signature requires func(int) -> number:
+    ./in.cue:631:50
+    ./in.cue:631:10
+[eval] admission.nEnt: parameter h of the function supplied for parameter g permits only func(number) -> int, but parameter g permits func(int) -> int:
+    ./in.cue:634:8
+    ./in.cue:636:16
+[eval] admission.nConjX: parameter x of function accepts int, but its signature requires number:
+    ./in.cue:614:10
+    ./in.cue:641:85
+[eval] admission.nClosureINBad: parameter 1 of function accepts int, but its signature requires number:
+    ./in.cue:614:10
+    ./in.cue:651:47
+[eval] admission.nClosureNIBad: parameter 1 of function accepts int, but its signature requires number:
+    ./in.cue:614:10
+    ./in.cue:652:47
+[eval] admission.recStructBad: parameter v of function accepts {f:#RecB,x:int}, but its signature requires {f:#RecA,x:string}:
+    ./in.cue:687:59
+    ./in.cue:687:17
+[eval] admission.recListBad: parameter v of function accepts [#RecB,int], but its signature requires [#RecA,string]:
+    ./in.cue:688:51
+    ./in.cue:688:15
+[eval] admission.recKindBad: parameter v of function accepts #RecA, but its signature requires int:
+    ./in.cue:689:39
+    ./in.cue:689:15
+[eval] admission.recKindReverseBad: parameter v of function accepts int, but its signature requires #RecA:
+    ./in.cue:690:48
+    ./in.cue:690:22
+[eval] admission.recStructKindBad: parameter v of function accepts {f:#RecA}, but its signature requires {f:int}:
+    ./in.cue:691:50
+    ./in.cue:691:21
+[eval] admission.recListKindBad: parameter v of function accepts [#RecA], but its signature requires [int]:
+    ./in.cue:692:45
+    ./in.cue:692:19
+[eval] admission.anyBad: parameter 1 of function accepts int, but its signature requires _:
+    ./in.cue:696:17
+    ./in.cue:695:10
+[eval] admission.dBad: conflicting values int and 1.5 (mismatched types int and float):
+    ./in.cue:700:26
+    ./in.cue:700:31
+    ./in.cue:702:17
+[eval] admission.sBad: parameter x of function accepts (#Small & >0), but its signature requires #Small:
+    ./in.cue:709:13
+    ./in.cue:707:8
+[eval] admission.ec: parameter x of function accepts ("a"|"b"), but its signature requires string:
+    ./in.cue:740:7
+    ./in.cue:739:7
+[eval] admission.cBad: parameter 1 of function accepts int, but its signature requires number:
+    ./in.cue:614:10
+    ./in.cue:756:19
+[eval] admission.vk: parameter s of function accepts int, but its signature requires strings.MinRunes(1):
+    ./in.cue:770:47
+    ./in.cue:770:7
+[eval] admission.rk: parameter s of function accepts int, but its signature requires =~"a":
+    ./in.cue:771:33
+    ./in.cue:771:7
+[eval] admission.rxC: invalid value "c" (out of bound =~"a"):
+    ./in.cue:774:16
+    ./in.cue:775:16
+    ./in.cue:776:16
+    ./in.cue:777:12
+admission.rxC: invalid value "c" (out of bound =~"b"):
+    ./in.cue:775:16
+    ./in.cue:774:16
+    ./in.cue:776:16
+    ./in.cue:777:12
+[eval] admission.ne: function returns int, but its signature requires !=5.0:
+    ./in.cue:869:7
+    ./in.cue:868:7
+[eval] admission.nes: function returns string, but its signature requires !=5.0:
+    ./in.cue:871:7
+    ./in.cue:870:7
+[incomplete] admission.#Person.full: invalid interpolation: non-concrete value string (type string):
+    ./in.cue:880:47
+    ./in.cue:880:19
+[eval] admission.rxeBad: parameter x of function accepts ("a"|"b"), but its signature requires =~"^[a-z]$":
+    ./in.cue:906:43
+    ./in.cue:906:11
+[eval] admission.bdeBad: parameter x of function accepts (0|1|2), but its signature requires ((int & >=0) & <=3):
+    ./in.cue:907:47
+    ./in.cue:907:11
+[eval] admission.stBad: parameter p of function accepts {n:string}, but its signature requires {n:int}:
+    ./in.cue:908:40
+    ./in.cue:908:11
+[eval] admission.idBad: parameter x of function accepts bool, but its signature requires #ID:
+    ./in.cue:909:35
+    ./in.cue:909:11
+[eval] admission.tlBad: parameter x of function accepts [...int], but its signature requires [...string]:
+    ./in.cue:910:43
+    ./in.cue:910:11
+[eval] admission.lnBad: parameter x of function accepts [int], but its signature requires [int,int]:
+    ./in.cue:911:42
+    ./in.cue:911:11
+[eval] admission.corrBad: parameter x of function accepts {a:0,b:0,d:int}, but its signature requires {a:int,b:(0 & a),d:string}:
+    ./in.cue:922:62
+    ./in.cue:922:12
+[eval] parameter x of function accepts {a:0,...}, but its signature requires {a:int,b:0}:
+    ./in.cue:926:13
+    ./in.cue:927:15
+[eval] parameter x of function accepts {a:0,...}, but its signature requires #CorrNone:
+    ./in.cue:926:13
+    ./in.cue:958:15
+[eval] admission.corrSBad: parameter x of function accepts {a:0,d:int,...}, but its signature requires {a:int,b:{c:(0 & a)},d:string}:
+    ./in.cue:960:69
+    ./in.cue:960:14
+[eval] admission.empBad: parameter x of function accepts int, but its signature requires (int|<"b"):
+    ./in.cue:967:43
+    ./in.cue:967:12
+[eval] admission.#PC: circular dependency in evaluation: the value changed after evaluation by a later conjunct:
+    ./in.cue:977:8
+[eval] admission.late: parameter x of function accepts string, but its signature requires #Late:
+    ./in.cue:983:37
+    ./in.cue:983:11
+[eval] admission.early: parameter x of function accepts string, but its signature requires #Early:
+    ./in.cue:986:38
+    ./in.cue:986:11
+[eval] admission.#LT: circular dependency in evaluation: the value changed after evaluation by a later conjunct:
+    ./in.cue:1004:8
+[eval] parameter x of function accepts {a:0,...}, but its signature requires #CorrTryAs:
+    ./in.cue:926:13
+    ./try.cue:30:16
+[eval] parameter x of function accepts {a:0,...}, but its signature requires #TryNone:
+    ./in.cue:926:13
+    ./try.cue:32:16
+[eval] conflicting defaults for parameter a: conflicting values 3 and 2:
+    ./in.cue:1013:19
+    ./in.cue:1029:10
+    ./in.cue:1029:29
+[eval] conflicting defaults for parameter a: conflicting values 3 and 2:
+    ./in.cue:1013:19
+    ./in.cue:1030:28
+    ./in.cue:1030:44
+[eval] conflicting defaults for parameter a: conflicting values 4 and 2:
+    ./in.cue:1035:24
+    ./in.cue:1041:13
+    ./in.cue:1041:32
+[eval] defaults.extraBad: parameter b of function not allowed by closed function type:
+    ./in.cue:1045:10
+    ./in.cue:1048:17
+[eval] conflicting defaults for parameter x: conflicting values 2 and 3:
+    ./in.cue:1067:26
+    ./in.cue:1013:19
+    ./in.cue:1068:14
+[eval] conflicting defaults for parameter a: conflicting values 3 and 2:
+    ./in.cue:1013:19
+    ./in.cue:1067:26
+    ./in.cue:1069:15
+[eval] defaults.orderDC: parameter b of function not allowed by closed function type:
+    ./in.cue:1078:11
+    ./in.cue:1076:11
+[eval] defaults.orderCD: parameter b of function not allowed by closed function type:
+    ./in.cue:1078:11
+    ./in.cue:1076:11
+[eval] defaults.orderTV: parameter b of function not allowed by closed function type:
+    ./in.cue:1076:11
+    ./in.cue:1078:11
+[eval] entitlement.bad1: parameter x of the function supplied for parameter g permits only int, but parameter g permits number:
+    ./in.cue:1102:9
+    ./in.cue:1104:17
+[eval] entitlement.bad2: parameter x of the function supplied for parameter g permits only int, but parameter g permits number:
+    ./in.cue:1102:9
+    ./in.cue:1105:17
+[eval] entitlement.bad3: conflicting values 1.5 and int (mismatched types float and int):
+    ./in.cue:1121:23
+    ./in.cue:1121:46
+[eval] entitlement.bad4: parameter x of the function supplied for parameter g permits only int, but parameter g permits number:
+    ./in.cue:1102:9
+    ./in.cue:1126:10
+[eval] entitlement.bad5: parameter x of the function supplied for parameter g permits only number, but parameter g permits _:
+    ./in.cue:1111:8
+    ./in.cue:1129:23
+[eval] entitlement.bad5b: parameter 1 of function accepts number, but its signature requires _:
+    ./in.cue:1110:8
+    ./in.cue:1129:23
+[eval] entitlement.bad6: parameter x of the function supplied for parameter g permits only int, but parameter g permits number:
+    ./in.cue:1102:9
+    ./in.cue:1139:21
+[eval] entitlement.bad7: parameter s of the function supplied for parameter g permits only string, but parameter g permits _:
+    strings:28:15
+    ./in.cue:1146:17
+[eval] entitlement.bad8: parameter x of the function supplied for parameter g permits only int, but parameter g permits number:
+    ./in.cue:1102:9
+    ./in.cue:1152:18
+[eval] entitlement.bad15: cannot tighten a partially applied function:
+    ./in.cue:1159:10
+    ./in.cue:1105:17
+    ./in.cue:1158:17
+[eval] entitlement.bad9: parameter a of the function supplied for parameter g permits only int, but parameter g permits number:
+    ./in.cue:1169:8
+    ./in.cue:1171:16
+[eval] entitlement.bad10: parameter x of the function supplied for parameter g permits only int, but parameter g permits number:
+    ./in.cue:1102:9
+    ./in.cue:1105:17
+[eval] entitlement.bad11: parameter x of the function supplied for parameter g permits only int, but parameter g permits number:
+    ./in.cue:1102:9
+    ./in.cue:1105:17
+[eval] entitlement.bad12: parameter x of the function supplied for parameter g permits only int, but parameter g permits number:
+    ./in.cue:1102:9
+    ./in.cue:1182:17
+[eval] entitlement.bad13: parameter x of the function supplied for parameter g permits only int, but parameter g permits number:
+    ./in.cue:1102:9
+    ./in.cue:1186:24
+[eval] entitlement.bad14: parameter a of the function supplied for parameter g permits only int, but parameter g permits number:
+    ./in.cue:1191:11
+    ./in.cue:1192:18
+[eval] entitlement.lim3: conflicting values 1.5 and int (mismatched types float and int):
+    ./in.cue:1102:17
+    ./in.cue:1203:37
+[structural_cycle] entitlement.recBad: structural cycle:
+    ./in.cue:1205:34
+[structural_cycle] entitlement.rec2Bad: structural cycle:
+    ./in.cue:1207:35
+[eval] entitlement.cfUnary: parameter x of the function supplied for parameter g permits only int, but parameter g permits -#Half:
+    ./in.cue:1102:9
+    ./in.cue:1223:21
+[eval] entitlement.cfInterp: parameter x of the function supplied for parameter g permits only int, but parameter g permits "\(#Half)":
+    ./in.cue:1102:9
+    ./in.cue:1224:21
+[eval] entitlement.cfFunc: parameter x of the function supplied for parameter g permits only int, but parameter g permits func(y: number = 1) -> int:
+    ./in.cue:1102:9
+    ./in.cue:1225:21
+[eval] entitlement.cfStruct: parameter x of the function supplied for parameter g permits only int, but parameter g permits {a:number,let l#6=1,b:l,[=~"x"]:_,"d":1,{c:1},...}:
+    ./in.cue:1102:9
+    ./in.cue:1226:21
+[eval] entitlement.cfList: parameter x of the function supplied for parameter g permits only int, but parameter g permits [number,...number]:
+    ./in.cue:1102:9
+    ./in.cue:1227:21
+[eval] entitlement.cfSel: parameter x of the function supplied for parameter g permits only int, but parameter g permits #Sel.a.b:
+    ./in.cue:1102:9
+    ./in.cue:1228:21
+[eval] entitlement.cfIdx: parameter x of the function supplied for parameter g permits only int, but parameter g permits #Sel.l[0]:
+    ./in.cue:1102:9
+    ./in.cue:1229:21
+[eval] argumentPaths.atArg: conflicting values 1 and {a:int} (mismatched types int and struct):
+    ./in.cue:1249:11
+    ./in.cue:1250:19
+    ./in.cue:1251:13
+[eval] argumentPaths.closed: x.b: field not allowed:
+    ./in.cue:1252:11
+    ./in.cue:1252:20
+argumentPaths.closed: x.d: field not allowed:
+    ./in.cue:1252:11
+    ./in.cue:1252:26
+[eval] argumentPaths.matched: x.n: invalid value 5 (does not satisfy matchN): 2 matched, expected 1:
+    ./in.cue:1253:23
+    ./in.cue:1253:30
+[eval] argumentPaths.inArg: w.k: x.b: field not allowed:
+    ./in.cue:1256:20
+    ./in.cue:1256:29
+[eval] argumentPaths.inRes: w.k.foo.b: field not allowed:
+    ./in.cue:1258:20
+    ./in.cue:1257:45
+[eval] argumentPaths.builtin: v.b: field not allowed:
+    ./in.cue:1260:11
+    ./in.cue:1260:23
+-- out/eval/stats --
+Leaks:  177
+Freed:  3124
+Reused: 2891
+Allocs: 410
+Retain: 0
+
+Unifications: 3110
+Conjuncts:    8209
+Disjuncts:    133
+Notifications: 8
+
+SkippedNotification: 3
+
+NumCloseIDs: 1306

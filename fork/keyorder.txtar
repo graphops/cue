@@ -1,0 +1,52 @@
+# The field order json.Marshal gives a value that an opened copy takes
+# from a function call result, when an equal call was made elsewhere.
+# CUE v0.18.0-rc.4, v0.18.0, master and graphops/v0.18.0 (with or without
+# its call memo) all give "name","instance","part","cluster" in desired;
+# v0.18.0-rc.4-graphops.2, whose own call memo reuses the result of the
+# call made for out.res, gives the order of out.res instead.
+exec cue export x.cue -e out.desired --out text
+cmp stdout want.txt
+
+-- want.txt --
+{"metadata":{"name":"w","labels":{"name":"w","instance":"w","part":"server","cluster":"c"}}}
+-- x.cue --
+@experiment(functions,explicitopen)
+package p
+
+import "encoding/json"
+
+resources: func(o: {...}) -> [...]: [
+	for phase in ["first", "main"] for _, r in o.phases[phase] {
+		apply(withPlatform(o.platformLabels), r)
+	},
+]
+withPlatform: func(platform: {...}) -> {...}: {
+	labels: rules: p: set: {for k, v in platform {(k): v}}
+}
+apply: func(m: {...}, r: {...}) -> {...}: {
+	r
+	metadata: labels: resourceSet(m.labels.rules)
+}
+resourceSet: func(rules: {...}) -> {...}: {
+	for _, rule in rules {rule.set}
+}
+
+_selector: {
+	"name":          "w"
+	"\("instance")": "w"
+	"\("part")":     "server"
+}
+_workload: metadata: {
+	name: "w"
+	labels: {for k, v in _selector {(k): v}}
+}
+_output: {
+	phases: {first: [string]: {...}, main: [string]: {...}}
+	platformLabels: {instance: "w", cluster: "c"}
+}
+_rendered: {for r in resources({_output, phases: main: w: _workload}) {(r.metadata.name): r}}
+
+out: {
+	res: resources({_output, phases: {first: cm: metadata: name: "cm", main: w: _workload}})
+	desired: json.Marshal({_rendered.w...})
+}

@@ -1,0 +1,11 @@
+# The GraphOps patches of graphops/v0.18.0, in the order rebuild.sh applies
+# them on top of the foundation. Each line names a branch on the v0.18.0 tag;
+# every commit of v0.18.0..<branch> is cherry-picked, oldest first.
+feat/v0.18.0-marshal-sorted
+fix/v0.18.0-struct-data-incomplete
+feat/v0.18.0-build-shallow
+fix/v0.18.0-buildexpr-closedness
+fix/v0.18.0-call-closedness-path
+fix/v0.18.0-late-conjunct
+fix/v0.18.0-try-closed-field
+fix/v0.18.0-embed-root
