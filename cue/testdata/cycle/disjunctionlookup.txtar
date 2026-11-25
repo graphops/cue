@@ -1,0 +1,201 @@
+# Tests a field with a disjunction that is looked up from within a value it
+# unifies, as out in out: x & (A | B) when x refers to out. The lookup
+# finds x still being evaluated, which marks the conjunct x of out as a
+# cycle to an ancestor. That is no structural cycle, as out has other
+# conjuncts, so the disjunction of out must still be evaluated, rather than
+# be skipped as for a field that is part of a structural cycle.
+#
+# cmd/cue/cmd/testdata/script/eval_disjunctionlookup.txtar tests the same
+# with structure sharing disabled.
+# https://cuelang.org/issue/XXXX
+-- in.cue --
+// The disjunct that matches allows the fields of x.
+structs: {
+	open: {
+		#A: {...} | int
+		x: {a: 1, b: out.a}
+		out: x & #A
+		@test(eq, {#A: {...} | int, x: {a: 1, b: 1}, out: {a: 1, b: 1}})
+	}
+	closed: {
+		#A: {a: int, b: int} | int
+		x: {a: 1, b: out.a}
+		out: x & #A
+		@test(eq, {#A: {a: int, b: int} | int, x: {a: 1, b: 1}, out: {a: 1, b: 1}})
+	}
+	// A field that no disjunct allows.
+	notAllowed: {
+		#A: {a: int, b: int} | int
+		x: {a: 1, b: out.a, c: 3}
+		out: x & #A @test(err, code=eval, contains="empty disjunction")
+	}
+}
+
+lists: {
+	open: {
+		#A: [...] | int
+		x: [1, out[0]]
+		out: x & #A
+		@test(eq, {#A: [] | int, x: [1, 1], out: [1, 1]})
+	}
+	closed: {
+		#A: [int, int] | int
+		x: [1, out[0]]
+		out: x & #A
+		@test(eq, {#A: [int, int] | int, x: [1, 1], out: [1, 1]})
+	}
+	// The elements are structs.
+	structElems: {
+		#A: [...{a: int}] | int
+		x: [{a: 1}, {a: out[0].a}]
+		out: x & #A
+		@test(eq, {#A: [] | int, x: [{a: 1}, {a: 1}], out: [{a: 1}, {a: 1}]})
+	}
+}
+
+// The disjuncts must still be checked against x.
+conflicts: {
+	scalarElems: {
+		x: [1, out[0]]
+		out: x & ([...string] | int) @test(err, code=eval, contains="empty disjunction")
+	}
+	structField: {
+		x: {a: 1, b: out.a}
+		out: x & ({a: 2} | int) @test(err, code=eval, contains="empty disjunction")
+	}
+}
+
+// The disjunction keeps its default.
+defaults: {
+	x: {a: 1, b: out.a}
+	out: x & (*{c: 1} | {d: 1})
+	@test(eq, {x: {a: 1, b: 1}, out: *{a: 1, b: 1, c: 1} | {a: 1, b: 1, d: 1}})
+}
+
+// The value read is itself a disjunction, of which only the first disjunct
+// is allowed by #D.
+disjunctionRead: {
+	// The reference to n is in a conjunct of V.
+	conjunct: {
+		#D: {a: int, c?: _}
+		V: (#D & {a: 1}) | {a: 2, b: 3}
+		V: c: n.a
+		n: V & #D
+		@test(eq, {
+			#D: {a: int, c?: _}
+			V: {a: 1, c: 1} | {a: 2, b: 3, c: 1}
+			n: {a: 1, c: 1}
+		})
+	}
+	// The reference to n is in the first disjunct.
+	disjunct: {
+		#D: {a: int, c?: int}
+		V: (#D & {a: 1, c: n.a}) | {a: 2, b: 3}
+		n: V & #D
+		@test(eq, {
+			#D: {a: int, c?: int}
+			V: {a: 1, c: 1} | {a: 2, b: 3}
+			n: {a: 1, c: 1}
+		})
+	}
+	// #D allows neither disjunct of V: the one referring to n adds c, so
+	// only {a: 2, b: 3} is left of V, and #D does not allow b.
+	none: {
+		#D: {a: int}
+		V: (#D & {a: 1, c: n.a}) | {a: 2, b: 3} @test(eq, {a: 2, b: 3})
+		n: V & #D @test(err, code=eval, contains="empty disjunction")
+	}
+	// The same, with the disjuncts swapped.
+	noneSwapped: {
+		#D: {a: int}
+		V: {a: 2, b: 3} | (#D & {a: 1} & {x: n.a}) @test(eq, {a: 2, b: 3})
+		n: V & #D @test(err, code=eval, contains="empty disjunction")
+	}
+}
+
+// A field that x embeds whole is still a structural cycle.
+structuralCycle: {
+	x: {a: 1, b: out}
+	out: x & ({...} | int) @test(err, code=structural_cycle, contains="structural cycle")
+}
+-- out/errors.txt --
+[eval] structs.notAllowed.out: conflicting values {a:1,b:out.a,c:3} and int (mismatched types struct and int):
+    ./in.cue:17:26
+    ./in.cue:18:6
+    ./in.cue:19:8
+    ./in.cue:19:12
+structs.notAllowed.out: 2 errors in empty disjunction::
+    ./in.cue:18:16
+structs.notAllowed.out.c: field not allowed:
+    ./in.cue:18:16
+    ./in.cue:18:23
+[eval] structs.notAllowed.out: conflicting values {a:1,b:out.a,c:3} and int (mismatched types struct and int):
+    ./in.cue:17:26
+    ./in.cue:18:6
+    ./in.cue:19:8
+    ./in.cue:19:12
+structs.notAllowed.out: 2 errors in empty disjunction::
+    ./in.cue:18:16
+structs.notAllowed.out.c: field not allowed:
+    ./in.cue:18:16
+    ./in.cue:18:23
+[eval] conflicts.scalarElems.out: conflicting values 1 and string (mismatched types int and string):
+    ./in.cue:48:7
+    ./in.cue:49:8
+    ./in.cue:49:17
+conflicts.scalarElems.out: conflicting values [1,out[0]] and int (mismatched types list and int):
+    ./in.cue:48:6
+    ./in.cue:49:8
+    ./in.cue:49:27
+conflicts.scalarElems.out: 2 errors in empty disjunction::
+    ./in.cue:48:10
+[eval] conflicts.structField.out: conflicting values {a:1,b:out.a} and int (mismatched types struct and int):
+    ./in.cue:52:6
+    ./in.cue:53:8
+    ./in.cue:53:22
+conflicts.structField.out.a: conflicting values 2 and 1:
+    ./in.cue:52:10
+    ./in.cue:53:8
+    ./in.cue:53:17
+conflicts.structField.out: 2 errors in empty disjunction::
+    ./in.cue:52:16
+[eval] conflicts.structField.out: conflicting values {a:1,b:out.a} and int (mismatched types struct and int):
+    ./in.cue:52:6
+    ./in.cue:53:8
+    ./in.cue:53:22
+conflicts.structField.out.a: conflicting values 2 and 1:
+    ./in.cue:52:10
+    ./in.cue:53:8
+    ./in.cue:53:17
+conflicts.structField.out: 2 errors in empty disjunction::
+    ./in.cue:52:16
+[eval] disjunctionRead.none.n: 2 errors in empty disjunction::
+    ./in.cue:94:22
+disjunctionRead.none.n.b: field not allowed:
+    ./in.cue:94:22
+    ./in.cue:94:37
+disjunctionRead.none.n.c: field not allowed:
+    ./in.cue:94:22
+    ./in.cue:94:19
+[eval] disjunctionRead.noneSwapped.n: 2 errors in empty disjunction::
+    ./in.cue:100:40
+disjunctionRead.noneSwapped.n.b: field not allowed:
+    ./in.cue:100:40
+    ./in.cue:100:13
+disjunctionRead.noneSwapped.n.x: field not allowed:
+    ./in.cue:100:40
+    ./in.cue:100:37
+[structural_cycle] structuralCycle.out: structural cycle
+[structural_cycle] structuralCycle.out: structural cycle
+-- out/eval/stats --
+Leaks:  37
+Freed:  208
+Reused: 187
+Allocs: 58
+Retain: 0
+
+Unifications: 143
+Conjuncts:    285
+Disjuncts:    46
+
+NumCloseIDs: 33

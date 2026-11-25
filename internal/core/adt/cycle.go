@@ -512,6 +512,11 @@ func (n *nodeContext) detectCycle(arc *Vertex, env *Environment, x Resolver, ci 
 	// we also can terminate, as this is a structural cycle.
 	// TODO: use depth or check direct ancestry.
 	if n.hasAncestor(arc) {
+		// An inline vertex has no parent: it is part of the vertex being
+		// evaluated that it refers to.
+		if n.hasParent(arc) || (n.node.IsDynamic && n.node.Parent == nil) {
+			n.hasParentCycle = true
+		}
 		return n.markCyclic(arc, env, x, ci)
 	}
 
@@ -813,10 +818,11 @@ func sharedTargetHasInProgressCycle(c *OpContext, w *Vertex) bool {
 // hasAncestor checks whether a node is currently being processed. The code
 // still assumes that is includes any node that is currently being processed.
 func (n *nodeContext) hasAncestor(arc *Vertex) bool {
-	if n.ctx.hasDepthCycle(arc) {
-		return true
-	}
+	return n.ctx.hasDepthCycle(arc) || n.hasParent(arc)
+}
 
+// hasParent reports whether arc is a parent of the node.
+func (n *nodeContext) hasParent(arc *Vertex) bool {
 	// 	TODO: insert test conditions for Bloom filter that guarantee that all
 	// 	parent nodes have been marked as "hot", in which case we can avoid this
 	// 	traversal.

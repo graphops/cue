@@ -1043,14 +1043,21 @@ func runTask(t *task, mode runMode) {
 	// through the back-edge into the same disjunction's evaluation; the
 	// cross-disjunct cycle err1/err2 in
 	// [cue/testdata/disjunctions/edge.txtar] documents that this must
-	// surface as an unresolved-disjunction error per the spec. Only the
-	// kinds of the disjuncts apply here.
+	// surface as an unresolved-disjunction error per the spec. This holds
+	// when the ancestor is a parent of the node, or when the node has no
+	// conjunct without a cycle. A node that only refers to a vertex still
+	// being evaluated higher up, while it has other conjuncts, is not a
+	// structural cycle (see [assertStructuralCycle]), so its disjunctions
+	// must be evaluated, as for out: x & (A | B) when x refers to out.
+	//
+	// Only the kinds of the disjuncts apply here.
 	//
 	// All other task kinds must still fire: they contribute structure or
 	// constraints that downstream lookups (e.g. `_self.foo`) need. Their
 	// cyclic conjuncts are marked by [nodeContext.detectCycle] and the
 	// structural cycle is reported by [assertStructuralCycle].
-	if t.node.hasAncestorCycle && t.run == handleDisjunctions {
+	if t.node.hasAncestorCycle && (t.node.hasParentCycle || !t.node.hasNonCycle) &&
+		t.run == handleDisjunctions {
 		t.node.applyDisjunctionKinds()
 		t.state = taskSUCCESS
 		return
