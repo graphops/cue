@@ -337,6 +337,12 @@ type nodeContext struct {
 	// instead of in nodeContextState as it should be cleared when a disjunction
 	// is split off. TODO: find something more principled.
 	hasDisjunction bool
+
+	// disjunctionsDone reports that processDisjunctions has computed the
+	// disjuncts of this node. A conjunct added to the node afterwards is
+	// not part of any of them, so it does not reach the value of the node;
+	// see [Vertex.insertConjunct]. Disjunct clones do not copy it.
+	disjunctionsDone bool
 }
 
 type nodeContextState struct {

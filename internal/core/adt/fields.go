@@ -261,7 +261,9 @@ func allowedInClosed(f Feature) bool {
 // insertConjunct inserts conjunct c into cc.
 //
 // A vertex that was already finalized takes no more conjuncts: c is dropped,
-// and late reports that it was. See [nodeContext.addLateConjunct].
+// and late reports that it was. See [nodeContext.addLateConjunct]. A vertex
+// whose disjunctions were already processed takes c, but its value is that of
+// the disjuncts, computed without c: late reports that too, with added.
 func (v *Vertex) insertConjunct(ctx *OpContext, c Conjunct, id CloseInfo, mode ArcType, check, checkClosed bool) (pos int, added, late bool) {
 	n := v.getBareState(ctx)
 	if n == nil {
@@ -282,6 +284,7 @@ func (v *Vertex) insertConjunct(ctx *OpContext, c Conjunct, id CloseInfo, mode A
 		pos = len(v.Conjuncts)
 		v.addConjunctUnchecked(c)
 		added = true
+		late = n.disjunctionsDone
 	} else if srcRef := c2.CloseInfo.defID; srcRef != 0 {
 		if c2.CloseInfo.opID == n.ctx.opID {
 			// TODO: do we need this replacement? Most duplicates are deduped in
@@ -367,7 +370,7 @@ func (n *nodeContext) insertArc(f Feature, mode ArcType, c Conjunct, id CloseInf
 
 	_, added, late := v.insertConjunct(n.ctx, c, id, mode, check, true)
 	if late {
-		n.addLateConjunct(v, c)
+		n.addLateConjunct(v, c, added)
 	}
 	if !added {
 		return v
@@ -426,8 +429,8 @@ func (n *nodeContext) addConstraint(arc *Vertex, mode ArcType, c Conjunct, check
 	bulkEnv.DynamicLabel = f
 	c.Env = &bulkEnv
 
-	if _, _, late := arc.insertConjunct(n.ctx, c, c.CloseInfo, mode, check, false); late {
-		n.addLateConjunct(arc, c)
+	if _, added, late := arc.insertConjunct(n.ctx, c, c.CloseInfo, mode, check, false); late {
+		n.addLateConjunct(arc, c, added)
 	}
 }
 

@@ -741,6 +741,45 @@ functionTypeResult: {
 		n: a: {f: func(x: int) -> 1}
 	}
 }
+
+// A conjunct reaches a struct disjunction after the guard resolved it, while
+// the comprehension holds the field: the field takes it, but its value is that
+// of the disjuncts, computed without it. On a base where the guard finalizes
+// the field, the conjunct is dropped instead; either way it is checked.
+lateDisjunctField: {
+	n: a: *{x: 1} | {x: 2}
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {y: 2}
+	}
+}
+
+// A conjunct that agrees with the default of the resolved disjunction, and one
+// that admits it.
+lateDisjunctAgree: {
+	n: a: *{x: 1} | {x: 2}
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {x: 1}
+	}
+}
+
+lateDisjunctType: {
+	n: a: *{x: 1} | {x: 2}
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {x: int}
+	}
+}
 -- dep/dep.cue --
 package dep
 
@@ -2389,6 +2428,84 @@ two: 2
       n: {
         a: {
           f: func(x: int) -> 1
+        }
+      }
+    }
+  }
+  lateDisjunctField: {
+    n: {
+      a: (*{
+        x: 1
+      }|{
+        x: 2
+      })
+    }
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == 99) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          y: 2
+        }
+      }
+    }
+  }
+  lateDisjunctAgree: {
+    n: {
+      a: (*{
+        x: 1
+      }|{
+        x: 2
+      })
+    }
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == 99) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          x: 1
+        }
+      }
+    }
+  }
+  lateDisjunctType: {
+    n: {
+      a: (*{
+        x: 1
+      }|{
+        x: 2
+      })
+    }
+    r: {
+      z: 1
+    }
+    for _, _ in 〈0;r〉 {
+      if (〈2;n〉.a == 99) {
+        r: {
+          x: 2
+        }
+      }
+    }
+    for _, _ in 〈0;r〉 {
+      n: {
+        a: {
+          x: int
         }
       }
     }
