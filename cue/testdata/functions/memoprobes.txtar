@@ -1,0 +1,2010 @@
+# Calls that share a memoized result must give the result that each would
+# compute afresh. Each struct below is one case: callers inside and outside
+# definitions, in either order, with opened definitions and embeddings;
+# structural cycles through arguments; labels of pattern fields; disjuncts;
+# for, let and try clauses; let fields read from several environments;
+# aliases; partial application, defaults and signature types; incomplete
+# arguments; recursion; and arguments that read the struct holding the call.
+#inlinetest:exclude skip — results checked by the golden output
+-- in.cue --
+@experiment(functions)
+@experiment(try)
+
+p01_def_ci_a: {
+	F: func(n: _) -> _: n & {b: 2}
+	S: {x: F({a: 1})}
+	v: S
+	#D: S
+	d: #D
+}
+p01_def_ci_b: {
+	F: func(n: _) -> _: n & {b: 2}
+	S: {x: F({a: 1})}
+	#D: S
+	d: #D
+	v: S
+}
+p02_def_ci_closed_b: {
+	F: func(n: int) -> _: {a: n}
+	S: {x: F(1)}
+	#D: S
+	d: #D & {x: b: 2}
+	v: S
+	w: v & {x: b: 2}
+}
+p02_def_ci_closed: {
+	F: func(n: int) -> _: {a: n}
+	S: {x: F(1)}
+	v: S
+	#D: S
+	w: v & {x: b: 2}
+	d: #D & {x: b: 2}
+}
+p03_cycle_self: {
+	F: func(x: _) -> _: {v: x}
+	V: {a: 1, r: F(V)}
+}
+p04_cycle_copy: {
+	F: func(x: _) -> _: {v: x}
+	G: func(x: _) -> _: {w: F(x)}
+	T: {a: 1}
+	S: {p: G(T), q: p}
+	u: S
+	w: u.q.w.v
+}
+p05_label: {
+	F: func(s: string) -> string: "<" + s + ">"
+	x: [string]~(Name, _): {r: F(Name)}
+	x: {a: _, b: _}
+	y: x
+}
+p06_disj: {
+	F: func(n: int) -> int: n + 1
+	#T: {k: int, s: {r: F(k)}}
+	x: #T & ({k: 1} | {k: 2})
+	y: [x & {k: 1}, x & {k: 2}]
+}
+p07_disj_closure: {
+	#T: {k: int, f: func() -> int: k + 10, r: f()}
+	x: #T & ({k: 1} | {k: 2})
+	z: [x & {k: 1}, x & {k: 2}]
+}
+p08_for: {
+	F: func(n: int) -> {...}: {v: n, w: n * 2}
+	src: {a: 1, b: 2}
+	out: [for k, v in src {F(v)}]
+	S: {o: [for k, v in src {F(v)}], p: o}
+	c1: S
+	c2: S
+}
+p09_for_nested_copy: {
+	F: func(n: int) -> {...}: {v: n}
+	S: {src: {a: 1, b: 2}, o: [for k, v in src {F(v)}]}
+	c1: S & {src: c: 3}
+	c2: S
+}
+p10_let_field: {
+	F: func(n: _) -> _: {v: n}
+	S: {
+		let L = k
+		k: int
+		r: F(L)
+	}
+	a: S & {k: 1}
+	b: S & {k: 2}
+}
+p11_let_clause: {
+	F: func(n: _) -> _: {v: n}
+	src: {a: 1, b: 2}
+	out: [for k, v in src let L = v + 1 {F(L)}]
+	S: {o: [for k, v in src let L = v + 1 {F(L)}]}
+	c: [S, S]
+}
+p12_value_alias: {
+	F: func(n: _) -> _: n + 1
+	S: {
+		let X = self
+		b: int
+		r: F(X.b)
+	}
+	a: S & {b: 1}
+	c: S & {b: 2}
+}
+p12b_field_alias: {
+	F: func(n: _) -> _: {v: n.b}
+	S~X: {b: 1, r: F(X)}
+	a: S & {b: 1}
+}
+p13_pattern_closure: {
+	p: [string]~(K, _): func() -> string: K
+	p: {a: _, b: _}
+	out: [for k, _ in p {p[k]()}]
+}
+p14_partial: {
+	F: func(a: int, b: int) -> int: a * 10 + b
+	S: {g: F(1, ...), r: g(2)}
+	T: {g: F(3, ...), r: g(2)}
+	u: [S, T, S.r, T.r]
+}
+p15_incomplete_later: {
+	F: func(n: int) -> {...}: {v: n}
+	S: {k: int, r: F(k)}
+	a: S & {k: 1}
+	b: S & {k: 2}
+	c: S
+}
+p16_try: {
+	F: func(n: _) -> _: {v: n}
+	src: {a: {x: 1}, b: {}}
+	out: [for k, v in src try { y: F(v.x?) }]
+	S: {o: [for k, v in src try { y: F(v.x?) }]}
+	c: [S, S]
+}
+p17_try_bind: {
+	F: func(n: _) -> _: {v: n}
+	src: {a: {x: 1}, b: {x: 2}}
+	S: {out: [for k, v in src try X = v.x? { y: F(X) }]}
+	c: [S, S]
+}
+p18_recursion: {
+	Fact: func(n: int) -> int: [if n <= 1 {1}, n * Fact(n - 1)][0]
+	a: Fact(5)
+	S: {r: Fact(4)}
+	b: [S, S]
+}
+p19_param_default: {
+	F: func(n: int = 3) -> {...}: {v: n}
+	S: {r: F()}
+	T: {r: F(4)}
+	u: [S, T, S]
+}
+p20_sig_type: {
+	F: func(n: _) -> _: {v: n}
+	G: F & func(n: int) -> {...}
+	S: {a: F(1), b: G(1)}
+	c: [S, S]
+}
+p21_def_arg_a: {
+	F: func(n: _) -> _: n & {b: 2}
+	K: {a: 1}
+	S: {x: F(K)}
+	v: S
+	#D: S
+	d: #D
+}
+p21_def_arg_b: {
+	F: func(n: _) -> _: n & {b: 2}
+	K: {a: 1}
+	S: {x: F(K)}
+	#D: S
+	d: #D
+	v: S
+}
+p22_def_arg_direct: {
+	F: func(n: _) -> _: n & {b: 2}
+	K: {a: 1}
+	v: {x: F(K)}
+	#D: {x: F(K)}
+}
+p23_def_arg_shared: {
+	F: func(n: _) -> _: {r: n & {b: 2}}
+	K: {a: 1}
+	S: {x: F(K)}
+	v: S
+	#D: S
+}
+p24_cycle_ctx_a: {
+	F: func(x: _) -> _: {v: x}
+	S: {r: F(A)}
+	w: S
+	A: S
+}
+p24_cycle_ctx_b: {
+	F: func(x: _) -> _: {v: x}
+	S: {r: F(A)}
+	A: S
+	w: S
+}
+p25_cycle_ctx_field: {
+	F: func(x: _) -> _: {v: x.k}
+	S: {k: 1, r: F(A)}
+	w: S
+	A: S
+}
+p26_cycle_arg_in_self: {
+	F: func(x: _) -> _: {v: x}
+	S: {r: F(B)}
+	B: {s: S}
+	w: S
+}
+p27_stale_a: {
+	F: func(x: _) -> _: {v: x.p}
+	T: {r: F(V)}
+	V: T
+	V: {for k, _ in src {(k): 1}}
+	src: {p: _}
+	W: T
+}
+p27_stale_b: {
+	F: func(x: _) -> _: {n: len(x)}
+	T: {r: F(V)}
+	V: T
+	V: {for k, _ in src {(k): 1}}
+	src: {p: _, q: _}
+	W: T
+}
+p27_stale_c: {
+	F: func(x: _) -> _: {n: len([for k, _ in x {k}])}
+	T: {r: F(V.s)}
+	V: T
+	V: s: {for k, _ in src {(k): 1}}
+	V: s: z: 0
+	src: {p: _, q: _}
+	W: T
+}
+p28_multilet: {
+	G: func(n: string) -> string: "sp-" + n
+	S: {
+		for e in [{name: "a"}, {name: "b"}] {
+			let R = e.name
+			(e.name): {policy: G(R)}
+		}
+	}
+	T: S
+}
+p29_multilet_call: {
+	G: func(n: string) -> string: "sp-" + n
+	F: func(e: _) -> {...}: {
+		let R = e.name
+		(e.name): {policy: G(R)}
+	}
+	S: {
+		F({name: "a"})
+		F({name: "b"})
+	}
+	T: S
+}
+p30_keyonly: {
+	F: func(s: _) -> _: {v: s}
+	src: {a: 1, b: 2}
+	W: func(n: int) -> {...}: {o: [for k, _ in src {F(k)}], p: [for i, _ in [5, 6] {F(i)}]}
+	L: func(n: int) -> {...}: {m: W(n), c1: m, c2: m}
+	r: L(1)
+}
+c05_argdef_a: {
+	F: func(n: _) -> _: {r: n}
+	#K: {a: int}
+	S: {x: F({#K, c: 1})}
+	#D: S
+	d: #D & {x: _}
+	v: S & {x: _}
+	w: v.x.r & {e: 1}
+}
+c06_closearg_a: {
+	F: func(n: _) -> _: {r: n}
+	S: {x: F({a: 1})}
+	#D: S
+	d: #D & {x: _}
+	v: S & {x: _}
+	w: v.x.r & {e: 1}
+}
+c07_opened_defarg_a: {
+	F: func(n: _) -> _: n & {b: 2}
+	#K: {a: 1}
+	S: {x: F(#K)}
+	#D: S
+	o: #D... & {x: _, z: 1}
+	v: S & {x: _}
+}
+c11_opened_arg_a: {
+	F: func(n: _) -> _: {r: n}
+	#K: {a: 1}
+	#D: {x: F(#K & {b: 2})}
+	o: #D... & {x: _}
+	d: #D & {x: _}
+}
+c13_disj_a: {
+	F: func(n: _) -> _: {r: n}
+	#K: {a: 1}
+	#D: {x: F(*(#K & {b: 2}) | {c: 3})}
+	o: #D... & {x: _}
+	d: #D & {x: _}
+}
+c14_deffirst: {
+	F: func(n: _) -> _: {r: n}
+	d: #D & {x: _}
+	v: S & {x: _}
+	w: v.x.r & {e: 1}
+	#D: S
+	S: {x: F({a: 1})}
+}
+c16_deffirst_direct: {
+	F: func(n: _) -> _: {r: n}
+	d: #D & {x: _}
+	w: v.x.r & {e: 1}
+	#D: {x: F({a: 1})}
+	v: {x: F({a: 1})}
+}
+c17_openfirst: {
+	F: func(n: _) -> _: {r: n}
+	o: #D... & {x: _}
+	d: #D & {x: _}
+	w: d.x.r & {e: 1}
+	#D: {x: F({a: 1})}
+}
+c24_opened_select_a: {
+	F: func(n: _) -> _: {r: n.b, l: len(n)}
+	#K: {a: 1}
+	o: #D... & {x: _}
+	d: #D & {x: _}
+	#D: {x: F(#K & {b: 2})}
+}
+c27_disj_select_a: {
+	F: func(n: _) -> _: {r: n.v}
+	#K: {a: 1}
+	o: #D... & {x: _}
+	d: #D & {x: _}
+	#D: {x: F(*(#K & {b: 2, v: "first"}) | {v: "second"})}
+}
+c28_embed2_deffirst: {
+	F: func(n: _) -> _: {n, {b: 2}}
+	d: #D & {x: _}
+	v: S & {x: _}
+	w: v.x & {c: 3}
+	#D: S
+	S: {x: F({a: 1})}
+}
+c29_embedcall_a: {
+	F: func(n: _) -> _: {r: n}
+	#K: {a: 1}
+	e: {S, z: 1}
+	v: S & {y: 1}
+	S: F(#K & {b: 2})
+}
+c32_embed_defarg: {
+	F: func(n: _) -> _: {n, b: 2}
+	#K: {a: 1}
+	d: #D & {x: _}
+	v: S & {x: _}
+	w: v.x & {c: 3}
+	#D: S
+	S: {x: F(#K)}
+}
+c33_ellipsis_b: {
+	F: func(n: _) -> _: {r: n.a}
+	#K: {a: 1}
+	e: #E & {z: 1}
+	#E: {S, ...}
+	v: S & {y: 1}
+	S: {x: F(#K & {b: 2})}
+}
+c35_def_embed_first: {
+	F: func(n: _) -> _: {n, {b: 2}}
+	d: {#D, z: 1}
+	v: S & {x: _}
+	w: v.x & {c: 3}
+	#D: S
+	S: {x: F({a: 1})}
+}
+-- out/evalalpha --
+Errors:
+c35_def_embed_first.d.z: field not allowed:
+    ./in.cue:374:10
+p02_def_ci_closed.d.x.b: field not allowed:
+    ./in.cue:32:14
+p02_def_ci_closed_b.d.x.b: field not allowed:
+    ./in.cue:22:14
+p27_stale_c.V.r: structural cycle
+p03_cycle_self.V.r.v.r: structural cycle:
+    ./in.cue:36:15
+p12b_field_alias.S.r: structural cycle:
+    ./in.cue:106:17
+p18_recursion.S.r: structural cycle:
+    ./in.cue:141:49
+p18_recursion.a: structural cycle:
+    ./in.cue:141:49
+p20_sig_type.G: function returns _, but its signature requires {...}:
+    ./in.cue:153:5
+    ./in.cue:154:9
+p24_cycle_ctx_a.A: structural cycle:
+    ./in.cue:189:9
+p24_cycle_ctx_b.A: structural cycle:
+    ./in.cue:195:9
+p25_cycle_ctx_field.A: structural cycle:
+    ./in.cue:201:15
+p26_cycle_arg_in_self.B.s: structural cycle:
+    ./in.cue:207:9
+p27_stale_a.V.r: structural cycle:
+    ./in.cue:213:9
+p27_stale_b.V.r: structural cycle:
+    ./in.cue:221:9
+c05_argdef_a.#D.x.r.c: field not allowed:
+    ./in.cue:268:9
+    ./in.cue:268:16
+c05_argdef_a.S.x.r.c: field not allowed:
+    ./in.cue:268:9
+    ./in.cue:268:16
+c05_argdef_a.d.x.r.c: field not allowed:
+    ./in.cue:268:9
+    ./in.cue:268:16
+c05_argdef_a.v.x.r.c: field not allowed:
+    ./in.cue:268:9
+    ./in.cue:268:16
+c07_opened_defarg_a.#D.x.b: field not allowed:
+    ./in.cue:285:9
+    ./in.cue:283:27
+c07_opened_defarg_a.S.x.b: field not allowed:
+    ./in.cue:285:9
+    ./in.cue:283:27
+c07_opened_defarg_a.o.x.b: field not allowed:
+    ./in.cue:285:9
+    ./in.cue:283:27
+c07_opened_defarg_a.v.x.b: field not allowed:
+    ./in.cue:285:9
+    ./in.cue:283:27
+c11_opened_arg_a.#D.x.r.b: field not allowed:
+    ./in.cue:293:10
+    ./in.cue:293:18
+c11_opened_arg_a.d.x.r.b: field not allowed:
+    ./in.cue:293:10
+    ./in.cue:293:18
+c11_opened_arg_a.o.x.r.b: field not allowed:
+    ./in.cue:293:10
+    ./in.cue:293:18
+c24_opened_select_a.#D.x: field not allowed:
+    ./in.cue:331:10
+    ./in.cue:331:18
+c24_opened_select_a.d.x: field not allowed:
+    ./in.cue:331:10
+    ./in.cue:331:18
+c24_opened_select_a.o.x: field not allowed:
+    ./in.cue:331:10
+    ./in.cue:331:18
+c29_embedcall_a.S.r.b: field not allowed:
+    ./in.cue:353:5
+    ./in.cue:353:13
+c29_embedcall_a.e.r.b: field not allowed:
+    ./in.cue:353:5
+    ./in.cue:353:13
+c29_embedcall_a.v.r.b: field not allowed:
+    ./in.cue:353:5
+    ./in.cue:353:13
+c32_embed_defarg.#D.x.b: field not allowed:
+    ./in.cue:362:9
+    ./in.cue:356:26
+c32_embed_defarg.S.x.b: field not allowed:
+    ./in.cue:362:9
+    ./in.cue:356:26
+c32_embed_defarg.d.x.b: field not allowed:
+    ./in.cue:362:9
+    ./in.cue:356:26
+c32_embed_defarg.v.x.b: field not allowed:
+    ./in.cue:362:9
+    ./in.cue:356:26
+c33_ellipsis_b.#E.x: field not allowed:
+    ./in.cue:370:9
+    ./in.cue:370:17
+c33_ellipsis_b.S.x: field not allowed:
+    ./in.cue:370:9
+    ./in.cue:370:17
+c33_ellipsis_b.e.x: field not allowed:
+    ./in.cue:370:9
+    ./in.cue:370:17
+c33_ellipsis_b.v.x: field not allowed:
+    ./in.cue:370:9
+    ./in.cue:370:17
+
+Result:
+(_|_){
+  // [eval]
+  p01_def_ci_a: (struct){
+    F: (func){ func(n: _) -> _: (〈0;n〉 & {
+        b: 2
+      }) }
+    S: (struct){
+      x: (struct){
+        b: (int){ 2 }
+        a: (int){ 1 }
+      }
+    }
+    v: ~(p01_def_ci_a.S)
+    #D: (#struct){
+      x: (#struct){
+        b: (int){ 2 }
+        a: (int){ 1 }
+      }
+    }
+    d: ~(p01_def_ci_a.#D)
+  }
+  p01_def_ci_b: (struct){
+    F: (func){ func(n: _) -> _: (〈0;n〉 & {
+        b: 2
+      }) }
+    S: (struct){
+      x: (struct){
+        b: (int){ 2 }
+        a: (int){ 1 }
+      }
+    }
+    #D: (#struct){
+      x: (#struct){
+        b: (int){ 2 }
+        a: (int){ 1 }
+      }
+    }
+    d: ~(p01_def_ci_b.#D)
+    v: ~(p01_def_ci_b.S)
+  }
+  p02_def_ci_closed_b: (_|_){
+    // [eval]
+    F: (func){ func(n: int) -> _: {
+        a: 〈1;n〉
+      } }
+    S: (struct){
+      x: (struct){
+        a: (int){ 1 }
+      }
+    }
+    #D: (#struct){
+      x: (#struct){
+        a: (int){ 1 }
+      }
+    }
+    d: (_|_){
+      // [eval]
+      x: (_|_){
+        // [eval]
+        b: (_|_){
+          // [eval] p02_def_ci_closed_b.d.x.b: field not allowed:
+          //     ./in.cue:22:14
+        }
+        a: (int){ 1 }
+      }
+    }
+    v: ~(p02_def_ci_closed_b.S)
+    w: (struct){
+      x: (struct){
+        b: (int){ 2 }
+        a: (int){ 1 }
+      }
+    }
+  }
+  p02_def_ci_closed: (_|_){
+    // [eval]
+    F: (func){ func(n: int) -> _: {
+        a: 〈1;n〉
+      } }
+    S: (struct){
+      x: (struct){
+        a: (int){ 1 }
+      }
+    }
+    v: ~(p02_def_ci_closed.S)
+    #D: (#struct){
+      x: (#struct){
+        a: (int){ 1 }
+      }
+    }
+    w: (struct){
+      x: (struct){
+        b: (int){ 2 }
+        a: (int){ 1 }
+      }
+    }
+    d: (_|_){
+      // [eval]
+      x: (_|_){
+        // [eval]
+        b: (_|_){
+          // [eval] p02_def_ci_closed.d.x.b: field not allowed:
+          //     ./in.cue:32:14
+        }
+        a: (int){ 1 }
+      }
+    }
+  }
+  p03_cycle_self: (_|_){
+    // [structural_cycle]
+    F: (func){ func(x: _) -> _: {
+        v: 〈1;x〉
+      } }
+    V: (_|_){
+      // [structural_cycle]
+      a: (int){ 1 }
+      r: (_|_){
+        // [structural_cycle] p03_cycle_self.V.r.v.r: structural cycle:
+        //     ./in.cue:36:15
+      }
+    }
+  }
+  p04_cycle_copy: (struct){
+    F: (func){ func(x: _) -> _: {
+        v: 〈1;x〉
+      } }
+    G: (func){ func(x: _) -> _: {
+        w: 〈2;F〉(〈1;x〉)
+      } }
+    T: (struct){
+      a: (int){ 1 }
+    }
+    S: (struct){
+      p: (struct){
+        w: (struct){
+          v: ~(p04_cycle_copy.T)
+        }
+      }
+      q: ~(p04_cycle_copy.S.p)
+    }
+    u: ~(p04_cycle_copy.S)
+    w: ~(p04_cycle_copy.T)
+  }
+  p05_label: (struct){
+    F: (func){ func(s: string) -> string: (("<" + 〈0;s〉) + ">") }
+    x: (struct){
+      a: (struct){
+        r: (string){ "<a>" }
+      }
+      b: (struct){
+        r: (string){ "<b>" }
+      }
+    }
+    y: ~(p05_label.x)
+  }
+  p06_disj: (struct){
+    F: (func){ func(n: int) -> int: (〈0;n〉 + 1) }
+    #T: (#struct){
+      k: (int){ int }
+      s: (#struct){
+        r: (_|_){
+          // [incomplete] p06_disj.#T.s.r: non-concrete value int in operand to +:
+          //     ./in.cue:53:26
+          //     ./in.cue:53:13
+          //     ./in.cue:54:24
+        }
+      }
+    }
+    x: (#struct){ |((#struct){
+        k: (int){ 1 }
+        s: (#struct){
+          r: (int){ 2 }
+        }
+      }, (#struct){
+        k: (int){ 2 }
+        s: (#struct){
+          r: (int){ 3 }
+        }
+      }) }
+    y: (#list){
+      0: (#struct){
+        k: (int){ 1 }
+        s: (#struct){
+          r: (int){ 2 }
+        }
+      }
+      1: (#struct){
+        k: (int){ 2 }
+        s: (#struct){
+          r: (int){ 3 }
+        }
+      }
+    }
+  }
+  p07_disj_closure: (struct){
+    #T: (#struct){
+      k: (int){ int }
+      f: (func){ func() -> int: (〈1;k〉 + 10) }
+      r: (_|_){
+        // [incomplete] p07_disj_closure.#T.r: non-concrete value int in operand to +:
+        //     ./in.cue:59:33
+        //     ./in.cue:59:10
+      }
+    }
+    x: (#struct){ |((#struct){
+        k: (int){ 1 }
+        f: (func){ func() -> int: (〈1;k〉 + 10) }
+        r: (int){ 11 }
+      }, (#struct){
+        k: (int){ 2 }
+        f: (func){ func() -> int: (〈1;k〉 + 10) }
+        r: (int){ 12 }
+      }) }
+    z: (#list){
+      0: (#struct){
+        k: (int){ 1 }
+        f: (func){ func() -> int: (〈1;k〉 + 10) }
+        r: (int){ 11 }
+      }
+      1: (#struct){
+        k: (int){ 2 }
+        f: (func){ func() -> int: (〈1;k〉 + 10) }
+        r: (int){ 12 }
+      }
+    }
+  }
+  p08_for: (struct){
+    F: (func){ func(n: int) -> {
+        ...
+      }: {
+        v: 〈1;n〉
+        w: (〈1;n〉 * 2)
+      } }
+    src: (struct){
+      a: (int){ 1 }
+      b: (int){ 2 }
+    }
+    out: (#list){
+      0: (struct){
+        v: (int){ 1 }
+        w: (int){ 2 }
+      }
+      1: (struct){
+        v: (int){ 2 }
+        w: (int){ 4 }
+      }
+    }
+    S: (struct){
+      o: (#list){
+        0: (struct){
+          v: (int){ 1 }
+          w: (int){ 2 }
+        }
+        1: (struct){
+          v: (int){ 2 }
+          w: (int){ 4 }
+        }
+      }
+      p: ~(p08_for.S.o)
+    }
+    c1: ~(p08_for.S)
+    c2: ~(p08_for.S)
+  }
+  p09_for_nested_copy: (struct){
+    F: (func){ func(n: int) -> {
+        ...
+      }: {
+        v: 〈1;n〉
+      } }
+    S: (struct){
+      src: (struct){
+        a: (int){ 1 }
+        b: (int){ 2 }
+      }
+      o: (#list){
+        0: (struct){
+          v: (int){ 1 }
+        }
+        1: (struct){
+          v: (int){ 2 }
+        }
+      }
+    }
+    c1: (struct){
+      src: (struct){
+        c: (int){ 3 }
+        a: (int){ 1 }
+        b: (int){ 2 }
+      }
+      o: (#list){
+        0: (struct){
+          v: (int){ 3 }
+        }
+        1: (struct){
+          v: (int){ 1 }
+        }
+        2: (struct){
+          v: (int){ 2 }
+        }
+      }
+    }
+    c2: ~(p09_for_nested_copy.S)
+  }
+  p10_let_field: (struct){
+    F: (func){ func(n: _) -> _: {
+        v: 〈1;n〉
+      } }
+    S: (struct){
+      let L#1 = (int){ int }
+      k: (int){ int }
+      r: (struct){
+        v: (int){ int }
+      }
+    }
+    a: (struct){
+      k: (int){ 1 }
+      let L#1 = (int){ 1 }
+      r: (struct){
+        v: (int){ 1 }
+      }
+    }
+    b: (struct){
+      k: (int){ 2 }
+      let L#1 = (int){ 2 }
+      r: (struct){
+        v: (int){ 2 }
+      }
+    }
+  }
+  p11_let_clause: (struct){
+    F: (func){ func(n: _) -> _: {
+        v: 〈1;n〉
+      } }
+    src: (struct){
+      a: (int){ 1 }
+      b: (int){ 2 }
+    }
+    out: (#list){
+      0: (struct){
+        v: (int){ 2 }
+      }
+      1: (struct){
+        v: (int){ 3 }
+      }
+    }
+    S: (struct){
+      o: (#list){
+        0: (struct){
+          v: (int){ 2 }
+        }
+        1: (struct){
+          v: (int){ 3 }
+        }
+      }
+    }
+    c: (#list){
+      0: ~(p11_let_clause.S)
+      1: ~(p11_let_clause.S)
+    }
+  }
+  p12_value_alias: (struct){
+    F: (func){ func(n: _) -> _: (〈0;n〉 + 1) }
+    S: (struct){
+      let X#2 = (_|_){
+        // [structural_cycle] p12_value_alias.S.X: structural cycle
+      }
+      b: (int){ int }
+      r: (_|_){
+        // [incomplete] p12_value_alias.S.r: non-concrete value int in operand to +:
+        //     ./in.cue:95:22
+        //     ./in.cue:98:6
+      }
+    }
+    a: (struct){
+      b: (int){ 1 }
+      let X#2 = (_|_){
+        // [structural_cycle] p12_value_alias.a.X: structural cycle
+      }
+      r: (int){ 2 }
+    }
+    c: (struct){
+      b: (int){ 2 }
+      let X#2 = (_|_){
+        // [structural_cycle] p12_value_alias.c.X: structural cycle
+      }
+      r: (int){ 3 }
+    }
+  }
+  p12b_field_alias: (_|_){
+    // [structural_cycle]
+    F: (func){ func(n: _) -> _: {
+        v: 〈1;n〉.b
+      } }
+    S: (_|_){
+      // [structural_cycle]
+      b: (int){ 1 }
+      r: (_|_){
+        // [structural_cycle] p12b_field_alias.S.r: structural cycle:
+        //     ./in.cue:106:17
+      }
+    }
+    a: (_|_){
+      // [structural_cycle]
+      b: (int){ 1 }
+    }
+  }
+  p13_pattern_closure: (struct){
+    p: (struct){
+      a: (func){ func() -> string: 〈1;-〉 }
+      b: (func){ func() -> string: 〈1;-〉 }
+    }
+    out: (#list){
+      0: (string){ "a" }
+      1: (string){ "b" }
+    }
+  }
+  p14_partial: (struct){
+    F: (func){ func(a: int, b: int) -> int: ((〈0;a〉 * 10) + 〈0;b〉) }
+    S: (struct){
+      g: (func){ func(a: int, b: int) -> int: ((〈0;a〉 * 10) + 〈0;b〉) }
+      r: (int){ 12 }
+    }
+    T: (struct){
+      g: (func){ func(a: int, b: int) -> int: ((〈0;a〉 * 10) + 〈0;b〉) }
+      r: (int){ 32 }
+    }
+    u: (#list){
+      0: ~(p14_partial.S)
+      1: ~(p14_partial.T)
+      2: (int){ 12 }
+      3: (int){ 32 }
+    }
+  }
+  p15_incomplete_later: (struct){
+    F: (func){ func(n: int) -> {
+        ...
+      }: {
+        v: 〈1;n〉
+      } }
+    S: (struct){
+      k: (int){ int }
+      r: (struct){
+        v: (int){ int }
+      }
+    }
+    a: (struct){
+      k: (int){ 1 }
+      r: (struct){
+        v: (int){ 1 }
+      }
+    }
+    b: (struct){
+      k: (int){ 2 }
+      r: (struct){
+        v: (int){ 2 }
+      }
+    }
+    c: ~(p15_incomplete_later.S)
+  }
+  p16_try: (struct){
+    F: (func){ func(n: _) -> _: {
+        v: 〈1;n〉
+      } }
+    src: (struct){
+      a: (struct){
+        x: (int){ 1 }
+      }
+      b: (struct){
+      }
+    }
+    out: (#list){
+      0: (struct){
+        y: (struct){
+          v: (int){ 1 }
+        }
+      }
+      1: (struct){
+        y: (_|_){
+          // [incomplete] p16_try.out.1.y: undefined field: x:
+          //     ./in.cue:130:37
+          //     ./in.cue:129:19
+        }
+      }
+    }
+    S: (struct){
+      o: (#list){
+        0: (struct){
+          y: (struct){
+            v: (int){ 1 }
+          }
+        }
+        1: (struct){
+          y: (_|_){
+            // [incomplete] p16_try.S.o.1.y: undefined field: x:
+            //     ./in.cue:131:39
+            //     ./in.cue:129:19
+          }
+        }
+      }
+    }
+    c: (#list){
+      0: ~(p16_try.S)
+      1: ~(p16_try.S)
+    }
+  }
+  p17_try_bind: (struct){
+    F: (func){ func(n: _) -> _: {
+        v: 〈1;n〉
+      } }
+    src: (struct){
+      a: (struct){
+        x: (int){ 1 }
+      }
+      b: (struct){
+        x: (int){ 2 }
+      }
+    }
+    S: (struct){
+      out: (#list){
+        0: (struct){
+          y: (struct){
+            v: (int){ 1 }
+          }
+        }
+        1: (struct){
+          y: (struct){
+            v: (int){ 2 }
+          }
+        }
+      }
+    }
+    c: (#list){
+      0: ~(p17_try_bind.S)
+      1: ~(p17_try_bind.S)
+    }
+  }
+  p18_recursion: (_|_){
+    // [structural_cycle]
+    Fact: (func){ func(n: int) -> int: [
+        if (〈1;n〉 <= 1) {
+          1
+        },
+        (〈1;n〉 * 〈2;Fact〉((〈1;n〉 - 1))),
+      ][0] }
+    a: (_|_){
+      // [structural_cycle] p18_recursion.a: structural cycle:
+      //     ./in.cue:141:49
+    }
+    S: (_|_){
+      // [structural_cycle]
+      r: (_|_){
+        // [structural_cycle] p18_recursion.S.r: structural cycle:
+        //     ./in.cue:141:49
+      }
+    }
+    b: (_|_){
+      // [structural_cycle]
+      0: (_|_){
+        // [structural_cycle] p18_recursion.S.r: structural cycle:
+        //     ./in.cue:141:49
+      }
+      1: (_|_){
+        // [structural_cycle] p18_recursion.S.r: structural cycle:
+        //     ./in.cue:141:49
+      }
+    }
+  }
+  p19_param_default: (struct){
+    F: (func){ func(n: int = 3) -> {
+        ...
+      }: {
+        v: 〈1;n〉
+      } }
+    S: (struct){
+      r: (struct){
+        v: (int){ 3 }
+      }
+    }
+    T: (struct){
+      r: (struct){
+        v: (int){ 4 }
+      }
+    }
+    u: (#list){
+      0: ~(p19_param_default.S)
+      1: ~(p19_param_default.T)
+      2: ~(p19_param_default.S)
+    }
+  }
+  p20_sig_type: (_|_){
+    // [eval]
+    F: (func){ func(n: _) -> _: {
+        v: 〈1;n〉
+      } }
+    G: (_|_){
+      // [eval] p20_sig_type.G: function returns _, but its signature requires {...}:
+      //     ./in.cue:153:5
+      //     ./in.cue:154:9
+    }
+    S: (_|_){
+      // [eval]
+      a: (struct){
+        v: (int){ 1 }
+      }
+      b: (_|_){
+        // [eval] p20_sig_type.G: function returns _, but its signature requires {...}:
+        //     ./in.cue:153:5
+        //     ./in.cue:154:9
+      }
+    }
+    c: (_|_){
+      // [eval]
+      0: ~(p20_sig_type.S)
+      1: ~(p20_sig_type.S)
+    }
+  }
+  p21_def_arg_a: (struct){
+    F: (func){ func(n: _) -> _: (〈0;n〉 & {
+        b: 2
+      }) }
+    K: (struct){
+      a: (int){ 1 }
+    }
+    S: (struct){
+      x: (struct){
+        b: (int){ 2 }
+        a: (int){ 1 }
+      }
+    }
+    v: ~(p21_def_arg_a.S)
+    #D: (#struct){
+      x: (#struct){
+        b: (int){ 2 }
+        a: (int){ 1 }
+      }
+    }
+    d: ~(p21_def_arg_a.#D)
+  }
+  p21_def_arg_b: (struct){
+    F: (func){ func(n: _) -> _: (〈0;n〉 & {
+        b: 2
+      }) }
+    K: (struct){
+      a: (int){ 1 }
+    }
+    S: (struct){
+      x: (struct){
+        b: (int){ 2 }
+        a: (int){ 1 }
+      }
+    }
+    #D: (#struct){
+      x: (#struct){
+        b: (int){ 2 }
+        a: (int){ 1 }
+      }
+    }
+    d: ~(p21_def_arg_b.#D)
+    v: ~(p21_def_arg_b.S)
+  }
+  p22_def_arg_direct: (struct){
+    F: (func){ func(n: _) -> _: (〈0;n〉 & {
+        b: 2
+      }) }
+    K: (struct){
+      a: (int){ 1 }
+    }
+    v: (struct){
+      x: (struct){
+        b: (int){ 2 }
+        a: (int){ 1 }
+      }
+    }
+    #D: (#struct){
+      x: (#struct){
+        b: (int){ 2 }
+        a: (int){ 1 }
+      }
+    }
+  }
+  p23_def_arg_shared: (struct){
+    F: (func){ func(n: _) -> _: {
+        r: (〈1;n〉 & {
+          b: 2
+        })
+      } }
+    K: (struct){
+      a: (int){ 1 }
+    }
+    S: (struct){
+      x: (struct){
+        r: (struct){
+          b: (int){ 2 }
+          a: (int){ 1 }
+        }
+      }
+    }
+    v: ~(p23_def_arg_shared.S)
+    #D: (#struct){
+      x: (#struct){
+        r: (#struct){
+          b: (int){ 2 }
+          a: (int){ 1 }
+        }
+      }
+    }
+  }
+  p24_cycle_ctx_a: (_|_){
+    // [structural_cycle]
+    F: (func){ func(x: _) -> _: {
+        v: 〈1;x〉
+      } }
+    S: (_|_){
+      // [structural_cycle]
+      r: (_|_){
+        // [structural_cycle] p24_cycle_ctx_a.A: structural cycle:
+        //     ./in.cue:189:9
+      }
+    }
+    w: (_|_){
+      // [structural_cycle] p24_cycle_ctx_a.A: structural cycle:
+      //     ./in.cue:189:9
+    }
+    A: (_|_){
+      // [structural_cycle] p24_cycle_ctx_a.A: structural cycle:
+      //     ./in.cue:189:9
+    }
+  }
+  p24_cycle_ctx_b: (_|_){
+    // [structural_cycle]
+    F: (func){ func(x: _) -> _: {
+        v: 〈1;x〉
+      } }
+    S: (_|_){
+      // [structural_cycle]
+      r: (_|_){
+        // [structural_cycle] p24_cycle_ctx_b.A: structural cycle:
+        //     ./in.cue:195:9
+      }
+    }
+    A: (_|_){
+      // [structural_cycle] p24_cycle_ctx_b.A: structural cycle:
+      //     ./in.cue:195:9
+    }
+    w: (_|_){
+      // [structural_cycle] p24_cycle_ctx_b.A: structural cycle:
+      //     ./in.cue:195:9
+    }
+  }
+  p25_cycle_ctx_field: (_|_){
+    // [structural_cycle]
+    F: (func){ func(x: _) -> _: {
+        v: 〈1;x〉.k
+      } }
+    S: (_|_){
+      // [structural_cycle]
+      k: (int){ 1 }
+      r: (_|_){
+        // [structural_cycle] p25_cycle_ctx_field.A: structural cycle:
+        //     ./in.cue:201:15
+      }
+    }
+    w: (_|_){
+      // [structural_cycle] p25_cycle_ctx_field.A: structural cycle:
+      //     ./in.cue:201:15
+    }
+    A: (_|_){
+      // [structural_cycle] p25_cycle_ctx_field.A: structural cycle:
+      //     ./in.cue:201:15
+    }
+  }
+  p26_cycle_arg_in_self: (_|_){
+    // [structural_cycle]
+    F: (func){ func(x: _) -> _: {
+        v: 〈1;x〉
+      } }
+    S: (_|_){
+      // [structural_cycle]
+      r: (_|_){
+        // [structural_cycle] p26_cycle_arg_in_self.B.s: structural cycle:
+        //     ./in.cue:207:9
+      }
+    }
+    B: (_|_){
+      // [structural_cycle]
+      s: (_|_){
+        // [structural_cycle] p26_cycle_arg_in_self.B.s: structural cycle:
+        //     ./in.cue:207:9
+      }
+    }
+    w: (_|_){
+      // [structural_cycle] p26_cycle_arg_in_self.B.s: structural cycle:
+      //     ./in.cue:207:9
+    }
+  }
+  p27_stale_a: (_|_){
+    // [structural_cycle]
+    F: (func){ func(x: _) -> _: {
+        v: 〈1;x〉.p
+      } }
+    T: (_|_){
+      // [structural_cycle]
+      r: (_|_){
+        // [structural_cycle] p27_stale_a.V.r: structural cycle:
+        //     ./in.cue:213:9
+      }
+    }
+    V: (_|_){
+      // [structural_cycle]
+      r: (_|_){
+        // [structural_cycle] p27_stale_a.V.r: structural cycle:
+        //     ./in.cue:213:9
+      }
+      p: (int){ 1 }
+    }
+    src: (struct){
+      p: (_){ _ }
+    }
+    W: (_|_){
+      // [structural_cycle] p27_stale_a.V.r: structural cycle:
+      //     ./in.cue:213:9
+    }
+  }
+  p27_stale_b: (_|_){
+    // [structural_cycle]
+    F: (func){ func(x: _) -> _: {
+        n: len(〈1;x〉)
+      } }
+    T: (_|_){
+      // [structural_cycle]
+      r: (_|_){
+        // [structural_cycle] p27_stale_b.V.r: structural cycle:
+        //     ./in.cue:221:9
+      }
+    }
+    V: (_|_){
+      // [structural_cycle]
+      r: (_|_){
+        // [structural_cycle] p27_stale_b.V.r: structural cycle:
+        //     ./in.cue:221:9
+      }
+      p: (int){ 1 }
+      q: (int){ 1 }
+    }
+    src: (struct){
+      p: (_){ _ }
+      q: (_){ _ }
+    }
+    W: (_|_){
+      // [structural_cycle] p27_stale_b.V.r: structural cycle:
+      //     ./in.cue:221:9
+    }
+  }
+  p27_stale_c: (_|_){
+    // [structural_cycle]
+    F: (func){ func(x: _) -> _: {
+        n: len([
+          for k, _ in 〈2;x〉 {
+            〈1;k〉
+          },
+        ])
+      } }
+    T: (struct){
+      r: (struct){
+        n: (int){ 3 }
+      }
+    }
+    V: (_|_){
+      // [structural_cycle]
+      s: (struct){
+        z: (int){ 0 }
+        p: (int){ 1 }
+        q: (int){ 1 }
+      }
+      r: (_|_){
+        // [structural_cycle] p27_stale_c.V.r: structural cycle
+      }
+    }
+    src: (struct){
+      p: (_){ _ }
+      q: (_){ _ }
+    }
+    W: ~(p27_stale_c.T)
+  }
+  p28_multilet: (struct){
+    G: (func){ func(n: string) -> string: ("sp-" + 〈0;n〉) }
+    S: (struct){
+      let R#3multi = 〈1;e〉.name
+      a: (struct){
+        policy: (string){ "sp-a" }
+      }
+      b: (struct){
+        policy: (string){ "sp-b" }
+      }
+    }
+    T: ~(p28_multilet.S)
+  }
+  p29_multilet_call: (struct){
+    G: (func){ func(n: string) -> string: ("sp-" + 〈0;n〉) }
+    F: (func){ func(e: _) -> {
+        ...
+      }: {
+        let R#4 = 〈1;e〉.name
+        〈1;e〉.name: {
+          policy: 〈3;G〉(〈1;let R#4〉)
+        }
+      } }
+    S: (struct){
+      let R#4multi = 〈1;e〉.name
+      a: (struct){
+        policy: (string){ "sp-a" }
+      }
+      b: (struct){
+        policy: (string){ "sp-b" }
+      }
+    }
+    T: ~(p29_multilet_call.S)
+  }
+  p30_keyonly: (struct){
+    F: (func){ func(s: _) -> _: {
+        v: 〈1;s〉
+      } }
+    src: (struct){
+      a: (int){ 1 }
+      b: (int){ 2 }
+    }
+    W: (func){ func(n: int) -> {
+        ...
+      }: {
+        o: [
+          for k, _ in 〈3;src〉 {
+            〈5;F〉(〈1;k〉)
+          },
+        ]
+        p: [
+          for i, _ in [
+            5,
+            6,
+          ] {
+            〈5;F〉(〈1;i〉)
+          },
+        ]
+      } }
+    L: (func){ func(n: int) -> {
+        ...
+      }: {
+        m: 〈2;W〉(〈1;n〉)
+        c1: 〈0;m〉
+        c2: 〈0;m〉
+      } }
+    r: (struct){
+      m: (struct){
+        o: (#list){
+          0: (struct){
+            v: (string){ "a" }
+          }
+          1: (struct){
+            v: (string){ "b" }
+          }
+        }
+        p: (#list){
+          0: (struct){
+            v: (int){ 0 }
+          }
+          1: (struct){
+            v: (int){ 1 }
+          }
+        }
+      }
+      c1: ~(p30_keyonly.r.m)
+      c2: ~(p30_keyonly.r.m)
+    }
+  }
+  c05_argdef_a: (_|_){
+    // [eval]
+    F: (func){ func(n: _) -> _: {
+        r: 〈1;n〉
+      } }
+    #K: (#struct){
+      a: (int){ int }
+    }
+    S: (_|_){
+      // [eval]
+      x: (_|_){
+        // [eval] c05_argdef_a.S.x.r.c: field not allowed:
+        //     ./in.cue:268:9
+        //     ./in.cue:268:16
+      }
+    }
+    #D: (_|_){
+      // [eval]
+      x: (_|_){
+        // [eval] c05_argdef_a.#D.x.r.c: field not allowed:
+        //     ./in.cue:268:9
+        //     ./in.cue:268:16
+      }
+    }
+    d: (_|_){
+      // [eval]
+      x: (_|_){
+        // [eval] c05_argdef_a.d.x.r.c: field not allowed:
+        //     ./in.cue:268:9
+        //     ./in.cue:268:16
+      }
+    }
+    v: (_|_){
+      // [eval]
+      x: (_|_){
+        // [eval] c05_argdef_a.v.x.r.c: field not allowed:
+        //     ./in.cue:268:9
+        //     ./in.cue:268:16
+      }
+    }
+    w: (_|_){
+      // [eval] c05_argdef_a.v.x.r.c: field not allowed:
+      //     ./in.cue:268:9
+      //     ./in.cue:268:16
+      e: (int){ 1 }
+    }
+  }
+  c06_closearg_a: (struct){
+    F: (func){ func(n: _) -> _: {
+        r: 〈1;n〉
+      } }
+    S: (struct){
+      x: (struct){
+        r: (struct){
+          a: (int){ 1 }
+        }
+      }
+    }
+    #D: (#struct){
+      x: (#struct){
+        r: (#struct){
+          a: (int){ 1 }
+        }
+      }
+    }
+    d: (#struct){
+      x: (#struct){
+        r: (#struct){
+          a: (int){ 1 }
+        }
+      }
+    }
+    v: (struct){
+      x: (struct){
+        r: (struct){
+          a: (int){ 1 }
+        }
+      }
+    }
+    w: (struct){
+      e: (int){ 1 }
+      a: (int){ 1 }
+    }
+  }
+  c07_opened_defarg_a: (_|_){
+    // [eval]
+    F: (func){ func(n: _) -> _: (〈0;n〉 & {
+        b: 2
+      }) }
+    #K: (#struct){
+      a: (int){ 1 }
+    }
+    S: (_|_){
+      // [eval]
+      x: (_|_){
+        // [eval] c07_opened_defarg_a.S.x.b: field not allowed:
+        //     ./in.cue:285:9
+        //     ./in.cue:283:27
+      }
+    }
+    #D: (_|_){
+      // [eval]
+      x: (_|_){
+        // [eval] c07_opened_defarg_a.#D.x.b: field not allowed:
+        //     ./in.cue:285:9
+        //     ./in.cue:283:27
+      }
+    }
+    o: (_|_){
+      // [eval]
+      x: (_|_){
+        // [eval] c07_opened_defarg_a.o.x.b: field not allowed:
+        //     ./in.cue:285:9
+        //     ./in.cue:283:27
+      }
+      z: (int){ 1 }
+    }
+    v: (_|_){
+      // [eval]
+      x: (_|_){
+        // [eval] c07_opened_defarg_a.v.x.b: field not allowed:
+        //     ./in.cue:285:9
+        //     ./in.cue:283:27
+      }
+    }
+  }
+  c11_opened_arg_a: (_|_){
+    // [eval]
+    F: (func){ func(n: _) -> _: {
+        r: 〈1;n〉
+      } }
+    #K: (#struct){
+      a: (int){ 1 }
+    }
+    #D: (_|_){
+      // [eval]
+      x: (_|_){
+        // [eval] c11_opened_arg_a.#D.x.r.b: field not allowed:
+        //     ./in.cue:293:10
+        //     ./in.cue:293:18
+      }
+    }
+    o: (_|_){
+      // [eval]
+      x: (_|_){
+        // [eval] c11_opened_arg_a.o.x.r.b: field not allowed:
+        //     ./in.cue:293:10
+        //     ./in.cue:293:18
+      }
+    }
+    d: (_|_){
+      // [eval]
+      x: (_|_){
+        // [eval] c11_opened_arg_a.d.x.r.b: field not allowed:
+        //     ./in.cue:293:10
+        //     ./in.cue:293:18
+      }
+    }
+  }
+  c13_disj_a: (struct){
+    F: (func){ func(n: _) -> _: {
+        r: 〈1;n〉
+      } }
+    #K: (#struct){
+      a: (int){ 1 }
+    }
+    #D: (#struct){
+      x: (#struct){
+        r: (#struct){
+          c: (int){ 3 }
+        }
+      }
+    }
+    o: (#struct){
+      x: (#struct){
+        r: (#struct){
+          c: (int){ 3 }
+        }
+      }
+    }
+    d: (#struct){
+      x: (#struct){
+        r: (#struct){
+          c: (int){ 3 }
+        }
+      }
+    }
+  }
+  c14_deffirst: (struct){
+    F: (func){ func(n: _) -> _: {
+        r: 〈1;n〉
+      } }
+    d: (#struct){
+      x: (#struct){
+        r: (#struct){
+          a: (int){ 1 }
+        }
+      }
+    }
+    v: (struct){
+      x: (struct){
+        r: (struct){
+          a: (int){ 1 }
+        }
+      }
+    }
+    w: (struct){
+      e: (int){ 1 }
+      a: (int){ 1 }
+    }
+    #D: (#struct){
+      x: (#struct){
+        r: (#struct){
+          a: (int){ 1 }
+        }
+      }
+    }
+    S: (struct){
+      x: (struct){
+        r: (struct){
+          a: (int){ 1 }
+        }
+      }
+    }
+  }
+  c16_deffirst_direct: (struct){
+    F: (func){ func(n: _) -> _: {
+        r: 〈1;n〉
+      } }
+    d: (#struct){
+      x: (#struct){
+        r: (#struct){
+          a: (int){ 1 }
+        }
+      }
+    }
+    w: (struct){
+      e: (int){ 1 }
+      a: (int){ 1 }
+    }
+    #D: (#struct){
+      x: (#struct){
+        r: (#struct){
+          a: (int){ 1 }
+        }
+      }
+    }
+    v: (struct){
+      x: (struct){
+        r: (struct){
+          a: (int){ 1 }
+        }
+      }
+    }
+  }
+  c17_openfirst: (struct){
+    F: (func){ func(n: _) -> _: {
+        r: 〈1;n〉
+      } }
+    o: (#struct){
+      x: (#struct){
+        r: (#struct){
+          a: (int){ 1 }
+        }
+      }
+    }
+    d: (#struct){
+      x: (#struct){
+        r: (#struct){
+          a: (int){ 1 }
+        }
+      }
+    }
+    w: (#struct){
+      e: (int){ 1 }
+      a: (int){ 1 }
+    }
+    #D: (#struct){
+      x: (#struct){
+        r: (#struct){
+          a: (int){ 1 }
+        }
+      }
+    }
+  }
+  c24_opened_select_a: (_|_){
+    // [eval]
+    F: (func){ func(n: _) -> _: {
+        r: 〈1;n〉.b
+        l: len(〈1;n〉)
+      } }
+    #K: (#struct){
+      a: (int){ 1 }
+    }
+    o: (_|_){
+      // [eval]
+      x: (_|_){
+        // [eval] c24_opened_select_a.o.x: field not allowed:
+        //     ./in.cue:331:10
+        //     ./in.cue:331:18
+      }
+    }
+    d: (_|_){
+      // [eval]
+      x: (_|_){
+        // [eval] c24_opened_select_a.d.x: field not allowed:
+        //     ./in.cue:331:10
+        //     ./in.cue:331:18
+      }
+    }
+    #D: (_|_){
+      // [eval]
+      x: (_|_){
+        // [eval] c24_opened_select_a.#D.x: field not allowed:
+        //     ./in.cue:331:10
+        //     ./in.cue:331:18
+      }
+    }
+  }
+  c27_disj_select_a: (struct){
+    F: (func){ func(n: _) -> _: {
+        r: 〈1;n〉.v
+      } }
+    #K: (#struct){
+      a: (int){ 1 }
+    }
+    o: (#struct){
+      x: (#struct){
+        r: (string){ "second" }
+      }
+    }
+    d: (#struct){
+      x: (#struct){
+        r: (string){ "second" }
+      }
+    }
+    #D: (#struct){
+      x: (#struct){
+        r: (string){ "second" }
+      }
+    }
+  }
+  c28_embed2_deffirst: (struct){
+    F: (func){ func(n: _) -> _: {
+        〈1;n〉
+        {
+          b: 2
+        }
+      } }
+    d: (#struct){
+      x: (#struct){
+        b: (int){ 2 }
+        a: (int){ 1 }
+      }
+    }
+    v: (struct){
+      x: (struct){
+        b: (int){ 2 }
+        a: (int){ 1 }
+      }
+    }
+    w: (struct){
+      c: (int){ 3 }
+      b: (int){ 2 }
+      a: (int){ 1 }
+    }
+    #D: (#struct){
+      x: (#struct){
+        b: (int){ 2 }
+        a: (int){ 1 }
+      }
+    }
+    S: (struct){
+      x: (struct){
+        b: (int){ 2 }
+        a: (int){ 1 }
+      }
+    }
+  }
+  c29_embedcall_a: (_|_){
+    // [eval]
+    F: (func){ func(n: _) -> _: {
+        r: 〈1;n〉
+      } }
+    #K: (#struct){
+      a: (int){ 1 }
+    }
+    e: (_|_){
+      // [eval] c29_embedcall_a.e.r.b: field not allowed:
+      //     ./in.cue:353:5
+      //     ./in.cue:353:13
+      z: (int){ 1 }
+    }
+    v: (_|_){
+      // [eval] c29_embedcall_a.v.r.b: field not allowed:
+      //     ./in.cue:353:5
+      //     ./in.cue:353:13
+      y: (int){ 1 }
+    }
+    S: (_|_){
+      // [eval] c29_embedcall_a.S.r.b: field not allowed:
+      //     ./in.cue:353:5
+      //     ./in.cue:353:13
+    }
+  }
+  c32_embed_defarg: (_|_){
+    // [eval]
+    F: (func){ func(n: _) -> _: {
+        〈1;n〉
+        b: 2
+      } }
+    #K: (#struct){
+      a: (int){ 1 }
+    }
+    d: (_|_){
+      // [eval]
+      x: (_|_){
+        // [eval] c32_embed_defarg.d.x.b: field not allowed:
+        //     ./in.cue:362:9
+        //     ./in.cue:356:26
+      }
+    }
+    v: (_|_){
+      // [eval]
+      x: (_|_){
+        // [eval] c32_embed_defarg.v.x.b: field not allowed:
+        //     ./in.cue:362:9
+        //     ./in.cue:356:26
+      }
+    }
+    w: (_|_){
+      // [eval] c32_embed_defarg.v.x.b: field not allowed:
+      //     ./in.cue:362:9
+      //     ./in.cue:356:26
+      c: (int){ 3 }
+    }
+    #D: (_|_){
+      // [eval]
+      x: (_|_){
+        // [eval] c32_embed_defarg.#D.x.b: field not allowed:
+        //     ./in.cue:362:9
+        //     ./in.cue:356:26
+      }
+    }
+    S: (_|_){
+      // [eval]
+      x: (_|_){
+        // [eval] c32_embed_defarg.S.x.b: field not allowed:
+        //     ./in.cue:362:9
+        //     ./in.cue:356:26
+      }
+    }
+  }
+  c33_ellipsis_b: (_|_){
+    // [eval]
+    F: (func){ func(n: _) -> _: {
+        r: 〈1;n〉.a
+      } }
+    #K: (#struct){
+      a: (int){ 1 }
+    }
+    e: (_|_){
+      // [eval]
+      z: (int){ 1 }
+      x: (_|_){
+        // [eval] c33_ellipsis_b.e.x: field not allowed:
+        //     ./in.cue:370:9
+        //     ./in.cue:370:17
+      }
+    }
+    #E: (_|_){
+      // [eval]
+      x: (_|_){
+        // [eval] c33_ellipsis_b.#E.x: field not allowed:
+        //     ./in.cue:370:9
+        //     ./in.cue:370:17
+      }
+    }
+    v: (_|_){
+      // [eval]
+      y: (int){ 1 }
+      x: (_|_){
+        // [eval] c33_ellipsis_b.v.x: field not allowed:
+        //     ./in.cue:370:9
+        //     ./in.cue:370:17
+      }
+    }
+    S: (_|_){
+      // [eval]
+      x: (_|_){
+        // [eval] c33_ellipsis_b.S.x: field not allowed:
+        //     ./in.cue:370:9
+        //     ./in.cue:370:17
+      }
+    }
+  }
+  c35_def_embed_first: (_|_){
+    // [eval]
+    F: (func){ func(n: _) -> _: {
+        〈1;n〉
+        {
+          b: 2
+        }
+      } }
+    d: (_|_){
+      // [eval]
+      z: (_|_){
+        // [eval] c35_def_embed_first.d.z: field not allowed:
+        //     ./in.cue:374:10
+      }
+      x: (#struct){
+        b: (int){ 2 }
+        a: (int){ 1 }
+      }
+    }
+    v: (struct){
+      x: (struct){
+        b: (int){ 2 }
+        a: (int){ 1 }
+      }
+    }
+    w: (struct){
+      c: (int){ 3 }
+      b: (int){ 2 }
+      a: (int){ 1 }
+    }
+    #D: (#struct){
+      x: (#struct){
+        b: (int){ 2 }
+        a: (int){ 1 }
+      }
+    }
+    S: (struct){
+      x: (struct){
+        b: (int){ 2 }
+        a: (int){ 1 }
+      }
+    }
+  }
+}

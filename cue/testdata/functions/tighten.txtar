@@ -1761,13 +1761,13 @@ admission.rxC: invalid value "c" (out of bound =~"b"):
     ./in.cue:1229:21
 -- out/eval/stats --
 Leaks:  163
-Freed:  3014
-Reused: 2776
+Freed:  3018
+Reused: 2780
 Allocs: 401
 Retain: 0
 
-Unifications: 2990
-Conjuncts:    7970
+Unifications: 2994
+Conjuncts:    7978
 Disjuncts:    133
 
-NumCloseIDs: 1270
+NumCloseIDs: 1272

@@ -288,6 +288,12 @@ type Vertex struct {
 	// ArcType indicates the level of optionality of this arc.
 	ArcType ArcType
 
+	// binds is set on the vertices that for, let and try clauses create to
+	// bind their variables. The memo of function calls reads from it what
+	// a reference into the environment of such a vertex reads; see
+	// [OpContext.envIdent]. It fits in the padding after ArcType.
+	binds bindKind
+
 	// BaseValue is the value associated with this vertex. For lists and structs
 	// this is a sentinel value indicating its kind.
 	BaseValue BaseValue
