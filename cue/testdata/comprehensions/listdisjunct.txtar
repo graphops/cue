@@ -1,0 +1,197 @@
+# Tests a list with a comprehension that refers to the node the list is
+# unified into, where the node also has a disjunction. The comprehension
+# resolves the disjunction before the list is complete, and the node takes
+# the value of the disjunct, which holds the whole list. The list must not
+# replace that value afterwards. Otherwise the node kept the closedness of a
+# definition such as #A, but not the disjunct of #A that allows the
+# elements, which it reported as not allowed.
+#
+# cmd/cue/cmd/testdata/script/eval_listdisjunct.txtar tests the same with
+# structure sharing disabled.
+# https://cuelang.org/issue/XXXX
+-- in.cue --
+// The list is added through a field.
+scalars: {
+	#S: [...]
+	#A: #S | int
+	x: [1, if out[0] == 1 {2}]
+	out: x & #A
+	@test(eq, {#S: [], #A: [] | int, x: [1, 2], out: [1, 2]})
+}
+
+// The list is added directly.
+direct: {
+	#A: [...] | int
+	out: #A & [1, if out[0] == 1 {2}]
+	@test(eq, {#A: [] | int, out: [1, 2]})
+}
+
+// The elements are structs.
+structs: {
+	#A: [...] | int
+	x: [{a: 1}, if out[0].a == 1 {{a: 2}}]
+	out: x & #A
+	@test(eq, {#A: [] | int, x: [{a: 1}, {a: 2}], out: [{a: 1}, {a: 2}]})
+}
+
+// The definition constrains the elements.
+typedElems: {
+	#A: [...int] | string
+	x: [1, if out[0] == 1 {2}]
+	out: x & #A
+	@test(eq, {#A: [] | string, x: [1, 2], out: [1, 2]})
+}
+
+// The definition closes the structs in the list.
+closedStructs: {
+	ok: {
+		#A: [...{a: int}] | int
+		x: [{a: 1}, if out[0].a == 1 {{a: 2}}]
+		out: x & #A
+		@test(eq, {#A: [] | int, x: [{a: 1}, {a: 2}], out: [{a: 1}, {a: 2}]})
+	}
+	notAllowed: {
+		#A: [...{a: int}] | int
+		x: [{a: 1}, if out[0].a == 1 {{a: 2, b: 3}}]
+		out: x & #A @test(err, code=eval, contains="empty disjunction")
+	}
+}
+
+// The definition is a list of fixed length.
+closedList: {
+	ok: {
+		#A: [int, int] | int
+		x: [1, if out[0] == 1 {2}]
+		out: x & #A
+		@test(eq, {#A: [int, int] | int, x: [1, 2], out: [1, 2]})
+	}
+	tooLong: {
+		#A: [int, int] | int
+		x: [1, if out[0] == 1 {2}, 3]
+		out: x & #A @test(err, code=eval, contains="empty disjunction")
+	}
+}
+
+// The elements must still match the disjunct.
+wrongElem: {
+	#A: [...string] | int
+	x: [1, if out[0] == 1 {2}]
+	out: x & #A @test(err, code=eval, contains="empty disjunction")
+}
+
+// The list is in a struct.
+inStruct: {
+	#S: [...]
+	#A: #S | int
+	x: {a: [1, if out.a[0] == 1 {2}]}
+	out: x & {a: #A}
+	@test(eq, {#S: [], #A: [] | int, x: {a: [1, 2]}, out: {a: [1, 2]}})
+}
+
+// A for comprehension.
+forClause: {
+	#A: [...] | int
+	x: [1, for v in [0] if out[0] == 1 {2}]
+	out: x & #A
+	@test(eq, {#A: [] | int, x: [1, 2], out: [1, 2]})
+}
+
+// The list is unified with two disjunctions.
+twoDisjunctions: {
+	#A: [...] | int
+	#B: [...int] | string
+	x: [1, if out[0] == 1 {2}]
+	out: x & #A & #B
+	@test(eq, {#A: [] | int, #B: [] | string, x: [1, 2], out: [1, 2]})
+}
+
+// Nested lists.
+nested: {
+	#A: [...[...int]] | int
+	x: [[1], if out[0][0] == 1 {[2]}]
+	out: x & #A
+	@test(eq, {#A: [] | int, x: [[1], [2]], out: [[1], [2]]})
+}
+
+// Without a disjunction, the list was not affected.
+noDisjunction: {
+	#S: [...]
+	x: [1, if out[0] == 1 {2}]
+	out: x & #S
+	@test(eq, {#S: [], x: [1, 2], out: [1, 2]})
+}
+-- out/errors.txt --
+[eval] closedStructs.notAllowed.out: conflicting values [{a:1},if (out[0].a == 1) {{a:2,b:3}}] and int (mismatched types list and int):
+    ./in.cue:42:23
+    ./in.cue:43:6
+    ./in.cue:44:8
+    ./in.cue:44:12
+closedStructs.notAllowed.out: 2 errors in empty disjunction::
+    ./in.cue:43:18
+closedStructs.notAllowed.out.1.b: field not allowed:
+    ./in.cue:43:18
+    ./in.cue:43:40
+[eval] closedStructs.notAllowed.out: conflicting values [{a:1},if (out[0].a == 1) {{a:2,b:3}}] and int (mismatched types list and int):
+    ./in.cue:42:23
+    ./in.cue:43:6
+    ./in.cue:44:8
+    ./in.cue:44:12
+closedStructs.notAllowed.out: 2 errors in empty disjunction::
+    ./in.cue:43:18
+closedStructs.notAllowed.out.1.b: field not allowed:
+    ./in.cue:43:18
+    ./in.cue:43:40
+[eval] closedList.tooLong.out: conflicting values [1,if (out[0] == 1) {2},3] and int (mismatched types list and int):
+    ./in.cue:57:20
+    ./in.cue:58:6
+    ./in.cue:59:8
+    ./in.cue:59:12
+closedList.tooLong.out: incompatible list lengths (2 and 3):
+    ./in.cue:58:6
+closedList.tooLong.out: 2 errors in empty disjunction::
+    ./in.cue:58:13
+[eval] closedList.tooLong.out: conflicting values [1,if (out[0] == 1) {2},3] and int (mismatched types list and int):
+    ./in.cue:57:20
+    ./in.cue:58:6
+    ./in.cue:59:8
+    ./in.cue:59:12
+closedList.tooLong.out: incompatible list lengths (2 and 3):
+    ./in.cue:58:6
+closedList.tooLong.out: 2 errors in empty disjunction::
+    ./in.cue:58:13
+[eval] wrongElem.out: conflicting values 1 and string (mismatched types int and string):
+    ./in.cue:65:10
+    ./in.cue:66:6
+    ./in.cue:67:7
+    ./in.cue:67:11
+wrongElem.out: conflicting values [1,if (out[0] == 1) {2}] and int (mismatched types list and int):
+    ./in.cue:65:20
+    ./in.cue:66:5
+    ./in.cue:67:7
+    ./in.cue:67:11
+wrongElem.out: 2 errors in empty disjunction::
+    ./in.cue:66:12
+[eval] wrongElem.out: conflicting values 1 and string (mismatched types int and string):
+    ./in.cue:65:10
+    ./in.cue:66:6
+    ./in.cue:67:7
+    ./in.cue:67:11
+wrongElem.out: conflicting values [1,if (out[0] == 1) {2}] and int (mismatched types list and int):
+    ./in.cue:65:20
+    ./in.cue:66:5
+    ./in.cue:67:7
+    ./in.cue:67:11
+wrongElem.out: 2 errors in empty disjunction::
+    ./in.cue:66:12
+-- out/eval/stats --
+Leaks:  44
+Freed:  198
+Reused: 177
+Allocs: 65
+Retain: 0
+
+Unifications: 141
+Conjuncts:    333
+Disjuncts:    56
+
+NumCloseIDs: 33

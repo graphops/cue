@@ -513,6 +513,13 @@ func (n *nodeContext) updateListType(list Expr, id CloseInfo, isClosed bool, ell
 	if n.kind == 0 {
 		return
 	}
+	// The disjunctions of the node may have been resolved while the list
+	// was being added, as when a comprehension in the list refers to the
+	// node. The node then takes the value of the disjunct, which holds the
+	// complete list, so the list must not replace it.
+	if v, ok := n.node.BaseValue.(*Vertex); ok && v.IsDisjunct {
+		return
+	}
 	m, ok := n.node.BaseValue.(*ListMarker)
 	if !ok {
 		// A node that shares another vertex cannot also hold a list of its

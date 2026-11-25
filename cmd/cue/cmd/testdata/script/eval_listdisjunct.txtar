@@ -1,0 +1,113 @@
+# A list with a comprehension that refers to the node the list is unified
+# into, where the node also has a disjunction, keeps the value of the
+# disjunct which the comprehension resolves. Structure sharing must not
+# change that, so test without it as well; cue/testdata/comprehensions
+# has more cases, which run with sharing only.
+# https://cuelang.org/issue/XXXX
+
+exec cue export in.cue
+cmp stdout want
+! exec cue export notallowed.cue
+cmp stderr notallowed.stderr
+
+env CUE_DEBUG=sharing=0
+exec cue export in.cue
+cmp stdout want
+! exec cue export notallowed.cue
+cmp stderr notallowed.stderr
+
+-- in.cue --
+#S: [...]
+#A: #S | int
+
+// Lists of scalars and of structs, unified with a disjunction.
+scalars: x: [1, if scalars.out[0] == 1 {2}]
+scalars: out: scalars.x & #A
+structs: x: [{a: 1}, if structs.out[0].a == 1 {{a: 2}}]
+structs: out: structs.x & #A
+
+// The list is in a struct.
+inStruct: x: {a: [1, if inStruct.out.a[0] == 1 {2}]}
+inStruct: out: inStruct.x & {a: #A}
+
+// Without a disjunction.
+noDisjunction: x: [{a: 1}, if noDisjunction.out[0].a == 1 {{a: 2}}]
+noDisjunction: out: noDisjunction.x & #S
+-- notallowed.cue --
+#A: [...{a: int}] | int
+x: [{a: 1}, if out[0].a == 1 {{a: 2, b: 3}}]
+out: x & #A
+-- want --
+{
+    "scalars": {
+        "x": [
+            1,
+            2
+        ],
+        "out": [
+            1,
+            2
+        ]
+    },
+    "structs": {
+        "x": [
+            {
+                "a": 1
+            },
+            {
+                "a": 2
+            }
+        ],
+        "out": [
+            {
+                "a": 1
+            },
+            {
+                "a": 2
+            }
+        ]
+    },
+    "inStruct": {
+        "x": {
+            "a": [
+                1,
+                2
+            ]
+        },
+        "out": {
+            "a": [
+                1,
+                2
+            ]
+        }
+    },
+    "noDisjunction": {
+        "x": [
+            {
+                "a": 1
+            },
+            {
+                "a": 2
+            }
+        ],
+        "out": [
+            {
+                "a": 1
+            },
+            {
+                "a": 2
+            }
+        ]
+    }
+}
+-- notallowed.stderr --
+out: conflicting values [{a:1},if (out[0].a == 1) {{a:2,b:3}}] and int (mismatched types list and int):
+    ./notallowed.cue:1:21
+    ./notallowed.cue:2:4
+    ./notallowed.cue:3:6
+    ./notallowed.cue:3:10
+out: 2 errors in empty disjunction::
+    ./notallowed.cue:2:16
+out.1.b: field not allowed:
+    ./notallowed.cue:2:16
+    ./notallowed.cue:2:38
