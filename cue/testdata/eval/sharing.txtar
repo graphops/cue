@@ -556,16 +556,16 @@ forwardShared.closed.c.y: field not allowed:
 [structural_cycle] shareCycle.t3.Y.x.x: structural cycle
 -- out/eval/stats --
 Leaks:  38
-Freed:  453
-Reused: 427
+Freed:  451
+Reused: 425
 Allocs: 64
 Retain: 0
 
-Unifications: 382
-Conjuncts:    792
+Unifications: 380
+Conjuncts:    782
 Disjuncts:    70
 Notifications: 1
 
-NumCloseIDs: 189
+NumCloseIDs: 184
 -- out/todo.txt --
 v3 uses structure sharing (~) extensively in issue3641, issue3546, debug, issue3849, issue3903, and pending sections where v2 expanded values inline. v3 also omits shareCycle.t2.Y.x.x structural cycle error and instead reports conflicting values for shareCycle.t2.Y.x with additional position info.

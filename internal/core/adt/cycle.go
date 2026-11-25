@@ -889,7 +889,7 @@ func (n *nodeContext) overrideCyclicConjuncts(c CloseInfo) {
 		for _, c := range n.cyclicConjuncts {
 			ci := c.c.CloseInfo
 			if c.arc != nil {
-				n.scheduleVertexConjuncts(c.c, c.arc, ci)
+				n.scheduleVertexConjuncts(c.c, c.arc, ci, nil)
 			} else {
 				n.scheduleConjunct(c.c, ci)
 			}

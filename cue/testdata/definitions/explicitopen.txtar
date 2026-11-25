@@ -671,18 +671,18 @@ f14/f15: combinenew.f14.err and f15.err are NOT in error (v3 allows these).
 Structure sharing: NewOpen2: ~(#A), combinenew.f4.ok ~(NewClosed1), combinenew.f18.ok ~(NewClosed1).
 -- out/eval/stats --
 Leaks:  29
-Freed:  855
-Reused: 768
+Freed:  851
+Reused: 764
 Allocs: 116
 Retain: 0
 
-Unifications: 789
-Conjuncts:    2001
+Unifications: 785
+Conjuncts:    1985
 Disjuncts:    50
 
-NumCloseIDs: 697
+NumCloseIDs: 689
 
-ConjunctInfos:       1338
+ConjunctInfos:       1326
 MaxConjunctInfos:    5
 MaxReqSets:          9
 MaxRedirect:         3

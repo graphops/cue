@@ -1,0 +1,761 @@
+# A field that structure shares a vertex keeps sharing it when it is also
+# unified with a definition that the vertex already applied, in either
+# order: unifying the definition again adds nothing. Sharing must not change
+# any value, closedness or error: each result here is the one given with
+# CUE_DEBUG=sharing=0, except for the positions of some errors, as the
+# comments say. The shareID assertions check that the field keeps sharing.
+# https://cuelang.org/issue/XXXX
+-- in.cue --
+// The definition arrives after the value, or before it.
+order: {
+	#D: {a: int}
+	s: #D & {a: 1} @test(shareID=order)
+	after:  s & #D @test(eq, {a: 1}) @test(shareID=order)
+	before: #D & s @test(eq, {a: 1}) @test(shareID=order)
+}
+
+// Closedness still rejects fields that #D does not allow, in either order.
+closed: {
+	#D: {a: int}
+	#O: {a: int, ...}
+	s: #D & {a: 1}
+	o: #O & {a: 1}
+	after:  s & #D & {b: 2} @test(err, code=eval, contains="field not allowed", pos=[0:20])
+	before: #D & s & {b: 2} @test(err, code=eval, contains="field not allowed", pos=[0:20])
+	open:   o & #O & {b: 2} @test(eq, {b: 2, a: 1})
+}
+
+// The value is embedded in an open struct.
+openStruct: {
+	#D: {a: int}
+	s: #D & {a: 1}
+	n: {s...} & #D @test(eq, {a: 1})
+}
+
+// A definition that the shared value did not apply is unified as usual.
+otherDef: {
+	#D: {a: int}
+	#E: {a: <10}
+	s:  #D & {a: 1}
+	ok: s & #E @test(eq, {a: 1})
+	err: (#D & {a: 20}) & #E @test(err, code=eval, contains="invalid value 20", pos=[-3:10, 0:17])
+}
+
+// A value that applied no definition is closed by it.
+plain: {
+	#D: {a: int}
+	v:   {a: 1}
+	err: v & #D & {b: 2} @test(err, code=eval, contains="field not allowed", pos=[0:17])
+}
+
+// Defaults are kept.
+defaults: {
+	#F: {a: *1 | int}
+	f: #F @test(shareID=defaults)
+	n: f & #F @test(eq, {a: *1 | int}) @test(shareID=defaults)
+}
+
+// The defaults of a value that overrides some of them.
+overridden: {
+	#F: {a: *1 | int, b: *"x" | string}
+	s: #F & {b: "y"} @test(shareID=overridden)
+	n: s & #F @test(eq, {b: "y", a: *1 | int}) @test(shareID=overridden)
+	m: #F & s @test(eq, {b: "y", a: *1 | int}) @test(shareID=overridden)
+}
+
+// A schema brings the definition in through a spread, so that a field
+// checked in one value is passed to another that declares it again.
+schemaSpread: {
+	#D: {a: int}
+	#K: {ctx!: #D}
+	B: {#K..., x?: _}
+	parent: B & {ctx: {a: 1}} @test(shareID=schemaSpread, at=ctx)
+	child:  B & {ctx: parent.ctx} @test(eq, {ctx: {a: 1}, x?: _}) @test(shareID=schemaSpread, at=ctx)
+	err:    B & {ctx: parent.ctx} & {ctx: b: 2} @test(err, code=eval, at=ctx.b, contains="field not allowed", pos=[0:40])
+}
+
+// The same, with the schema embedded, which closes B, so that x is not
+// allowed.
+schemaEmbed: {
+	#D: {a: int}
+	#K: {ctx!: #D}
+	B: {#K, x?: _}
+	parent: B & {ctx: {a: 1}} @test(shareID=schemaEmbed, at=ctx)
+	child:  B & {ctx: parent.ctx} @test(eq, {
+		ctx: {a: 1}
+		x?: _|_ @test(err, code=eval, contains="field not allowed", pos=[-2:10])
+	}) @test(shareID=schemaEmbed, at=ctx)
+	err:    B & {ctx: parent.ctx} & {ctx: b: 2} @test(err, code=eval, at=ctx.b, contains="field not allowed", pos=[0:40])
+}
+
+// A chain of such values, each checked against the schema again.
+schemaChain: {
+	#D: {a: int}
+	#K: {ctx!: #D}
+	B: {#K..., x?: _}
+	l0: B & {ctx: {a: 1}} @test(shareID=schemaChain, at=ctx)
+	l1: B & {ctx: l0.ctx}
+	l2: B & {ctx: l1.ctx}
+	l3: B & {ctx: l2.ctx} @test(eq, {ctx: {a: 1}, x?: _}) @test(shareID=schemaChain, at=ctx)
+}
+
+// A chain of values, each unified with the definition first.
+definitionChain: {
+	#D: {a: int}
+	l0: #D & {a: 1} @test(shareID=definitionChain)
+	l1: #D & l0
+	l2: #D & l1
+	l3: #D & l2 @test(eq, {a: 1}) @test(shareID=definitionChain)
+}
+
+// The shared value applied #D through a field that holds it.
+viaField: {
+	#D: {a: int}
+	x: #D
+	s: x & {a: 1} @test(shareID=viaField)
+	n: s & #D @test(eq, {a: 1}) @test(shareID=viaField)
+	err: n & {b: 1} @test(err, code=eval, contains="field not allowed", pos=[0:12])
+}
+
+// The shared value is itself a field that shares the value applying #D.
+viaShare: {
+	#D: {a: int}
+	t: #D & {a: 1} @test(shareID=viaShare)
+	s: t @test(shareID=viaShare)
+	n: s & #D @test(eq, {a: 1}) @test(shareID=viaShare)
+	err: n & {b: 1} @test(err, code=eval, contains="field not allowed", pos=[0:12])
+}
+
+// The shared value is a field of a definition.
+inDefinition: {
+	#D: {a: int}
+	#P: {v: #D & {a: 1}}
+	n:   #P.v & #D @test(eq, {a: 1})
+	nb:  n & {b: 1} @test(err, code=eval, contains="field not allowed", pos=[0:12])
+	o:   #D & #P.v @test(eq, {a: 1})
+	ob:  o & {b: 1} @test(err, code=eval, contains="field not allowed", pos=[0:12])
+}
+
+// A pattern constraint applies #D to a value that applied it already.
+pattern: {
+	#D: {a: int}
+	s: #D & {a: 1}
+	m: [string]: #D
+	m: k: s
+	err: m.k & {b: 1} @test(err, code=eval, contains="field not allowed", pos=[0:14])
+}
+
+// Two definitions. When both arrive before the value, the field stops
+// sharing at the second, which the first does not hold.
+twoDefs: {
+	#D: {a: int, b?: int}
+	#E: {a: int, c?: int}
+	s: #D & #E & {a: 1} @test(shareID=twoDefs)
+	n1: #D & #E & s @test(eq, {
+		a: 1
+		b?: _|_ @test(err, code=eval, contains="field not allowed", pos=[-3:15])
+		c?: _|_ @test(err, code=eval, contains="field not allowed", pos=[-2:15])
+	})
+	n2: s & #D & #E @test(eq, {
+		a: 1
+		b?: _|_ @test(err, code=eval, contains="field not allowed", pos=[-8:15])
+		c?: _|_ @test(err, code=eval, contains="field not allowed", pos=[-7:15])
+	}) @test(shareID=twoDefs)
+	n3: #E & s & #D @test(eq, {
+		a: 1
+		b?: _|_ @test(err, code=eval, contains="field not allowed", pos=[-13:15])
+		c?: _|_ @test(err, code=eval, contains="field not allowed", pos=[-12:15])
+	}) @test(shareID=twoDefs)
+	e1: n1 & {b: 1} @test(err, code=eval, contains="field not allowed", pos=[-18:15, 0:12])
+	e2: n2 & {c: 1} @test(err, code=eval, contains="field not allowed", pos=[-18:15, 0:12])
+	e3: n3 & {b: 1} @test(err, code=eval, contains="field not allowed", pos=[-20:15, 0:12])
+}
+
+// The definition is a disjunction.
+disjunctiveDef: {
+	#D: *{a: 1} | {a: int}
+	s1: #D & {a: 2}
+	s2: #D & {}
+	n1: s1 & #D @test(eq, {a: 2})
+	n2: s2 & #D @test(eq, *{a: 1} | {a: int})
+	n3: #D & s2 @test(eq, *{a: 1} | {a: int})
+	d2: n2 & {} @test(eq, *{a: 1} | {a: int})
+	e1: n1 & {b: 1} @test(err, code=eval, contains="empty disjunction",
+		suberr=(contains="conflicting values", pos=[-7:11, -6:6, -6:15, 0:6]),
+		suberr=(contains="field not allowed", pos=[0:12]))
+	#U: {a: int} | {b: int}
+	u:  #U & {a: 1}
+	nu: u & #U @test(eq, {a: 1})
+	eu: nu & {b: 1} @test(err, code=eval, contains="empty disjunction",
+		suberr=(contains="field not allowed", pos=[-2:12]),
+		suberr=(contains="field not allowed", pos=[0:12]))
+}
+
+// The shared value is a disjunction with a default.
+disjunctionDefault: {
+	#D: {a: int}
+	V: *(#D & {a: 1}) | {a: 2}
+	n:  V & #D @test(eq, *{a: 1} | {a: 2})
+	nb: n & {a: 2, b: 1} @test(err, code=eval, contains="empty disjunction",
+		suberr=(contains="conflicting values", pos=[-2:16, -1:6, 0:6, 0:14]),
+		suberr=(contains="field not allowed", pos=[0:17]))
+	nd: n & {} @test(eq, *{a: 1} | {a: 2})
+}
+
+// The same, with the disjunction declared after the field.
+disjunctionForward: {
+	#D: {a: int}
+	n:  V & #D @test(eq, *{a: 1} | {a: 2})
+	nb: n & {a: 2, b: 1} @test(err, code=eval, contains="empty disjunction",
+		suberr=(contains="conflicting values", pos=[-1:6, 0:6, 0:14, 3:16]),
+		suberr=(contains="field not allowed", pos=[0:17]))
+	V: *(#D & {a: 1}) | {a: 2}
+}
+
+// The shared value is a disjunction that is evaluated while the field is:
+// the disjunct in progress is not its value, so the field does not share it.
+// n must not accept b, which #D does not allow.
+//
+// In these four cases, the disjunction of n is skipped, as V refers to n:
+// only the kinds of its disjuncts apply. The results are wrong, and are
+// recorded as incorrect, until #YYYY (disjunct-cycle-skip) is fixed. #D
+// allows only the first disjunct of V, so n is {a: 1, c: 1} in the first
+// two cases, and an empty disjunction in the last two, where #D does not
+// allow that disjunct either.
+disjunctInProgress: {
+	#D: {a: int, c?: _}
+	V: (#D & {a: 1}) | {a: 2, b: 3}
+	V: c: n.a
+	n: V & #D
+	@test(eq, {
+		#D: {a: int, c?: _}
+		V: {c: int, a: 1} | {c: int, a: 2, b: 3}
+		n: {c: int, a: int}
+	}, incorrect)
+	@test(eq:todo, {
+		#D: {a: int, c?: _}
+		V: {c: 1, a: 1} | {c: 1, a: 2, b: 3}
+		n: {c: 1, a: 1}
+	})
+}
+
+// The same, with the reference to n in the first disjunct.
+disjunctInProgress2: {
+	#D: {a: int, c?: int}
+	V: (#D & {a: 1, c: n.a}) | {a: 2, b: 3}
+	n: V & #D
+	@test(eq, {
+		#D: {a: int, c?: int}
+		V: {a: 1, c: int} | {a: 2, b: 3}
+		n: {a: int, c?: int}
+	}, incorrect)
+	@test(eq:todo, {
+		#D: {a: int, c?: int}
+		V: {a: 1, c: 1} | {a: 2, b: 3}
+		n: {a: 1, c: 1}
+	})
+}
+
+// The same, with the reference to n in a disjunct that #D does not allow.
+disjunctInProgress3: {
+	#D: {a: int}
+	V: (#D & {a: 1, c: n.a}) | {a: 2, b: 3}
+	n: V & #D @test(err:todo, code=eval, contains="empty disjunction")
+	@test(eq, {
+		#D: {a: int}
+		V: {a: 2, b: 3}
+		n: {a: int}
+	}, incorrect)
+}
+
+// The same, with the disjuncts swapped.
+disjunctInProgress4: {
+	#D: {a: int}
+	V: {a: 2, b: 3} | (#D & {a: 1} & {x: n.a})
+	n: V & #D @test(err:todo, code=eval, contains="empty disjunction")
+	@test(eq, {
+		#D: {a: int}
+		V: {a: 2, b: 3}
+		n: {a: int}
+	}, incorrect)
+}
+
+// The definition refers back to the field.
+cycle: {
+	#D: {a: int, x?: n}
+	V: #D & {a: 1, x: {}}
+	n: V & #D
+	@test(err, code=structural_cycle, at=V.x.x, contains="structural cycle")
+}
+
+// A definition that computes a field from another.
+computed: {
+	#D: {a: int, b: a + 1}
+	s: #D & {a: 1}
+	n: s & #D @test(eq, {a: 1, b: 2})
+	m: #D & n @test(eq, {a: 1, b: 2})
+	r: #D & {a: r2.a} @test(eq, {
+		a: int
+		b: _|_ @test(err, code=incomplete, contains="non-concrete value int in operand to +", pos=[-4:18, -4:10, 0:14])
+	})
+	r2: r & #D @test(eq, {
+		a: int
+		b: _|_ @test(err, code=incomplete, contains="non-concrete value int in operand to +", pos=[-8:18, -8:10, -4:14])
+	})
+}
+
+// A recursive definition.
+recursive: {
+	#T: {v: int, next?: #T}
+	s: #T & {v: 1, next: {v: 2, next: v: 3}}
+	n: s & #T @test(eq, {
+		v: 1
+		next: {
+			v: 2
+			next: {
+				v: 3
+				next?: {
+					v: int
+					next?: _|_ @test(err, code=structural_cycle, contains="structural cycle", pos=[])
+				}
+			}
+		}
+	})
+	m: #T & s.next @test(eq, {
+		v: 2
+		next: {
+			v: 3
+			next?: {
+				v: int
+				next?: _|_ @test(err, code=structural_cycle, contains="structural cycle", pos=[])
+			}
+		}
+	})
+	err: m & {next: w: 1} @test(err, code=eval, at=next.w, contains="field not allowed", pos=[0:18])
+}
+
+// Each instance of a pattern constraint has its own #D, which matches only
+// within that instance.
+instances: {
+	x: [string]~(Name, _): {#D: {name: Name}, s: #D & {}, n: s & #D}
+	x: a: {}
+	x: b: {n: name: "b"}
+	y: x.a.s & x.b.#D @test(err, code=eval, at=name, contains="conflicting values", pos=[-3:37, -3:47, 0:5, 0:13])
+	z: x.b.n @test(eq, {name: "b"})
+}
+
+// The same, with N bound to the value of the instance, which is cyclic.
+instancesValue: {
+	x: [string]~N: {#D: {name: N}, s: #D & {}, n: s & #D}
+	x: a: {}
+	x: b: {n: name: "b"}
+	y: x.a.s & x.b.#D
+	@test(err, contains="structural cycle")
+}
+
+// A comprehension adds the definition after the field started sharing: the
+// field stops sharing, and closedness is kept.
+late: {
+	#D: {a: int}
+	s: #D & {a: 1}
+	n: s
+	if n.a == 1 {n: #D}
+	m: n & {b: 1} @test(err, code=eval, at=b, contains="field not allowed", pos=[0:10])
+}
+
+// A comprehension adds a conjunct to a field that keeps sharing past #D.
+// m1 must have w, which only C adds. This relies on the fix for #YYYY
+// (share-late-conjunct).
+lateAfterDef: {
+	#D: {x: int, w?: int}
+	s: #D & {x: 2}
+	C: {x: 2, w: 1}
+	m1: c1 & {} @test(eq, {x: 2, w: 1})
+	m2: c1.w @test(eq, 1)
+	c1: #D & s
+	if c1.x == 2 {c1: C}
+}
+
+// The field reached through a disjunction is evaluated in part, for the
+// guard of a comprehension of the value it shares. That value must not be
+// finalized before the comprehension adds its fields. This relies on the
+// fix for #YYYY (share-disjunction-safe).
+partialEval: {
+	#D: {a: int, b?: int}
+	#A: #D | int
+	x: #D & {
+		a: 1
+		if out.a == 1 {b: 2}
+	}
+	out: #D & x & #A
+	@test(eq, {
+		#D: {a: int, b?: int}
+		#A: {a: int, b?: int} | int
+		x: {a: 1, b: 2}
+		out: {a: 1, b: 2}
+	})
+}
+
+// Error positions. An error found through a field that shares a value cites
+// the positions of that value, not the reference through which the field
+// shares it.
+positions: {
+	#A: {x: 1}
+	#B: {x: 2}
+	D: #A | #B
+	switched: {
+		v: #B
+		v: D
+		c: #B
+		c: v
+		m: c & {x: 1} @test(err, code=eval, at=x, contains="conflicting values", pos=[-7:10, -2:6, 0:6, 0:14])
+	}
+	held: {
+		v: #B
+		v: D
+		c: v
+		c: #B
+		m: c & {x: 1} @test(err, code=eval, at=x, contains="conflicting values", pos=[-14:10, -4:6, 0:6, 0:14])
+	}
+}
+
+// Without sharing, each of these errors also cites s in n.
+positionsField: {
+	#D: {a: int}
+	viaField: {
+		x: #D
+		s: x & {a: 1}
+		n: s & #D
+		m: n & {a: 2} @test(err, code=eval, at=a, contains="conflicting values", pos=[-2:14, 0:6, 0:14])
+	}
+	definitionFirst: {
+		x: #D
+		s: x & {a: 1}
+		n: #D & s
+		m: n & {a: 2} @test(err, code=eval, at=a, contains="conflicting values", pos=[-2:14, 0:6, 0:14])
+	}
+	direct: {
+		s: #D & {a: 1}
+		n: s & #D
+		m: n & {a: 2} @test(err, code=eval, at=a, contains="conflicting values", pos=[-2:15, 0:6, 0:14])
+	}
+}
+-- explicitopen.cue --
+@experiment(explicitopen)
+
+// A definition closes a field that shares an opened reference to a value
+// that applied it, so it is not redundant there, in either order.
+reclose: {
+	#R: {a: int}
+	r: #R & {a: 1}
+	y:    r... & #R
+	yErr: y & {b: 2} @test(err, code=eval, at=b, contains="field not allowed", pos=[0:13])
+	z:    #R & r...
+	zErr: z & {b: 2} @test(err, code=eval, at=b, contains="field not allowed", pos=[0:13])
+}
+
+// The same, with the value and the definition each opened.
+opened: {
+	#D: {a: int}
+	s: #D & {a: 1}
+	n:  #D & s...
+	nb: n & {b: 1} @test(err, code=eval, at=b, contains="field not allowed", pos=[0:11])
+	m:  s... & #D
+	mb: m & {b: 1} @test(err, code=eval, at=b, contains="field not allowed", pos=[0:11])
+	o:  s & #D...
+	ob: o & {b: 1} @test(err, code=eval, at=b, contains="field not allowed", pos=[0:11])
+}
+
+// A field shares an opened value, which is open. The definition closes it
+// again, but only by #D, not by every definition the value applied.
+openLink: {
+	#D: {a?: int, b?: int}
+	#E: {a?: int}
+	w: #D & #E & {a: 1}
+	v: w...
+	n: v & #D @test(eq, {a: 1, b?: int})
+	nb: n & {b: 2} @test(eq, {b: 2, a: 1})
+}
+
+// Error positions through an opened definition.
+openedPositions: {
+	#A: {x: 1}
+	#B: {x: 2}
+	D: #A | #B
+	readDisjunct: {
+		v: #B...
+		v: D
+		c: #B...
+		c: v
+		m: c & {y: 3} @test(err, code=eval, contains="empty disjunction",
+			suberr=(contains="conflicting values", pos=[-8:10, -7:10, -6:5, -3:6, -2:6, -1:6, 0:6]),
+			suberr=(contains="field not allowed", pos=[0:11]))
+	}
+	plain: {
+		v: #B...
+		v: D
+		c: v
+		m: c & {y: 3} @test(err, code=eval, contains="empty disjunction",
+			suberr=(contains="conflicting values", pos=[-16:10, -15:10, -14:5, -3:6, -2:6, 0:6]),
+			suberr=(contains="field not allowed", pos=[0:11]))
+	}
+	// Without sharing, this cites both conjuncts of c instead of the #B...
+	// of v.
+	held: {
+		v: #B...
+		v: D
+		c: v
+		c: #B...
+		m: c & {y: 3} @test(err, code=eval, contains="empty disjunction",
+			suberr=(contains="conflicting values", pos=[-27:10, -26:10, -25:5, -4:6, -3:6, 0:6]),
+			suberr=(contains="field not allowed", pos=[0:11]))
+	}
+}
+-- functions.cue --
+@experiment(try,functions)
+
+// A parameter declared with #D, called with a value that applied #D.
+param: {
+	#D: {a: int}
+	s: #D & {a: 1}
+	F: func(p: #D) -> _: {q: p, r: p.a}
+	G: func(args: {x: #D, y: int}) -> _: args.x
+	out1: F(s) @test(eq, {q: {a: 1}, r: 1})
+	out2: G({x: s, y: 1}) @test(eq, {a: 1})
+	err1: F(s) & {q: b: 1} @test(err, code=eval, at=q.b, contains="field not allowed", pos=[0:19])
+}
+
+// A parameter declared with a definition its argument applied is read in
+// the body, and what it reaches calls a function. That call is not recursion.
+funcArg: {
+	#L: {k: _}
+	X: #L
+	K: func(a: {l: #L}) -> _: a.l.k
+	N: func(a: _) -> _: {c: a.n, o: K({l: a.l})}
+	e: l: X & {k: N({n: 1}).c}
+	probe: N({n: 2, l: e.l}) @test(eq, {c: 2, o: 1})
+}
+
+// The same, through a pattern constraint that calls the function whose
+// argument shares the constrained field. A vertex of an argument keeps
+// sharing past a definition only as before this change.
+funcArgPattern: {
+	#M: [string]: string
+	Kept: func(args: {m: #M, name: string}) -> string: [try L = args.m[args.name]? {L}, args.name][0]
+	LiveName: func(args: {key: string, names: [...string]}) -> string: [
+		for C in args.names if C == args.key {string & !=""},
+	][0]
+	Names: func(args: {name: string, m: #M}) -> {...}: {
+		names:  [args.name]
+		object: Kept({m: args.m, name: args.name})
+	}
+	#Entry: m: *{} | #M
+	entries: [string]~(N, _): #Entry & {
+		m: [string]~(Key, _): LiveName({key: Key, names: Names({name: N}).names})
+	}
+	entries: db: m: db: "db-v1"
+	database: *{x: 1} | {[string]: _}
+	database: entries
+	for N, E in database {
+		probe: (N): Names({name: N, m: E.m})
+	}
+	@test(eq, "db-v1", at=probe.db.object)
+}
+-- out/errors.txt --
+[eval] reclose.yErr.b: field not allowed:
+    ./explicitopen.cue:9:13
+[eval] reclose.zErr.b: field not allowed:
+    ./explicitopen.cue:11:13
+[eval] opened.nb.b: field not allowed:
+    ./explicitopen.cue:19:11
+[eval] opened.mb.b: field not allowed:
+    ./explicitopen.cue:21:11
+[eval] opened.ob.b: field not allowed:
+    ./explicitopen.cue:23:11
+[eval] openLink.w.b: field not allowed:
+    ./explicitopen.cue:29:16
+[eval] openedPositions.readDisjunct.m: 2 errors in empty disjunction:
+openedPositions.readDisjunct.m.x: conflicting values 1 and 2:
+    ./explicitopen.cue:39:10
+    ./explicitopen.cue:40:10
+    ./explicitopen.cue:41:5
+    ./explicitopen.cue:44:6
+    ./explicitopen.cue:45:6
+    ./explicitopen.cue:46:6
+    ./explicitopen.cue:47:6
+openedPositions.readDisjunct.m.y: field not allowed:
+    ./explicitopen.cue:47:11
+[eval] openedPositions.plain.m: 2 errors in empty disjunction:
+openedPositions.plain.m.x: conflicting values 1 and 2:
+    ./explicitopen.cue:39:10
+    ./explicitopen.cue:40:10
+    ./explicitopen.cue:41:5
+    ./explicitopen.cue:52:6
+    ./explicitopen.cue:53:6
+    ./explicitopen.cue:55:6
+openedPositions.plain.m.y: field not allowed:
+    ./explicitopen.cue:55:11
+[eval] openedPositions.held.m: 2 errors in empty disjunction:
+openedPositions.held.m.x: conflicting values 1 and 2:
+    ./explicitopen.cue:39:10
+    ./explicitopen.cue:40:10
+    ./explicitopen.cue:41:5
+    ./explicitopen.cue:62:6
+    ./explicitopen.cue:63:6
+    ./explicitopen.cue:66:6
+openedPositions.held.m.y: field not allowed:
+    ./explicitopen.cue:66:11
+[eval] param.err1.q.b: field not allowed:
+    ./functions.cue:11:19
+[eval] closed.after.b: field not allowed:
+    ./in.cue:15:20
+[eval] closed.before.b: field not allowed:
+    ./in.cue:16:20
+[eval] otherDef.err.a: invalid value 20 (out of bound <10):
+    ./in.cue:30:10
+    ./in.cue:33:17
+[eval] plain.err.b: field not allowed:
+    ./in.cue:40:17
+[eval] schemaSpread.err.ctx.b: field not allowed:
+    ./in.cue:66:40
+[eval] schemaEmbed.B.x: field not allowed:
+    ./in.cue:74:10
+[eval] schemaEmbed.parent.x: field not allowed:
+    ./in.cue:74:10
+[eval] schemaEmbed.child.x: field not allowed:
+    ./in.cue:74:10
+[eval] schemaEmbed.err.ctx.b: field not allowed:
+    ./in.cue:80:40
+[eval] schemaEmbed.err.x: field not allowed:
+    ./in.cue:74:10
+[eval] viaField.err.b: field not allowed:
+    ./in.cue:109:12
+[eval] viaShare.err.b: field not allowed:
+    ./in.cue:118:12
+[eval] inDefinition.nb.b: field not allowed:
+    ./in.cue:126:12
+[eval] inDefinition.ob.b: field not allowed:
+    ./in.cue:128:12
+[eval] pattern.err.b: field not allowed:
+    ./in.cue:137:14
+[eval] twoDefs.s.b: field not allowed:
+    ./in.cue:143:15
+[eval] twoDefs.s.c: field not allowed:
+    ./in.cue:144:15
+[eval] twoDefs.n1.b: field not allowed:
+    ./in.cue:143:15
+[eval] twoDefs.n1.c: field not allowed:
+    ./in.cue:144:15
+[eval] twoDefs.e1.b: field not allowed:
+    ./in.cue:143:15
+    ./in.cue:161:12
+[eval] twoDefs.e1.c: field not allowed:
+    ./in.cue:144:15
+[eval] twoDefs.e2.c: field not allowed:
+    ./in.cue:144:15
+    ./in.cue:162:12
+[eval] twoDefs.e2.b: field not allowed:
+    ./in.cue:143:15
+[eval] twoDefs.e3.b: field not allowed:
+    ./in.cue:143:15
+    ./in.cue:163:12
+[eval] twoDefs.e3.c: field not allowed:
+    ./in.cue:144:15
+[eval] disjunctiveDef.e1: 2 errors in empty disjunction:
+disjunctiveDef.e1.a: conflicting values 1 and 2:
+    ./in.cue:168:11
+    ./in.cue:169:6
+    ./in.cue:169:15
+    ./in.cue:175:6
+disjunctiveDef.e1.b: field not allowed:
+    ./in.cue:175:12
+[eval] disjunctiveDef.eu: 2 errors in empty disjunction:
+disjunctiveDef.eu.a: field not allowed:
+    ./in.cue:179:12
+disjunctiveDef.eu.b: field not allowed:
+    ./in.cue:181:12
+[eval] disjunctionDefault.nb: 2 errors in empty disjunction:
+disjunctionDefault.nb.a: conflicting values 1 and 2:
+    ./in.cue:189:16
+    ./in.cue:190:6
+    ./in.cue:191:6
+    ./in.cue:191:14
+disjunctionDefault.nb.b: field not allowed:
+    ./in.cue:191:17
+[eval] disjunctionForward.nb: 2 errors in empty disjunction:
+disjunctionForward.nb.a: conflicting values 1 and 2:
+    ./in.cue:200:6
+    ./in.cue:201:6
+    ./in.cue:201:14
+    ./in.cue:204:16
+disjunctionForward.nb.b: field not allowed:
+    ./in.cue:201:17
+[structural_cycle] cycle.#D.x: structural cycle
+[structural_cycle] cycle.V.x.x: structural cycle
+[incomplete] computed.#D.b: non-concrete value int in operand to +:
+    ./in.cue:285:18
+    ./in.cue:285:10
+[incomplete] computed.r.b: non-concrete value int in operand to +:
+    ./in.cue:285:18
+    ./in.cue:285:10
+    ./in.cue:289:14
+[structural_cycle] recursive.#T.next: structural cycle
+[eval] recursive.err.next.w: field not allowed:
+    ./in.cue:326:18
+[eval] instances.y.name: conflicting values "a" and "b":
+    ./in.cue:332:37
+    ./in.cue:332:47
+    ./in.cue:335:5
+    ./in.cue:335:13
+[structural_cycle] instancesValue.x.a.#D.name: structural cycle
+[structural_cycle] instancesValue.x.a.#D.name: structural cycle
+[eval] instancesValue.x.b.n.name: conflicting values "b" and {n:{name:"b"}} (mismatched types string and struct):
+    ./in.cue:341:29
+    ./in.cue:341:48
+    ./in.cue:341:52
+    ./in.cue:343:8
+    ./in.cue:343:18
+[structural_cycle] instancesValue.x.b.#D.name: structural cycle
+[eval] instancesValue.x.a.#D.name: structural cycle
+[eval] late.m.b: field not allowed:
+    ./in.cue:355:10
+[eval] positions.switched.m.x: conflicting values 2 and 1:
+    ./in.cue:396:10
+    ./in.cue:401:6
+    ./in.cue:403:6
+    ./in.cue:403:14
+[eval] positions.held.m.x: conflicting values 2 and 1:
+    ./in.cue:396:10
+    ./in.cue:406:6
+    ./in.cue:410:6
+    ./in.cue:410:14
+[eval] positionsField.viaField.m.a: conflicting values 1 and 2:
+    ./in.cue:419:14
+    ./in.cue:421:6
+    ./in.cue:421:14
+[eval] positionsField.definitionFirst.m.a: conflicting values 1 and 2:
+    ./in.cue:425:14
+    ./in.cue:427:6
+    ./in.cue:427:14
+[eval] positionsField.direct.m.a: conflicting values 1 and 2:
+    ./in.cue:430:15
+    ./in.cue:432:6
+    ./in.cue:432:14
+-- out/eval/stats --
+Leaks:  63
+Freed:  1327
+Reused: 1264
+Allocs: 126
+Retain: 0
+
+Unifications: 1152
+Conjuncts:    2949
+Disjuncts:    90
+Notifications: 1
+
+NumCloseIDs: 633
+
+ConjunctInfos:       1692
+MaxConjunctInfos:    5
+MaxReqSets:          4
+MaxRedirect:         2

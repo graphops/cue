@@ -40,6 +40,11 @@ type sharedConjunct struct {
 	c   Conjunct
 	arc *Vertex
 	id  CloseInfo
+
+	// from is the vertex through which c reached arc, if that vertex
+	// shares arc after holding definitions first. See
+	// [Vertex.heldFirstSharer].
+	from *Vertex
 }
 
 func (n *nodeContext) unshare() {
@@ -50,7 +55,7 @@ func (n *nodeContext) unshare() {
 	}
 	n.dropSharing()
 	for _, s := range n.shared {
-		n.scheduleVertexConjuncts(s.c, s.arc, s.id)
+		n.scheduleVertexConjuncts(s.c, s.arc, s.id, s.from)
 	}
 }
 
@@ -109,13 +114,19 @@ func (n *nodeContext) dropSharing() {
 	if !n.isShared {
 		return
 	}
-	n.isShared = false
 	n.noSharing = true
+	n.decShared()
+	n.clearShare()
+}
+
+// clearShare resets the node to hold no shared vertex, undoing share.
+func (n *nodeContext) clearShare() {
+	n.isShared = false
 	n.node.IsShared = false
 	delete(n.ctx.argChains, n.node)
 	n.node.OpenedShared = false
 	n.node.ClosedShared = false
-	n.decShared()
+	n.heldFirst = 0
 
 	// TODO: the use of cycle for BaseValue is getting increasingly outdated.
 	// Find another mechanism once we get rid of the old evaluator.
@@ -156,7 +167,7 @@ func (n *nodeContext) finalizeSharing() {
 	}
 }
 
-func (n *nodeContext) addShared(c Conjunct, arc *Vertex, id CloseInfo) {
+func (n *nodeContext) addShared(c Conjunct, arc *Vertex, id CloseInfo, from *Vertex) {
 	if len(n.shared) == 0 || n.shareCycleType < id.CycleType {
 		n.shareCycleType = id.CycleType
 	}
@@ -175,7 +186,7 @@ func (n *nodeContext) addShared(c Conjunct, arc *Vertex, id CloseInfo) {
 	// have been processed and it is clear that sharing is possible. Delaying
 	// such a count should not hurt performance, as a shared node is completed
 	// anyway.
-	n.shared = append(n.shared, sharedConjunct{c, arc, id})
+	n.shared = append(n.shared, sharedConjunct{c: c, arc: arc, id: id, from: from})
 }
 
 func (n *nodeContext) decShared() {
@@ -188,7 +199,7 @@ func (n *nodeContext) decShared() {
 	}
 }
 
-func (n *nodeContext) share(c Conjunct, arc *Vertex, id CloseInfo) {
+func (n *nodeContext) share(c Conjunct, arc *Vertex, id CloseInfo, from *Vertex) {
 	if n.isShared {
 		panic("already sharing")
 	}
@@ -198,7 +209,7 @@ func (n *nodeContext) share(c Conjunct, arc *Vertex, id CloseInfo) {
 	n.isShared = true
 	n.recordArgChain(id)
 	n.node.OpenedShared = id.Opened || id.ConjunctOpened
-	n.addShared(c, arc, id)
+	n.addShared(c, arc, id, from)
 
 	if arc.IsDetached() && arc.MayAttach() { // TODO: Second check necessary?
 		// This node can safely be shared. Since it is not rooted, though, it
@@ -214,7 +225,17 @@ func (n *nodeContext) share(c Conjunct, arc *Vertex, id CloseInfo) {
 	}
 }
 
-func (n *nodeContext) shareIfPossible(c Conjunct, arc *Vertex, id CloseInfo) bool {
+func (n *nodeContext) shareIfPossible(c Conjunct, arc *Vertex, id CloseInfo, from *Vertex) bool {
+	if n.isShared || !n.canShare(arc, id) {
+		return false
+	}
+	n.share(c, arc, id, from)
+	return true
+}
+
+// canShare reports whether the node, which holds no other value, may share
+// arc through a conjunct with close info id.
+func (n *nodeContext) canShare(arc *Vertex, id CloseInfo) bool {
 	if !n.ctx.Sharing {
 		return false
 	}
@@ -249,7 +270,7 @@ func (n *nodeContext) shareIfPossible(c Conjunct, arc *Vertex, id CloseInfo) boo
 		return false
 	}
 
-	if n.noSharing || n.isShared || n.ctx.errs != nil {
+	if n.noSharing || n.ctx.errs != nil {
 		return false
 	}
 
@@ -273,9 +294,189 @@ func (n *nodeContext) shareIfPossible(c Conjunct, arc *Vertex, id CloseInfo) boo
 	if arc.Label.IsLet() {
 		return false
 	}
-
-	n.share(c, arc, id)
 	return true
+}
+
+// A node that structure shares a vertex holds the value of that vertex. That
+// is sound only while unifying the conjuncts the node holds would give the
+// same value: the same fields, values, defaults and errors, and the same
+// closedness for anything reading the node. A conjunct that the shared
+// vertex already applied adds nothing, as unification is idempotent, so the
+// node holds it instead of scheduling it, and replays it if it is unshared.
+//
+// This is decided for definitions, whose application to a vertex is
+// recorded when their conjuncts are scheduled into it (see
+// [Vertex.recordDef]). A definition D adds nothing to the value a node
+// holds if, along the chain of structure shares from the node:
+//
+//   - some vertex is D itself, or recorded D, so that the content of D is
+//     already in the value, and
+//   - if D closes the node (it is neither opened nor embedded), that
+//     vertex is closed by D and every share between it and the node passes
+//     that closedness on: none opens what it shares.
+//
+// The walk follows structure shares, and a finalized vertex to the single
+// disjunct that is its value. It does not follow a vertex to the disjunct it
+// is evaluating, which is not its value.
+
+// appliedDef records that the conjuncts of def were scheduled into a vertex,
+// closing it or not. The list is persistent: a clone of a vertex shares it,
+// and recording prepends.
+type appliedDef struct {
+	def    *Vertex
+	closes bool
+	next   *appliedDef
+}
+
+// recordDef records that the conjuncts of definition def are scheduled
+// directly into v, closing it if closes is set.
+func (v *Vertex) recordDef(def *Vertex, closes bool) {
+	if v.recordsDef(def, closes) {
+		return
+	}
+	v.appliedDefs = &appliedDef{def: def, closes: closes, next: v.appliedDefs}
+}
+
+// appliesDef reports whether unifying definition def, closing if closes is
+// set, into the value of v, reached through a share that opens it if opened
+// is set, adds nothing. See the rule above.
+func (n *nodeContext) appliesDef(v *Vertex, opened bool, def *Vertex, closes bool) bool {
+	for {
+		if closes && opened {
+			return false
+		}
+		if v == def || v.recordsDef(def, closes) || n.declaresDef(v, def) {
+			return true
+		}
+		w, ok := v.BaseValue.(*Vertex)
+		switch {
+		case !ok:
+			return false
+		case v.IsShared:
+			opened = v.OpenedShared
+		case w.IsDisjunct && v.isFinal():
+			// A finalized vertex whose disjunction left a single disjunct
+			// holds that disjunct as its value. While the disjunction is
+			// evaluated, the vertex points to the disjunct in progress
+			// instead, which is not its value.
+			opened = false
+		default:
+			return false
+		}
+		v = w
+	}
+}
+
+// recordsDef reports whether def was recorded for v, closing it if closes is
+// set.
+func (v *Vertex) recordsDef(def *Vertex, closes bool) bool {
+	for a := v.appliedDefs; a != nil; a = a.next {
+		if a.def == def && (a.closes || !closes) {
+			return true
+		}
+	}
+	return false
+}
+
+// opensConjunct reports whether conjunct c, scheduled with close info id,
+// is opened, so that it adds no closedness.
+func opensConjunct(c Conjunct, id CloseInfo) bool {
+	return c.CloseInfo.Opened || c.CloseInfo.ConjunctOpened ||
+		id.Opened || id.ConjunctOpened
+}
+
+// embedded reports whether a conjunct with close info id is applied through
+// an embedding, which closes differently than unifying it.
+func embedded(id CloseInfo) bool {
+	return id.FromEmbed || id.enclosingEmbed != 0
+}
+
+// keepSharing handles conjunct c, resolving to arc, arriving at a node that
+// shares another vertex. If arc is a definition that adds nothing to the
+// value the node holds, the node holds c. If, instead, every conjunct the
+// node holds, including the one it shares, is a definition that adds nothing
+// to arc, the node shares arc and holds them. It reports whether c was
+// handled either way.
+//
+// A vertex of a function argument keeps sharing only for a definition that
+// the shared vertex names as a direct conjunct, as it did before the rule
+// above. Its conjuncts carry the chain of the argument, which they restore
+// when the vertex evaluates them (see [CycleInfo.IsFuncArg]), and the order
+// of the fields it holds follows the first reference of that chain. Through
+// sharing, a reader would order them by its own chain instead, and the
+// order of fields would change.
+func (n *nodeContext) keepSharing(c Conjunct, arc *Vertex, id CloseInfo, from *Vertex) bool {
+	if _, isArg := n.ctx.argChains[n.node]; isArg || id.IsFuncArg {
+		return n.keepSharingArg(c, arc, id, from)
+	}
+	if embedded(id) {
+		return false
+	}
+	shared, ok := n.node.BaseValue.(*Vertex)
+	if !ok {
+		return false
+	}
+	opened := opensConjunct(c, id)
+	if arc.Label.IsDef() &&
+		n.appliesDef(shared, n.node.OpenedShared, arc, !opened) {
+		n.addShared(c, arc, id, from)
+		return true
+	}
+	for _, s := range n.shared {
+		if !s.arc.Label.IsDef() || embedded(s.id) || opensConjunct(s.c, s.id) ||
+			!n.appliesDef(arc, opened, s.arc, true) {
+			return false
+		}
+	}
+	if !n.canShare(arc, id) {
+		return false
+	}
+	held := n.shared
+	n.shared = nil
+	n.clearShare()
+	n.share(c, arc, id, from)
+	for _, s := range held {
+		n.addShared(s.c, s.arc, s.id, s.from)
+	}
+	n.heldFirst = len(held)
+	arc.getState(n.ctx)
+	return true
+}
+
+// keepSharingArg is keepSharing for a vertex of a function argument: the
+// node holds c if arc is a definition that the vertex it shares names as a
+// direct conjunct, and the conjunct and the share do not open it.
+func (n *nodeContext) keepSharingArg(c Conjunct, arc *Vertex, id CloseInfo, from *Vertex) bool {
+	shared, ok := n.node.BaseValue.(*Vertex)
+	if !ok || !arc.Label.IsDef() || n.node.OpenedShared ||
+		id.Opened || id.ConjunctOpened || !n.declaresDef(shared, arc) {
+		return false
+	}
+	n.addShared(c, arc, id, from)
+	return true
+}
+
+// heldFirstSharer returns the first vertex among v and those it indirects
+// to, as in [Vertex.DerefNonDisjunct], that shares a vertex after it held
+// definitions that arrived before it ([nodeContext.heldFirst]), or nil.
+//
+// A reference that resolves to v and evaluates it, rather than sharing it,
+// schedules those definitions before the conjuncts of the shared vertex, as
+// it would schedule them if that vertex did not share: they come first among
+// its conjuncts. The value is the same either way, as the shared vertex
+// applied them, but errors then report the positions of those conjuncts of
+// the node, not those of the same definitions in the shared vertex.
+func (v *Vertex) heldFirstSharer() *Vertex {
+	for {
+		if s := v.state; s != nil && s.isShared && s.heldFirst > 0 {
+			return v
+		}
+		arc, ok := v.BaseValue.(*Vertex)
+		if !ok || arc.IsDisjunct {
+			return nil
+		}
+		v = arc
+	}
 }
 
 // Vertex values that are held in BaseValue will be wrapped in the following
@@ -538,17 +739,11 @@ func directExpr(c Conjunct) Expr {
 	return x
 }
 
-// sharedClosedBy reports whether the vertex n shares holds a direct conjunct
-// that refers to the definition def, so that it already is an instance of it.
-func (n *nodeContext) sharedClosedBy(def *Vertex) bool {
-	if !def.Label.IsDef() {
-		return false
-	}
-	shared, ok := n.node.BaseValue.(*Vertex)
-	if !ok {
-		return false
-	}
-	for c := range shared.LeafConjuncts() {
+// declaresDef reports whether v holds a direct conjunct that refers to the
+// definition def, so that v is closed by def once that conjunct is
+// scheduled, which it may not be yet.
+func (n *nodeContext) declaresDef(v, def *Vertex) bool {
+	for c := range v.LeafConjuncts() {
 		if c.Env == nil {
 			continue
 		}

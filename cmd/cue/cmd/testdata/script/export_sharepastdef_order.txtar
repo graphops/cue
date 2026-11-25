@@ -1,0 +1,48 @@
+# A field of a function argument whose value already applied the
+# definition the field declares keeps the order of fields it has without
+# structure sharing: out.labels orders the rule the argument brings after
+# the rule the body adds, as the chain of the argument, which the field's
+# conjuncts carry, orders them. An inline @test(eq) does not check the
+# order of fields, so this is checked here.
+
+exec cue export -e out --out json
+cmp stdout want.json
+env CUE_DEBUG=sharing=0
+exec cue export -e out --out json
+cmp stdout want.json
+
+-- cue.mod/module.cue --
+module: "mod.test"
+language: version: "v0.18.0"
+-- in.cue --
+@experiment(try,functions)
+
+package p
+
+#Meta: {labels?: rules: [string]: set: {[string]: string}}
+
+resourceSet: func(rules: {...}) -> {...}: {
+	for _, rule in rules {rule.set}
+}
+withPlatform: func(m: {...}, platform: {...}) -> {...}: {
+	m
+	labels: rules: "__platform": set: platform
+}
+#Out: {meta: #Meta, platform: {...}}
+Render: func(o: #Out) -> {...}: {
+	labels: resourceSet(withPlatform(o.meta, o.platform).labels.rules)
+}
+
+config: meta: #Meta & {labels: rules: "__own": set: {"z/own": "x"}}
+out: Render({
+	platform: {"a/name": "n", "a/instance": "i"}
+	try {meta: config.meta?}
+})
+-- want.json --
+{
+    "labels": {
+        "a/name": "n",
+        "a/instance": "i",
+        "z/own": "x"
+    }
+}
