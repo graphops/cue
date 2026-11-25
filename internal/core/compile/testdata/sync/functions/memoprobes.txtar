@@ -1,0 +1,1362 @@
+# Calls that share a memoized result must give the result that each would
+# compute afresh. Each struct below is one case: callers inside and outside
+# definitions, in either order, with opened definitions and embeddings;
+# structural cycles through arguments; labels of pattern fields; disjuncts;
+# for, let and try clauses; let fields read from several environments;
+# aliases; partial application, defaults and signature types; incomplete
+# arguments; recursion; and arguments that read the struct holding the call.
+#inlinetest:exclude skip — results checked by the golden output
+-- in.cue --
+@experiment(functions)
+@experiment(try)
+
+p01_def_ci_a: {
+	F: func(n: _) -> _: n & {b: 2}
+	S: {x: F({a: 1})}
+	v: S
+	#D: S
+	d: #D
+}
+p01_def_ci_b: {
+	F: func(n: _) -> _: n & {b: 2}
+	S: {x: F({a: 1})}
+	#D: S
+	d: #D
+	v: S
+}
+p02_def_ci_closed_b: {
+	F: func(n: int) -> _: {a: n}
+	S: {x: F(1)}
+	#D: S
+	d: #D & {x: b: 2}
+	v: S
+	w: v & {x: b: 2}
+}
+p02_def_ci_closed: {
+	F: func(n: int) -> _: {a: n}
+	S: {x: F(1)}
+	v: S
+	#D: S
+	w: v & {x: b: 2}
+	d: #D & {x: b: 2}
+}
+p03_cycle_self: {
+	F: func(x: _) -> _: {v: x}
+	V: {a: 1, r: F(V)}
+}
+p04_cycle_copy: {
+	F: func(x: _) -> _: {v: x}
+	G: func(x: _) -> _: {w: F(x)}
+	T: {a: 1}
+	S: {p: G(T), q: p}
+	u: S
+	w: u.q.w.v
+}
+p05_label: {
+	F: func(s: string) -> string: "<" + s + ">"
+	x: [string]~(Name, _): {r: F(Name)}
+	x: {a: _, b: _}
+	y: x
+}
+p06_disj: {
+	F: func(n: int) -> int: n + 1
+	#T: {k: int, s: {r: F(k)}}
+	x: #T & ({k: 1} | {k: 2})
+	y: [x & {k: 1}, x & {k: 2}]
+}
+p07_disj_closure: {
+	#T: {k: int, f: func() -> int: k + 10, r: f()}
+	x: #T & ({k: 1} | {k: 2})
+	z: [x & {k: 1}, x & {k: 2}]
+}
+p08_for: {
+	F: func(n: int) -> {...}: {v: n, w: n * 2}
+	src: {a: 1, b: 2}
+	out: [for k, v in src {F(v)}]
+	S: {o: [for k, v in src {F(v)}], p: o}
+	c1: S
+	c2: S
+}
+p09_for_nested_copy: {
+	F: func(n: int) -> {...}: {v: n}
+	S: {src: {a: 1, b: 2}, o: [for k, v in src {F(v)}]}
+	c1: S & {src: c: 3}
+	c2: S
+}
+p10_let_field: {
+	F: func(n: _) -> _: {v: n}
+	S: {
+		let L = k
+		k: int
+		r: F(L)
+	}
+	a: S & {k: 1}
+	b: S & {k: 2}
+}
+p11_let_clause: {
+	F: func(n: _) -> _: {v: n}
+	src: {a: 1, b: 2}
+	out: [for k, v in src let L = v + 1 {F(L)}]
+	S: {o: [for k, v in src let L = v + 1 {F(L)}]}
+	c: [S, S]
+}
+p12_value_alias: {
+	F: func(n: _) -> _: n + 1
+	S: {
+		let X = self
+		b: int
+		r: F(X.b)
+	}
+	a: S & {b: 1}
+	c: S & {b: 2}
+}
+p12b_field_alias: {
+	F: func(n: _) -> _: {v: n.b}
+	S~X: {b: 1, r: F(X)}
+	a: S & {b: 1}
+}
+p13_pattern_closure: {
+	p: [string]~(K, _): func() -> string: K
+	p: {a: _, b: _}
+	out: [for k, _ in p {p[k]()}]
+}
+p14_partial: {
+	F: func(a: int, b: int) -> int: a * 10 + b
+	S: {g: F(1, ...), r: g(2)}
+	T: {g: F(3, ...), r: g(2)}
+	u: [S, T, S.r, T.r]
+}
+p15_incomplete_later: {
+	F: func(n: int) -> {...}: {v: n}
+	S: {k: int, r: F(k)}
+	a: S & {k: 1}
+	b: S & {k: 2}
+	c: S
+}
+p16_try: {
+	F: func(n: _) -> _: {v: n}
+	src: {a: {x: 1}, b: {}}
+	out: [for k, v in src try { y: F(v.x?) }]
+	S: {o: [for k, v in src try { y: F(v.x?) }]}
+	c: [S, S]
+}
+p17_try_bind: {
+	F: func(n: _) -> _: {v: n}
+	src: {a: {x: 1}, b: {x: 2}}
+	S: {out: [for k, v in src try X = v.x? { y: F(X) }]}
+	c: [S, S]
+}
+p18_recursion: {
+	Fact: func(n: int) -> int: [if n <= 1 {1}, n * Fact(n - 1)][0]
+	a: Fact(5)
+	S: {r: Fact(4)}
+	b: [S, S]
+}
+p19_param_default: {
+	F: func(n: int = 3) -> {...}: {v: n}
+	S: {r: F()}
+	T: {r: F(4)}
+	u: [S, T, S]
+}
+p20_sig_type: {
+	F: func(n: _) -> _: {v: n}
+	G: F & func(n: int) -> {...}
+	S: {a: F(1), b: G(1)}
+	c: [S, S]
+}
+p21_def_arg_a: {
+	F: func(n: _) -> _: n & {b: 2}
+	K: {a: 1}
+	S: {x: F(K)}
+	v: S
+	#D: S
+	d: #D
+}
+p21_def_arg_b: {
+	F: func(n: _) -> _: n & {b: 2}
+	K: {a: 1}
+	S: {x: F(K)}
+	#D: S
+	d: #D
+	v: S
+}
+p22_def_arg_direct: {
+	F: func(n: _) -> _: n & {b: 2}
+	K: {a: 1}
+	v: {x: F(K)}
+	#D: {x: F(K)}
+}
+p23_def_arg_shared: {
+	F: func(n: _) -> _: {r: n & {b: 2}}
+	K: {a: 1}
+	S: {x: F(K)}
+	v: S
+	#D: S
+}
+p24_cycle_ctx_a: {
+	F: func(x: _) -> _: {v: x}
+	S: {r: F(A)}
+	w: S
+	A: S
+}
+p24_cycle_ctx_b: {
+	F: func(x: _) -> _: {v: x}
+	S: {r: F(A)}
+	A: S
+	w: S
+}
+p25_cycle_ctx_field: {
+	F: func(x: _) -> _: {v: x.k}
+	S: {k: 1, r: F(A)}
+	w: S
+	A: S
+}
+p26_cycle_arg_in_self: {
+	F: func(x: _) -> _: {v: x}
+	S: {r: F(B)}
+	B: {s: S}
+	w: S
+}
+p27_stale_a: {
+	F: func(x: _) -> _: {v: x.p}
+	T: {r: F(V)}
+	V: T
+	V: {for k, _ in src {(k): 1}}
+	src: {p: _}
+	W: T
+}
+p27_stale_b: {
+	F: func(x: _) -> _: {n: len(x)}
+	T: {r: F(V)}
+	V: T
+	V: {for k, _ in src {(k): 1}}
+	src: {p: _, q: _}
+	W: T
+}
+p27_stale_c: {
+	F: func(x: _) -> _: {n: len([for k, _ in x {k}])}
+	T: {r: F(V.s)}
+	V: T
+	V: s: {for k, _ in src {(k): 1}}
+	V: s: z: 0
+	src: {p: _, q: _}
+	W: T
+}
+p28_multilet: {
+	G: func(n: string) -> string: "sp-" + n
+	S: {
+		for e in [{name: "a"}, {name: "b"}] {
+			let R = e.name
+			(e.name): {policy: G(R)}
+		}
+	}
+	T: S
+}
+p29_multilet_call: {
+	G: func(n: string) -> string: "sp-" + n
+	F: func(e: _) -> {...}: {
+		let R = e.name
+		(e.name): {policy: G(R)}
+	}
+	S: {
+		F({name: "a"})
+		F({name: "b"})
+	}
+	T: S
+}
+p30_keyonly: {
+	F: func(s: _) -> _: {v: s}
+	src: {a: 1, b: 2}
+	W: func(n: int) -> {...}: {o: [for k, _ in src {F(k)}], p: [for i, _ in [5, 6] {F(i)}]}
+	L: func(n: int) -> {...}: {m: W(n), c1: m, c2: m}
+	r: L(1)
+}
+c05_argdef_a: {
+	F: func(n: _) -> _: {r: n}
+	#K: {a: int}
+	S: {x: F({#K, c: 1})}
+	#D: S
+	d: #D & {x: _}
+	v: S & {x: _}
+	w: v.x.r & {e: 1}
+}
+c06_closearg_a: {
+	F: func(n: _) -> _: {r: n}
+	S: {x: F({a: 1})}
+	#D: S
+	d: #D & {x: _}
+	v: S & {x: _}
+	w: v.x.r & {e: 1}
+}
+c07_opened_defarg_a: {
+	F: func(n: _) -> _: n & {b: 2}
+	#K: {a: 1}
+	S: {x: F(#K)}
+	#D: S
+	o: #D... & {x: _, z: 1}
+	v: S & {x: _}
+}
+c11_opened_arg_a: {
+	F: func(n: _) -> _: {r: n}
+	#K: {a: 1}
+	#D: {x: F(#K & {b: 2})}
+	o: #D... & {x: _}
+	d: #D & {x: _}
+}
+c13_disj_a: {
+	F: func(n: _) -> _: {r: n}
+	#K: {a: 1}
+	#D: {x: F(*(#K & {b: 2}) | {c: 3})}
+	o: #D... & {x: _}
+	d: #D & {x: _}
+}
+c14_deffirst: {
+	F: func(n: _) -> _: {r: n}
+	d: #D & {x: _}
+	v: S & {x: _}
+	w: v.x.r & {e: 1}
+	#D: S
+	S: {x: F({a: 1})}
+}
+c16_deffirst_direct: {
+	F: func(n: _) -> _: {r: n}
+	d: #D & {x: _}
+	w: v.x.r & {e: 1}
+	#D: {x: F({a: 1})}
+	v: {x: F({a: 1})}
+}
+c17_openfirst: {
+	F: func(n: _) -> _: {r: n}
+	o: #D... & {x: _}
+	d: #D & {x: _}
+	w: d.x.r & {e: 1}
+	#D: {x: F({a: 1})}
+}
+c24_opened_select_a: {
+	F: func(n: _) -> _: {r: n.b, l: len(n)}
+	#K: {a: 1}
+	o: #D... & {x: _}
+	d: #D & {x: _}
+	#D: {x: F(#K & {b: 2})}
+}
+c27_disj_select_a: {
+	F: func(n: _) -> _: {r: n.v}
+	#K: {a: 1}
+	o: #D... & {x: _}
+	d: #D & {x: _}
+	#D: {x: F(*(#K & {b: 2, v: "first"}) | {v: "second"})}
+}
+c28_embed2_deffirst: {
+	F: func(n: _) -> _: {n, {b: 2}}
+	d: #D & {x: _}
+	v: S & {x: _}
+	w: v.x & {c: 3}
+	#D: S
+	S: {x: F({a: 1})}
+}
+c29_embedcall_a: {
+	F: func(n: _) -> _: {r: n}
+	#K: {a: 1}
+	e: {S, z: 1}
+	v: S & {y: 1}
+	S: F(#K & {b: 2})
+}
+c32_embed_defarg: {
+	F: func(n: _) -> _: {n, b: 2}
+	#K: {a: 1}
+	d: #D & {x: _}
+	v: S & {x: _}
+	w: v.x & {c: 3}
+	#D: S
+	S: {x: F(#K)}
+}
+c33_ellipsis_b: {
+	F: func(n: _) -> _: {r: n.a}
+	#K: {a: 1}
+	e: #E & {z: 1}
+	#E: {S, ...}
+	v: S & {y: 1}
+	S: {x: F(#K & {b: 2})}
+}
+c35_def_embed_first: {
+	F: func(n: _) -> _: {n, {b: 2}}
+	d: {#D, z: 1}
+	v: S & {x: _}
+	w: v.x & {c: 3}
+	#D: S
+	S: {x: F({a: 1})}
+}
+-- out/compile --
+--- in.cue
+{
+  p01_def_ci_a: {
+    F: func(n: _) -> _: (〈0;n〉 & {
+      b: 2
+    })
+    S: {
+      x: 〈1;F〉({
+        a: 1
+      })
+    }
+    v: 〈0;S〉
+    #D: 〈0;S〉
+    d: 〈0;#D〉
+  }
+  p01_def_ci_b: {
+    F: func(n: _) -> _: (〈0;n〉 & {
+      b: 2
+    })
+    S: {
+      x: 〈1;F〉({
+        a: 1
+      })
+    }
+    #D: 〈0;S〉
+    d: 〈0;#D〉
+    v: 〈0;S〉
+  }
+  p02_def_ci_closed_b: {
+    F: func(n: int) -> _: {
+      a: 〈1;n〉
+    }
+    S: {
+      x: 〈1;F〉(1)
+    }
+    #D: 〈0;S〉
+    d: (〈0;#D〉 & {
+      x: {
+        b: 2
+      }
+    })
+    v: 〈0;S〉
+    w: (〈0;v〉 & {
+      x: {
+        b: 2
+      }
+    })
+  }
+  p02_def_ci_closed: {
+    F: func(n: int) -> _: {
+      a: 〈1;n〉
+    }
+    S: {
+      x: 〈1;F〉(1)
+    }
+    v: 〈0;S〉
+    #D: 〈0;S〉
+    w: (〈0;v〉 & {
+      x: {
+        b: 2
+      }
+    })
+    d: (〈0;#D〉 & {
+      x: {
+        b: 2
+      }
+    })
+  }
+  p03_cycle_self: {
+    F: func(x: _) -> _: {
+      v: 〈1;x〉
+    }
+    V: {
+      a: 1
+      r: 〈1;F〉(〈1;V〉)
+    }
+  }
+  p04_cycle_copy: {
+    F: func(x: _) -> _: {
+      v: 〈1;x〉
+    }
+    G: func(x: _) -> _: {
+      w: 〈2;F〉(〈1;x〉)
+    }
+    T: {
+      a: 1
+    }
+    S: {
+      p: 〈1;G〉(〈1;T〉)
+      q: 〈0;p〉
+    }
+    u: 〈0;S〉
+    w: 〈0;u〉.q.w.v
+  }
+  p05_label: {
+    F: func(s: string) -> string: (("<" + 〈0;s〉) + ">")
+    x: {
+      [string]: {
+        r: 〈2;F〉(〈1;-〉)
+      }
+    }
+    x: {
+      a: _
+      b: _
+    }
+    y: 〈0;x〉
+  }
+  p06_disj: {
+    F: func(n: int) -> int: (〈0;n〉 + 1)
+    #T: {
+      k: int
+      s: {
+        r: 〈2;F〉(〈1;k〉)
+      }
+    }
+    x: (〈0;#T〉 & ({
+      k: 1
+    }|{
+      k: 2
+    }))
+    y: [
+      (〈1;x〉 & {
+        k: 1
+      }),
+      (〈1;x〉 & {
+        k: 2
+      }),
+    ]
+  }
+  p07_disj_closure: {
+    #T: {
+      k: int
+      f: func() -> int: (〈1;k〉 + 10)
+      r: 〈0;f〉()
+    }
+    x: (〈0;#T〉 & ({
+      k: 1
+    }|{
+      k: 2
+    }))
+    z: [
+      (〈1;x〉 & {
+        k: 1
+      }),
+      (〈1;x〉 & {
+        k: 2
+      }),
+    ]
+  }
+  p08_for: {
+    F: func(n: int) -> {
+      ...
+    }: {
+      v: 〈1;n〉
+      w: (〈1;n〉 * 2)
+    }
+    src: {
+      a: 1
+      b: 2
+    }
+    out: [
+      for k, v in 〈1;src〉 {
+        〈3;F〉(〈1;v〉)
+      },
+    ]
+    S: {
+      o: [
+        for k, v in 〈2;src〉 {
+          〈4;F〉(〈1;v〉)
+        },
+      ]
+      p: 〈0;o〉
+    }
+    c1: 〈0;S〉
+    c2: 〈0;S〉
+  }
+  p09_for_nested_copy: {
+    F: func(n: int) -> {
+      ...
+    }: {
+      v: 〈1;n〉
+    }
+    S: {
+      src: {
+        a: 1
+        b: 2
+      }
+      o: [
+        for k, v in 〈1;src〉 {
+          〈4;F〉(〈1;v〉)
+        },
+      ]
+    }
+    c1: (〈0;S〉 & {
+      src: {
+        c: 3
+      }
+    })
+    c2: 〈0;S〉
+  }
+  p10_let_field: {
+    F: func(n: _) -> _: {
+      v: 〈1;n〉
+    }
+    S: {
+      let L#1 = 〈0;k〉
+      k: int
+      r: 〈1;F〉(〈0;let L#1〉)
+    }
+    a: (〈0;S〉 & {
+      k: 1
+    })
+    b: (〈0;S〉 & {
+      k: 2
+    })
+  }
+  p11_let_clause: {
+    F: func(n: _) -> _: {
+      v: 〈1;n〉
+    }
+    src: {
+      a: 1
+      b: 2
+    }
+    out: [
+      for k, v in 〈1;src〉 let L = (〈0;v〉 + 1) {
+        〈4;F〉(〈1;L〉)
+      },
+    ]
+    S: {
+      o: [
+        for k, v in 〈2;src〉 let L = (〈0;v〉 + 1) {
+          〈5;F〉(〈1;L〉)
+        },
+      ]
+    }
+    c: [
+      〈1;S〉,
+      〈1;S〉,
+    ]
+  }
+  p12_value_alias: {
+    F: func(n: _) -> _: (〈0;n〉 + 1)
+    S: {
+      let X#2 = 〈1〉
+      b: int
+      r: 〈1;F〉(〈0;let X#2〉.b)
+    }
+    a: (〈0;S〉 & {
+      b: 1
+    })
+    c: (〈0;S〉 & {
+      b: 2
+    })
+  }
+  p12b_field_alias: {
+    F: func(n: _) -> _: {
+      v: 〈1;n〉.b
+    }
+    S: {
+      b: 1
+      r: 〈1;F〉(〈1;S〉)
+    }
+    a: (〈0;S〉 & {
+      b: 1
+    })
+  }
+  p13_pattern_closure: {
+    p: {
+      [string]: func() -> string: 〈1;-〉
+    }
+    p: {
+      a: _
+      b: _
+    }
+    out: [
+      for k, _ in 〈1;p〉 {
+        〈3;p〉[〈1;k〉]()
+      },
+    ]
+  }
+  p14_partial: {
+    F: func(a: int, b: int) -> int: ((〈0;a〉 * 10) + 〈0;b〉)
+    S: {
+      g: 〈1;F〉(1)
+      r: 〈0;g〉(2)
+    }
+    T: {
+      g: 〈1;F〉(3)
+      r: 〈0;g〉(2)
+    }
+    u: [
+      〈1;S〉,
+      〈1;T〉,
+      〈1;S〉.r,
+      〈1;T〉.r,
+    ]
+  }
+  p15_incomplete_later: {
+    F: func(n: int) -> {
+      ...
+    }: {
+      v: 〈1;n〉
+    }
+    S: {
+      k: int
+      r: 〈1;F〉(〈0;k〉)
+    }
+    a: (〈0;S〉 & {
+      k: 1
+    })
+    b: (〈0;S〉 & {
+      k: 2
+    })
+    c: 〈0;S〉
+  }
+  p16_try: {
+    F: func(n: _) -> _: {
+      v: 〈1;n〉
+    }
+    src: {
+      a: {
+        x: 1
+      }
+      b: {}
+    }
+    out: [
+      for k, v in 〈1;src〉 try {
+        y: 〈3;F〉(〈1;v〉.x?)
+      },
+    ]
+    S: {
+      o: [
+        for k, v in 〈2;src〉 try {
+          y: 〈4;F〉(〈1;v〉.x?)
+        },
+      ]
+    }
+    c: [
+      〈1;S〉,
+      〈1;S〉,
+    ]
+  }
+  p17_try_bind: {
+    F: func(n: _) -> _: {
+      v: 〈1;n〉
+    }
+    src: {
+      a: {
+        x: 1
+      }
+      b: {
+        x: 2
+      }
+    }
+    S: {
+      out: [
+        for k, v in 〈2;src〉 try X = 〈0;v〉.x? {
+          y: 〈5;F〉(〈1;X〉)
+        },
+      ]
+    }
+    c: [
+      〈1;S〉,
+      〈1;S〉,
+    ]
+  }
+  p18_recursion: {
+    Fact: func(n: int) -> int: [
+      if (〈1;n〉 <= 1) {
+        1
+      },
+      (〈1;n〉 * 〈2;Fact〉((〈1;n〉 - 1))),
+    ][0]
+    a: 〈0;Fact〉(5)
+    S: {
+      r: 〈1;Fact〉(4)
+    }
+    b: [
+      〈1;S〉,
+      〈1;S〉,
+    ]
+  }
+  p19_param_default: {
+    F: func(n: int = 3) -> {
+      ...
+    }: {
+      v: 〈1;n〉
+    }
+    S: {
+      r: 〈1;F〉()
+    }
+    T: {
+      r: 〈1;F〉(4)
+    }
+    u: [
+      〈1;S〉,
+      〈1;T〉,
+      〈1;S〉,
+    ]
+  }
+  p20_sig_type: {
+    F: func(n: _) -> _: {
+      v: 〈1;n〉
+    }
+    G: (〈0;F〉 & func(n: int) -> {
+      ...
+    })
+    S: {
+      a: 〈1;F〉(1)
+      b: 〈1;G〉(1)
+    }
+    c: [
+      〈1;S〉,
+      〈1;S〉,
+    ]
+  }
+  p21_def_arg_a: {
+    F: func(n: _) -> _: (〈0;n〉 & {
+      b: 2
+    })
+    K: {
+      a: 1
+    }
+    S: {
+      x: 〈1;F〉(〈1;K〉)
+    }
+    v: 〈0;S〉
+    #D: 〈0;S〉
+    d: 〈0;#D〉
+  }
+  p21_def_arg_b: {
+    F: func(n: _) -> _: (〈0;n〉 & {
+      b: 2
+    })
+    K: {
+      a: 1
+    }
+    S: {
+      x: 〈1;F〉(〈1;K〉)
+    }
+    #D: 〈0;S〉
+    d: 〈0;#D〉
+    v: 〈0;S〉
+  }
+  p22_def_arg_direct: {
+    F: func(n: _) -> _: (〈0;n〉 & {
+      b: 2
+    })
+    K: {
+      a: 1
+    }
+    v: {
+      x: 〈1;F〉(〈1;K〉)
+    }
+    #D: {
+      x: 〈1;F〉(〈1;K〉)
+    }
+  }
+  p23_def_arg_shared: {
+    F: func(n: _) -> _: {
+      r: (〈1;n〉 & {
+        b: 2
+      })
+    }
+    K: {
+      a: 1
+    }
+    S: {
+      x: 〈1;F〉(〈1;K〉)
+    }
+    v: 〈0;S〉
+    #D: 〈0;S〉
+  }
+  p24_cycle_ctx_a: {
+    F: func(x: _) -> _: {
+      v: 〈1;x〉
+    }
+    S: {
+      r: 〈1;F〉(〈1;A〉)
+    }
+    w: 〈0;S〉
+    A: 〈0;S〉
+  }
+  p24_cycle_ctx_b: {
+    F: func(x: _) -> _: {
+      v: 〈1;x〉
+    }
+    S: {
+      r: 〈1;F〉(〈1;A〉)
+    }
+    A: 〈0;S〉
+    w: 〈0;S〉
+  }
+  p25_cycle_ctx_field: {
+    F: func(x: _) -> _: {
+      v: 〈1;x〉.k
+    }
+    S: {
+      k: 1
+      r: 〈1;F〉(〈1;A〉)
+    }
+    w: 〈0;S〉
+    A: 〈0;S〉
+  }
+  p26_cycle_arg_in_self: {
+    F: func(x: _) -> _: {
+      v: 〈1;x〉
+    }
+    S: {
+      r: 〈1;F〉(〈1;B〉)
+    }
+    B: {
+      s: 〈1;S〉
+    }
+    w: 〈0;S〉
+  }
+  p27_stale_a: {
+    F: func(x: _) -> _: {
+      v: 〈1;x〉.p
+    }
+    T: {
+      r: 〈1;F〉(〈1;V〉)
+    }
+    V: 〈0;T〉
+    V: {
+      for k, _ in 〈1;src〉 {
+        〈1;k〉: 1
+      }
+    }
+    src: {
+      p: _
+    }
+    W: 〈0;T〉
+  }
+  p27_stale_b: {
+    F: func(x: _) -> _: {
+      n: len(〈1;x〉)
+    }
+    T: {
+      r: 〈1;F〉(〈1;V〉)
+    }
+    V: 〈0;T〉
+    V: {
+      for k, _ in 〈1;src〉 {
+        〈1;k〉: 1
+      }
+    }
+    src: {
+      p: _
+      q: _
+    }
+    W: 〈0;T〉
+  }
+  p27_stale_c: {
+    F: func(x: _) -> _: {
+      n: len([
+        for k, _ in 〈2;x〉 {
+          〈1;k〉
+        },
+      ])
+    }
+    T: {
+      r: 〈1;F〉(〈1;V〉.s)
+    }
+    V: 〈0;T〉
+    V: {
+      s: {
+        for k, _ in 〈2;src〉 {
+          〈1;k〉: 1
+        }
+      }
+    }
+    V: {
+      s: {
+        z: 0
+      }
+    }
+    src: {
+      p: _
+      q: _
+    }
+    W: 〈0;T〉
+  }
+  p28_multilet: {
+    G: func(n: string) -> string: ("sp-" + 〈0;n〉)
+    S: {
+      for _, e in [
+        {
+          name: "a"
+        },
+        {
+          name: "b"
+        },
+      ] {
+        let R#3multi = 〈1;e〉.name
+        〈1;e〉.name: {
+          policy: 〈4;G〉(〈1;let R#3〉)
+        }
+      }
+    }
+    T: 〈0;S〉
+  }
+  p29_multilet_call: {
+    G: func(n: string) -> string: ("sp-" + 〈0;n〉)
+    F: func(e: _) -> {
+      ...
+    }: {
+      let R#4 = 〈1;e〉.name
+      〈1;e〉.name: {
+        policy: 〈3;G〉(〈1;let R#4〉)
+      }
+    }
+    S: {
+      〈1;F〉({
+        name: "a"
+      })
+      〈1;F〉({
+        name: "b"
+      })
+    }
+    T: 〈0;S〉
+  }
+  p30_keyonly: {
+    F: func(s: _) -> _: {
+      v: 〈1;s〉
+    }
+    src: {
+      a: 1
+      b: 2
+    }
+    W: func(n: int) -> {
+      ...
+    }: {
+      o: [
+        for k, _ in 〈3;src〉 {
+          〈5;F〉(〈1;k〉)
+        },
+      ]
+      p: [
+        for i, _ in [
+          5,
+          6,
+        ] {
+          〈5;F〉(〈1;i〉)
+        },
+      ]
+    }
+    L: func(n: int) -> {
+      ...
+    }: {
+      m: 〈2;W〉(〈1;n〉)
+      c1: 〈0;m〉
+      c2: 〈0;m〉
+    }
+    r: 〈0;L〉(1)
+  }
+  c05_argdef_a: {
+    F: func(n: _) -> _: {
+      r: 〈1;n〉
+    }
+    #K: {
+      a: int
+    }
+    S: {
+      x: 〈1;F〉({
+        〈2;#K〉
+        c: 1
+      })
+    }
+    #D: 〈0;S〉
+    d: (〈0;#D〉 & {
+      x: _
+    })
+    v: (〈0;S〉 & {
+      x: _
+    })
+    w: (〈0;v〉.x.r & {
+      e: 1
+    })
+  }
+  c06_closearg_a: {
+    F: func(n: _) -> _: {
+      r: 〈1;n〉
+    }
+    S: {
+      x: 〈1;F〉({
+        a: 1
+      })
+    }
+    #D: 〈0;S〉
+    d: (〈0;#D〉 & {
+      x: _
+    })
+    v: (〈0;S〉 & {
+      x: _
+    })
+    w: (〈0;v〉.x.r & {
+      e: 1
+    })
+  }
+  c07_opened_defarg_a: {
+    F: func(n: _) -> _: (〈0;n〉 & {
+      b: 2
+    })
+    #K: {
+      a: 1
+    }
+    S: {
+      x: 〈1;F〉(〈1;#K〉)
+    }
+    #D: 〈0;S〉
+    o: (〈0;#D〉... & {
+      x: _
+      z: 1
+    })
+    v: (〈0;S〉 & {
+      x: _
+    })
+  }
+  c11_opened_arg_a: {
+    F: func(n: _) -> _: {
+      r: 〈1;n〉
+    }
+    #K: {
+      a: 1
+    }
+    #D: {
+      x: 〈1;F〉((〈1;#K〉 & {
+        b: 2
+      }))
+    }
+    o: (〈0;#D〉... & {
+      x: _
+    })
+    d: (〈0;#D〉 & {
+      x: _
+    })
+  }
+  c13_disj_a: {
+    F: func(n: _) -> _: {
+      r: 〈1;n〉
+    }
+    #K: {
+      a: 1
+    }
+    #D: {
+      x: 〈1;F〉((*(〈1;#K〉 & {
+        b: 2
+      })|{
+        c: 3
+      }))
+    }
+    o: (〈0;#D〉... & {
+      x: _
+    })
+    d: (〈0;#D〉 & {
+      x: _
+    })
+  }
+  c14_deffirst: {
+    F: func(n: _) -> _: {
+      r: 〈1;n〉
+    }
+    d: (〈0;#D〉 & {
+      x: _
+    })
+    v: (〈0;S〉 & {
+      x: _
+    })
+    w: (〈0;v〉.x.r & {
+      e: 1
+    })
+    #D: 〈0;S〉
+    S: {
+      x: 〈1;F〉({
+        a: 1
+      })
+    }
+  }
+  c16_deffirst_direct: {
+    F: func(n: _) -> _: {
+      r: 〈1;n〉
+    }
+    d: (〈0;#D〉 & {
+      x: _
+    })
+    w: (〈0;v〉.x.r & {
+      e: 1
+    })
+    #D: {
+      x: 〈1;F〉({
+        a: 1
+      })
+    }
+    v: {
+      x: 〈1;F〉({
+        a: 1
+      })
+    }
+  }
+  c17_openfirst: {
+    F: func(n: _) -> _: {
+      r: 〈1;n〉
+    }
+    o: (〈0;#D〉... & {
+      x: _
+    })
+    d: (〈0;#D〉 & {
+      x: _
+    })
+    w: (〈0;d〉.x.r & {
+      e: 1
+    })
+    #D: {
+      x: 〈1;F〉({
+        a: 1
+      })
+    }
+  }
+  c24_opened_select_a: {
+    F: func(n: _) -> _: {
+      r: 〈1;n〉.b
+      l: len(〈1;n〉)
+    }
+    #K: {
+      a: 1
+    }
+    o: (〈0;#D〉... & {
+      x: _
+    })
+    d: (〈0;#D〉 & {
+      x: _
+    })
+    #D: {
+      x: 〈1;F〉((〈1;#K〉 & {
+        b: 2
+      }))
+    }
+  }
+  c27_disj_select_a: {
+    F: func(n: _) -> _: {
+      r: 〈1;n〉.v
+    }
+    #K: {
+      a: 1
+    }
+    o: (〈0;#D〉... & {
+      x: _
+    })
+    d: (〈0;#D〉 & {
+      x: _
+    })
+    #D: {
+      x: 〈1;F〉((*(〈1;#K〉 & {
+        b: 2
+        v: "first"
+      })|{
+        v: "second"
+      }))
+    }
+  }
+  c28_embed2_deffirst: {
+    F: func(n: _) -> _: {
+      〈1;n〉
+      {
+        b: 2
+      }
+    }
+    d: (〈0;#D〉 & {
+      x: _
+    })
+    v: (〈0;S〉 & {
+      x: _
+    })
+    w: (〈0;v〉.x & {
+      c: 3
+    })
+    #D: 〈0;S〉
+    S: {
+      x: 〈1;F〉({
+        a: 1
+      })
+    }
+  }
+  c29_embedcall_a: {
+    F: func(n: _) -> _: {
+      r: 〈1;n〉
+    }
+    #K: {
+      a: 1
+    }
+    e: {
+      〈1;S〉
+      z: 1
+    }
+    v: (〈0;S〉 & {
+      y: 1
+    })
+    S: 〈0;F〉((〈0;#K〉 & {
+      b: 2
+    }))
+  }
+  c32_embed_defarg: {
+    F: func(n: _) -> _: {
+      〈1;n〉
+      b: 2
+    }
+    #K: {
+      a: 1
+    }
+    d: (〈0;#D〉 & {
+      x: _
+    })
+    v: (〈0;S〉 & {
+      x: _
+    })
+    w: (〈0;v〉.x & {
+      c: 3
+    })
+    #D: 〈0;S〉
+    S: {
+      x: 〈1;F〉(〈1;#K〉)
+    }
+  }
+  c33_ellipsis_b: {
+    F: func(n: _) -> _: {
+      r: 〈1;n〉.a
+    }
+    #K: {
+      a: 1
+    }
+    e: (〈0;#E〉 & {
+      z: 1
+    })
+    #E: {
+      〈1;S〉
+      ...
+    }
+    v: (〈0;S〉 & {
+      y: 1
+    })
+    S: {
+      x: 〈1;F〉((〈1;#K〉 & {
+        b: 2
+      }))
+    }
+  }
+  c35_def_embed_first: {
+    F: func(n: _) -> _: {
+      〈1;n〉
+      {
+        b: 2
+      }
+    }
+    d: {
+      〈1;#D〉
+      z: 1
+    }
+    v: (〈0;S〉 & {
+      x: _
+    })
+    w: (〈0;v〉.x & {
+      c: 3
+    })
+    #D: 〈0;S〉
+    S: {
+      x: 〈1;F〉({
+        a: 1
+      })
+    }
+  }
+}

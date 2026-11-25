@@ -186,14 +186,15 @@ type OpContext struct {
 	funcCallRefs map[funcCallRefKey][]*FuncCallRef
 
 	// funcCallResults memoizes the finalized, error-free result vertices of
-	// native CUE function calls, keyed by call site and the caller
-	// environment in which its arguments resolve. A call's result is fully
-	// determined by that pair and the callee, so a parameter used N times in
-	// a body — or a call nested as an argument and consumed once per use of
-	// the enclosing parameter — re-dispatches the same call instead of
-	// rebuilding the activation and re-finalizing the body each time.
-	// Without this the work of deeply nested calls (e.g. twice(twice(...)))
-	// grows exponentially in the nesting depth.
+	// native CUE function calls, keyed by call site, the values its
+	// arguments read and the callee. A call's result is fully determined by
+	// these, so a parameter used N times in a body — or a call nested as an
+	// argument and consumed once per use of the enclosing parameter —
+	// re-dispatches the same call instead of rebuilding the activation and
+	// re-finalizing the body each time, and so do the copies of a struct
+	// holding a call and the evaluations of a comprehension calling a
+	// function. Without this the work of deeply nested calls (e.g.
+	// twice(twice(...))) grows exponentially in the nesting depth.
 	//
 	// Only finalized, error-free results are stored: a call still in progress
 	// (in particular one re-entered through recursion, which the structural
@@ -201,6 +202,14 @@ type OpContext struct {
 	// memoization never short-circuits cycle detection. See
 	// [funcCallResultKey], [funcCallResult] and [FuncValue.call].
 	funcCallResults map[funcCallResultKey][]funcCallResult
+
+	// callReads caches, per call site, the environments its arguments read,
+	// and envReads, per expression bound by a let or try clause, the
+	// environments it reads. argsKeys interns the outer levels of the memo
+	// keys built from them. See [OpContext.callArgsKey].
+	callReads map[*CallExpr]*envReads
+	envReads  map[Expr]*envReads
+	argsKeys  map[argsKey]*argsKey
 
 	// anonParamLabels caches the labels of the synthetic activation arcs
 	// that bind the arguments of anonymous positional function parameters,

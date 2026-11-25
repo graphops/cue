@@ -16,17 +16,17 @@ L3: func(n: int) -> {...}: {m: L2(n), c1: m, c2: m}
 
 r: L3(1)
 -- out/eval/stats --
-Leaks:  27
-Freed:  2598
-Reused: 2563
-Allocs: 62
+Leaks:  5
+Freed:  590
+Reused: 557
+Allocs: 38
 Retain: 0
 
-Unifications: 2625
-Conjuncts:    10869
+Unifications: 595
+Conjuncts:    2590
 Disjuncts:    0
 
-NumCloseIDs: 3831
+NumCloseIDs: 942
 -- out/evalalpha --
 (struct){
   Inner: (func){ func(n: int) -> {

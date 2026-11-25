@@ -1,0 +1,169 @@
+# Calls whose arguments read comprehension bindings share a memoized result
+# only when the bindings are the same: the same for clause over the same arc,
+# or the same let or try clause whose expression reads the same values. Each
+# result below must reflect its own binding.
+#inlinetest:exclude skip — results checked by the golden output
+-- in.cue --
+@experiment(functions)
+@experiment(aliasv2,try)
+
+F: func(n: _) -> _: {v: n}
+
+list: [1, 2, 3]
+forValues: [for v in list {F(v)}]
+forKeys: [for k, _ in {a: 1, b: 2} {F(k)}]
+nested: [for a in [1, 2] for b in [10, 20] {F(a + b)}]
+letClause: [for v in list let w = v * 10 {F(w)}]
+letOuter: {
+	m: 100
+	out: [for v in [1, 2] let w = v + m {F(w)}]
+}
+tryClause: [for v in [{x: 1}, {x: 2}, {}] try X = v.x? {F(X)}]
+
+// The same clause over different sources.
+G: func(xs: [...int]) -> [...]: [for v in xs {F(v)}]
+g1: G([1, 2])
+g2: G([3, 4])
+
+// Pattern instances: the label differs per field.
+byLabel: [string]~(K,_): F(K)
+byLabel: {a: _, b: _}
+
+// A copy of a struct with a comprehension still sees its own values.
+S: func(xs: [...int]) -> {...}: {out: [for v in xs {F(v)}], copy: out}
+s1: S([5])
+s2: S([6])
+s3: s1.copy
+
+// A let in a comprehension body that several calls embed into one struct is
+// one arc of that struct with a value per calling environment.
+H: func(n: string) -> {...}: {
+	if true {
+		let R = n
+		"\(n)": F(R)
+	}
+}
+embedded: {
+	H("a")
+	H("b")
+}
+-- out/compile --
+--- in.cue
+{
+  F: func(n: _) -> _: {
+    v: 〈1;n〉
+  }
+  list: [
+    1,
+    2,
+    3,
+  ]
+  forValues: [
+    for _, v in 〈1;list〉 {
+      〈3;F〉(〈1;v〉)
+    },
+  ]
+  forKeys: [
+    for k, _ in {
+      a: 1
+      b: 2
+    } {
+      〈3;F〉(〈1;k〉)
+    },
+  ]
+  nested: [
+    for _, a in [
+      1,
+      2,
+    ] for _, b in [
+      10,
+      20,
+    ] {
+      〈4;F〉((〈2;a〉 + 〈1;b〉))
+    },
+  ]
+  letClause: [
+    for _, v in 〈1;list〉 let w = (〈0;v〉 * 10) {
+      〈4;F〉(〈1;w〉)
+    },
+  ]
+  letOuter: {
+    m: 100
+    out: [
+      for _, v in [
+        1,
+        2,
+      ] let w = (〈0;v〉 + 〈2;m〉) {
+        〈5;F〉(〈1;w〉)
+      },
+    ]
+  }
+  tryClause: [
+    for _, v in [
+      {
+        x: 1
+      },
+      {
+        x: 2
+      },
+      {},
+    ] try X = 〈0;v〉.x? {
+      〈4;F〉(〈1;X〉)
+    },
+  ]
+  G: func(xs: [
+    ...int,
+  ]) -> [
+    ...,
+  ]: [
+    for _, v in 〈1;xs〉 {
+      〈4;F〉(〈1;v〉)
+    },
+  ]
+  g1: 〈0;G〉([
+    1,
+    2,
+  ])
+  g2: 〈0;G〉([
+    3,
+    4,
+  ])
+  byLabel: {
+    [string]: 〈1;F〉(〈0;-〉)
+  }
+  byLabel: {
+    a: _
+    b: _
+  }
+  S: func(xs: [
+    ...int,
+  ]) -> {
+    ...
+  }: {
+    out: [
+      for _, v in 〈2;xs〉 {
+        〈5;F〉(〈1;v〉)
+      },
+    ]
+    copy: 〈0;out〉
+  }
+  s1: 〈0;S〉([
+    5,
+  ])
+  s2: 〈0;S〉([
+    6,
+  ])
+  s3: 〈0;s1〉.copy
+  H: func(n: string) -> {
+    ...
+  }: {
+    if true {
+      let R#1 = 〈2;n〉
+      "\(〈2;n〉)": 〈3;F〉(〈0;let R#1〉)
+    }
+  }
+  embedded: {
+    〈1;H〉("a")
+    〈1;H〉("b")
+  }
+}

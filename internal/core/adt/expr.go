@@ -2149,35 +2149,36 @@ type funcCallRefKey struct {
 	anchor *Vertex
 }
 
-// funcCallResultKey identifies the memo bucket of a call site: the AST call
-// node and the caller environment in which the call's arguments resolve. The
-// callee is a value resolved at each call rather than part of the key; the
-// entries within a bucket record the callee that produced them and are
-// matched on that identity. See [OpContext.funcCallResults].
+// funcCallResultKey identifies the memo bucket of a call: the AST call node,
+// the identity of the values its arguments read (see
+// [OpContext.callArgsKey]), and the callee's function literal and closure
+// environment. The entries within a bucket record the rest of the callee's
+// identity, its type constraints and the arguments bound by partial
+// application, and are matched on it. See [OpContext.funcCallResults].
 type funcCallResultKey struct {
-	call *CallExpr
-	funcEnvKey
+	call   *CallExpr
+	fn     *Function
+	callee funcEnvKey // the closure environment
+	args   callKey
+	caller callerContext
 }
 
 // A funcCallResult memoizes the finalized result of a completed function
 // call together with the identity of the callee that produced it. The callee
 // is matched much as [equalTerminal] compares function values: the function
-// literal, its closure environment (as a [funcEnvKey]), its recorded type
-// constraints, and the arguments bound by partial application.
+// literal and its closure environment, which the bucket's key holds, its
+// recorded type constraints, and the arguments bound by partial
+// application.
 type funcCallResult struct {
-	fn     *Function
-	env    funcEnvKey
 	types  []FuncType
 	args   []funcArg
 	result *Vertex
 }
 
-// matches reports whether a memoized result was produced by the given
-// callee, whose closure environment is identified by env.
-func (r *funcCallResult) matches(x *FuncValue, env funcEnvKey) bool {
-	return r.fn == x.Fn &&
-		r.env == env &&
-		equalFuncTypes(r.types, x.Types) &&
+// matches reports whether a memoized result of the bucket of x was produced
+// by x.
+func (r *funcCallResult) matches(x *FuncValue) bool {
+	return equalFuncTypes(r.types, x.Types) &&
 		equalFuncArgs(r.args, x.args)
 }
 
@@ -2259,8 +2260,8 @@ func (x *FuncValue) call(c *OpContext, call *CallExpr, state Flags) Value {
 	// the call are reported (see [OpContext.atCallSite]).
 	site := c.vertex
 
-	// A call's result is fully determined by its call site, the caller
-	// environment in which its arguments resolve, and the callee. If this
+	// A call's result is fully determined by its call site, the values its
+	// arguments read (see [OpContext.callArgsKey]), and the callee. If this
 	// combination has already produced a finalized, error-free result, reuse
 	// it: a parameter referenced N times, or a call nested as an argument and
 	// re-scheduled once per use of the enclosing parameter, would otherwise
@@ -2270,11 +2271,17 @@ func (x *FuncValue) call(c *OpContext, call *CallExpr, state Flags) Value {
 	// re-entered through recursion — which the structural cycle detector must
 	// observe on the shared anchor — has no entry and is never
 	// short-circuited here.
-	resultKey := funcCallResultKey{call: call, funcEnvKey: callEnv.funcKey(c)}
 	calleeEnv := x.Env.funcKey(c)
+	resultKey := funcCallResultKey{
+		call:   call,
+		fn:     x.Fn,
+		callee: calleeEnv,
+		args:   c.callArgsKey(call, callEnv),
+		caller: makeCallerContext(c.ci),
+	}
 	results := c.funcCallResults[resultKey]
 	for i := range results {
-		if r := &results[i]; r.matches(x, calleeEnv) {
+		if r := &results[i]; r.matches(x) {
 			return r.result
 		}
 	}
@@ -2527,7 +2534,7 @@ func (x *FuncValue) call(c *OpContext, call *CallExpr, state Flags) Value {
 			c.funcCallResults = map[funcCallResultKey][]funcCallResult{}
 		}
 		c.funcCallResults[resultKey] = append(c.funcCallResults[resultKey],
-			funcCallResult{fn: x.Fn, env: calleeEnv, types: x.Types, args: x.args, result: result})
+			funcCallResult{types: x.Types, args: x.args, result: result})
 	}
 
 	return result
@@ -3876,6 +3883,7 @@ func (x *ForClause) yield(s *compState) {
 			IsDynamic: true,
 			anonymous: true,
 			ArcType:   ArcMember,
+			binds:     bindsIteration,
 
 			Arcs: alloc.arcs[:0],
 		}
@@ -3972,7 +3980,7 @@ func (x *LetClause) Source() ast.Node {
 
 func (x *LetClause) yield(s *compState) {
 	c := s.ctx
-	n := &Vertex{Arcs: []*Vertex{
+	n := &Vertex{binds: bindsValue, Arcs: []*Vertex{
 		{
 			Label:     x.Label,
 			IsDynamic: true,
@@ -4117,7 +4125,7 @@ func (x *TryClause) yield(s *compState) {
 
 	// Success - yield with fresh conjuncts (will be re-evaluated).
 	if x.Expr != nil {
-		n := &Vertex{Arcs: []*Vertex{{
+		n := &Vertex{binds: bindsValue, Arcs: []*Vertex{{
 			Label:     x.Label,
 			IsDynamic: true,
 			anonymous: true,
