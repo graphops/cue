@@ -167,6 +167,10 @@ narrowType: {
 	}
 } @test(err, code=eval, path=n.a, contains="changed after evaluation")
 
+// The guard compares the struct n.a, which does not need the value of
+// n.a.size. Where the guard finalizes n.a, "32k" arrives too late; where the
+// second comprehension holds n.a until it is done, it does not, and n.a.size
+// is "32k".
 narrowDefault: {
 	n: a: size: *"4k" | "32k"
 	r: z:       1
@@ -176,7 +180,8 @@ narrowDefault: {
 	for _, _ in r {
 		n: a: size: "32k"
 	}
-} @test(err, code=eval, path=n.a, contains="changed after evaluation")
+	@test(eq, {n: a: size: "32k", r: z: 1})
+}
 
 narrowStructDefault: {
 	n: a: *{x: 1} | {x: 2}
@@ -310,7 +315,9 @@ agreeType: {
 	@test(eq, {n: a: v: 5, r: z: 1})
 }
 
-// The default is the value that is yielded again.
+// The default is the value that is yielded again. Where the second
+// comprehension holds n.a until it is done, as for narrowDefault, the value
+// reaches n.a.size and selects the default.
 agreeDefault: {
 	n: a: size: *"4k" | "32k"
 	r: z:       1
@@ -320,7 +327,7 @@ agreeDefault: {
 	for _, _ in r {
 		n: a: size: "4k"
 	}
-	@test(eq, {n: a: size: *"4k" | "32k", r: z: 1})
+	@test(eq, {n: a: size: "4k", r: z: 1})
 }
 
 // The conjunct is a disjunction that contains the value of the field.
@@ -880,62 +887,72 @@ two: 2
 [eval] conflictList.n.a.1: conflicting values 3 and 2:
     ./in.cue:60:12
     ./in.cue:66:13
-[eval] conflictBound.n.a.v: invalid value 5 (out of bound >10):
+conflictList: invalid left-hand value to '==' (type list): conflictList.n.a.1: conflicting values 3 and 2:
+    ./in.cue:63:6
+[eval] conflictBound: invalid left-hand value to '==' (type struct): conflictBound.n.a.v: invalid value 5 (out of bound >10):
+    ./in.cue:74:6
+conflictBound.n.a.v: invalid value 5 (out of bound >10):
     ./in.cue:77:12
     ./in.cue:71:11
-[eval] conflictRegex.n.a.v: invalid value "x" (out of bound =~"^y"):
+[eval] conflictRegex: invalid left-hand value to '==' (type struct): conflictRegex.n.a.v: invalid value "x" (out of bound =~"^y"):
+    ./in.cue:85:6
+conflictRegex.n.a.v: invalid value "x" (out of bound =~"^y"):
     ./in.cue:88:12
     ./in.cue:82:11
 [eval] conflictClosed.n.a.b: conflicting values 2 and 1:
     ./in.cue:94:17
     ./in.cue:100:12
+conflictClosed: invalid left-hand value to '==' (type struct): conflictClosed.n.a.b: conflicting values 2 and 1:
+    ./in.cue:97:6
 [eval] conflictImported.n.a.v: conflicting values 2 and 1:
     ./dep/dep.cue:3:6
     ./in.cue:105:11
     ./in.cue:111:12
+conflictImported: invalid left-hand value to '==' (type struct): conflictImported.n.a.v: conflicting values 2 and 1:
+    ./in.cue:108:6
 [eval] conflictNested.n.a.b.c: conflicting values 2 and 1:
     ./in.cue:117:14
     ./in.cue:123:29
+conflictNested: invalid left-hand value to '==' (type struct): conflictNested.n.a.b.c: conflicting values 2 and 1:
+    ./in.cue:120:6
 [eval] narrowType.n.a: circular dependency in evaluation: the value changed after evaluation by a later conjunct:
     ./in.cue:152:9
-[eval] narrowDefault.n.a: circular dependency in evaluation: the value changed after evaluation by a later conjunct:
-    ./in.cue:163:9
 [eval] narrowStructDefault.n.a: circular dependency in evaluation: the value changed after evaluation by a later conjunct:
-    ./in.cue:174:9
+    ./in.cue:179:9
 [eval] narrowInt.n.a: circular dependency in evaluation: the value changed after evaluation by a later conjunct:
-    ./in.cue:185:9
+    ./in.cue:190:9
 [eval] narrowOptional.n.a: circular dependency in evaluation: the value changed after evaluation by a later conjunct:
-    ./in.cue:197:9
+    ./in.cue:202:9
 [eval] newField.n.a: adding field extra not allowed as field set was already referenced:
-    ./in.cue:210:9
+    ./in.cue:215:9
 [eval] closedField.n.a.extra: field not allowed:
-    ./in.cue:467:9
+    ./in.cue:474:9
 [incomplete] closedField.n.a: cyclic reference to field extra:
-    ./in.cue:464:6
-    ./in.cue:459:16
-    ./in.cue:461:22
+    ./in.cue:471:6
+    ./in.cue:466:16
+    ./in.cue:468:22
 [eval] validatorOtherArg.n.a: circular dependency in evaluation: the value changed after evaluation by a later conjunct:
-    ./in.cue:650:9
+    ./in.cue:657:9
 [eval] validatorOtherCount.n.a: circular dependency in evaluation: the value changed after evaluation by a later conjunct:
-    ./in.cue:661:9
+    ./in.cue:668:9
 [eval] validatorOtherStructArg.n.a: circular dependency in evaluation: the value changed after evaluation by a later conjunct:
-    ./in.cue:672:9
+    ./in.cue:679:9
 [eval] validatorOtherElements.n.a: circular dependency in evaluation: the value changed after evaluation by a later conjunct:
-    ./in.cue:683:9
+    ./in.cue:690:9
 [eval] validatorOtherBuiltin.n.a: circular dependency in evaluation: the value changed after evaluation by a later conjunct:
-    ./in.cue:694:9
+    ./in.cue:701:9
 [eval] validatorOtherInDisjunct.n.a: circular dependency in evaluation: the value changed after evaluation by a later conjunct:
-    ./in.cue:705:9
+    ./in.cue:712:9
 [eval] validatorNarrowed.n.a: circular dependency in evaluation: the value changed after evaluation by a later conjunct:
-    ./in.cue:717:9
+    ./in.cue:724:9
 [eval] functionTypeNarrowed.n.a: circular dependency in evaluation: the value changed after evaluation by a later conjunct:
-    ./in.cue:782:9
+    ./in.cue:789:9
 [eval] functionTypeOpenClosed.n.a: circular dependency in evaluation: the value changed after evaluation by a later conjunct:
-    ./in.cue:794:9
+    ./in.cue:801:9
 [eval] functionTypeResult.n.a: circular dependency in evaluation: the value changed after evaluation by a later conjunct:
-    ./in.cue:805:9
+    ./in.cue:812:9
 [eval] lateDisjunctField.n.a: circular dependency in evaluation: the value changed after evaluation by a later conjunct:
-    ./in.cue:820:9
+    ./in.cue:827:9
 -- out/eval/stats --
 Leaks:  117
 Freed:  995

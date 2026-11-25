@@ -396,7 +396,7 @@ p02_def_ci_closed_b.d.x.b: field not allowed:
     ./in.cue:22:14
 p03_cycle_self.V.r.v.r: structural cycle:
     ./in.cue:36:15
-p12b_field_alias.S.r: structural cycle:
+p12b_field_alias.S.r: n.r: structural cycle:
     ./in.cue:106:17
 p18_recursion.S.r: structural cycle:
     ./in.cue:141:49
@@ -450,13 +450,13 @@ c11_opened_arg_a.d.x.r.b: field not allowed:
 c11_opened_arg_a.o.x.r.b: field not allowed:
     ./in.cue:293:10
     ./in.cue:293:18
-c24_opened_select_a.#D.x: field not allowed:
+c24_opened_select_a.#D.x: n.b: field not allowed:
     ./in.cue:331:10
     ./in.cue:331:18
-c24_opened_select_a.d.x: field not allowed:
+c24_opened_select_a.d.x: n.b: field not allowed:
     ./in.cue:331:10
     ./in.cue:331:18
-c24_opened_select_a.o.x: field not allowed:
+c24_opened_select_a.o.x: n.b: field not allowed:
     ./in.cue:331:10
     ./in.cue:331:18
 c29_embedcall_a.S.r.b: field not allowed:
@@ -480,16 +480,16 @@ c32_embed_defarg.d.x.b: field not allowed:
 c32_embed_defarg.v.x.b: field not allowed:
     ./in.cue:362:9
     ./in.cue:356:26
-c33_ellipsis_b.#E.x: field not allowed:
+c33_ellipsis_b.#E.x: n.b: field not allowed:
     ./in.cue:370:9
     ./in.cue:370:17
-c33_ellipsis_b.S.x: field not allowed:
+c33_ellipsis_b.S.x: n.b: field not allowed:
     ./in.cue:370:9
     ./in.cue:370:17
-c33_ellipsis_b.e.x: field not allowed:
+c33_ellipsis_b.e.x: n.b: field not allowed:
     ./in.cue:370:9
     ./in.cue:370:17
-c33_ellipsis_b.v.x: field not allowed:
+c33_ellipsis_b.v.x: n.b: field not allowed:
     ./in.cue:370:9
     ./in.cue:370:17
 
@@ -891,7 +891,7 @@ Result:
       // [structural_cycle]
       b: (int){ 1 }
       r: (_|_){
-        // [structural_cycle] p12b_field_alias.S.r: structural cycle:
+        // [structural_cycle] p12b_field_alias.S.r: n.r: structural cycle:
         //     ./in.cue:106:17
       }
     }
@@ -1762,7 +1762,7 @@ Result:
     o: (_|_){
       // [eval]
       x: (_|_){
-        // [eval] c24_opened_select_a.o.x: field not allowed:
+        // [eval] c24_opened_select_a.o.x: n.b: field not allowed:
         //     ./in.cue:331:10
         //     ./in.cue:331:18
       }
@@ -1770,7 +1770,7 @@ Result:
     d: (_|_){
       // [eval]
       x: (_|_){
-        // [eval] c24_opened_select_a.d.x: field not allowed:
+        // [eval] c24_opened_select_a.d.x: n.b: field not allowed:
         //     ./in.cue:331:10
         //     ./in.cue:331:18
       }
@@ -1778,7 +1778,7 @@ Result:
     #D: (_|_){
       // [eval]
       x: (_|_){
-        // [eval] c24_opened_select_a.#D.x: field not allowed:
+        // [eval] c24_opened_select_a.#D.x: n.b: field not allowed:
         //     ./in.cue:331:10
         //     ./in.cue:331:18
       }
@@ -1930,7 +1930,7 @@ Result:
       // [eval]
       z: (int){ 1 }
       x: (_|_){
-        // [eval] c33_ellipsis_b.e.x: field not allowed:
+        // [eval] c33_ellipsis_b.e.x: n.b: field not allowed:
         //     ./in.cue:370:9
         //     ./in.cue:370:17
       }
@@ -1938,7 +1938,7 @@ Result:
     #E: (_|_){
       // [eval]
       x: (_|_){
-        // [eval] c33_ellipsis_b.#E.x: field not allowed:
+        // [eval] c33_ellipsis_b.#E.x: n.b: field not allowed:
         //     ./in.cue:370:9
         //     ./in.cue:370:17
       }
@@ -1947,7 +1947,7 @@ Result:
       // [eval]
       y: (int){ 1 }
       x: (_|_){
-        // [eval] c33_ellipsis_b.v.x: field not allowed:
+        // [eval] c33_ellipsis_b.v.x: n.b: field not allowed:
         //     ./in.cue:370:9
         //     ./in.cue:370:17
       }
@@ -1955,7 +1955,7 @@ Result:
     S: (_|_){
       // [eval]
       x: (_|_){
-        // [eval] c33_ellipsis_b.S.x: field not allowed:
+        // [eval] c33_ellipsis_b.S.x: n.b: field not allowed:
         //     ./in.cue:370:9
         //     ./in.cue:370:17
       }

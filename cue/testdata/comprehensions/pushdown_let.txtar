@@ -129,7 +129,7 @@ elseClause: {
 // An embedded let can declare fields that are not known in advance, so the
 // comprehension is still not pushed down, and the conjunct is still
 // dropped, as it is with a dynamic field, a pattern constraint or ... in the
-// body instead.
+// body instead. The check of late conjuncts reports the dropped conjunct.
 letEmbed: {
 	x: {
 		on: *false | bool
@@ -142,7 +142,7 @@ letEmbed: {
 	if x.n == 1 {
 		x: on: true
 	}
-	@test(eq, {x: {on: *false | bool, n: 1}}, incorrect)
+	@test(err, code=eval, path=x.on, contains="changed after evaluation")
 	@test(eq:todo, {x: {on: true, out: 1, n: 1}})
 }
 
@@ -301,6 +301,8 @@ issue4448: {
 	}
 }
 -- out/errors.txt --
+[eval] letEmbed.x.on: circular dependency in evaluation: the value changed after evaluation by a later conjunct:
+    ./in.cue:133:10
 [incomplete] issue4448.#Mixin.#cfg.entries.w._lines.0: invalid interpolation: non-concrete value _ (type _):
     ./issue4448.cue:28:14
 [incomplete] issue4448.#Mixin.#cfg.entries.w._lines.0: invalid interpolation: non-concrete value _ (type _):
@@ -308,14 +310,14 @@ issue4448: {
 [incomplete] issue4543Comment.#Merge.out: invalid non-ground value string (must be concrete string):
     ./issue4543.cue:29:8
 -- out/eval/stats --
-Leaks:  22
-Freed:  214
-Reused: 178
-Allocs: 58
+Leaks:  39
+Freed:  204
+Reused: 168
+Allocs: 75
 Retain: 0
 
-Unifications: 172
-Conjuncts:    323
-Disjuncts:    38
+Unifications: 175
+Conjuncts:    331
+Disjuncts:    42
 
 NumCloseIDs: 38

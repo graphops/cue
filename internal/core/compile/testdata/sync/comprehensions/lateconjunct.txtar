@@ -166,6 +166,10 @@ narrowType: {
 	}
 }
 
+// The guard compares the struct n.a, which does not need the value of
+// n.a.size. Where the guard finalizes n.a, "32k" arrives too late; where the
+// second comprehension holds n.a until it is done, it does not, and n.a.size
+// is "32k".
 narrowDefault: {
 	n: a: size: *"4k" | "32k"
 	r: z:       1
@@ -302,7 +306,9 @@ agreeType: {
 	}
 }
 
-// The default is the value that is yielded again.
+// The default is the value that is yielded again. Where the second
+// comprehension holds n.a until it is done, as for narrowDefault, the value
+// reaches n.a.size and selects the default.
 agreeDefault: {
 	n: a: size: *"4k" | "32k"
 	r: z:       1

@@ -255,12 +255,10 @@ arcTypes: {
 [eval] fields.bodyForm.x.a: invalid value 5 (out of bound <=2):
     ./in.cue:28:14
     ./in.cue:27:9
-[incomplete] fields.guardAfterTry.x: cyclic reference to field b:
-    ./in.cue:57:17
-    ./in.cue:56:3
-[incomplete] fields.guardWithoutTry.x: cyclic reference to field b:
-    ./in.cue:61:6
-    ./in.cue:60:3
+[eval] fields.guardAfterTry.x: adding field b not allowed as field set was already referenced:
+    ./in.cue:57:30
+[eval] fields.guardWithoutTry.x: adding field b not allowed as field set was already referenced:
+    ./in.cue:61:19
 [cycle] fields.guardInBody: cyclic reference to field b:
     ./in.cue:71:9
 [eval] disjunctions.conflict.x.r: 2 errors in empty disjunction:

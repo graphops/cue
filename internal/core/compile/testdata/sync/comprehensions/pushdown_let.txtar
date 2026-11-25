@@ -122,7 +122,7 @@ elseClause: {
 // An embedded let can declare fields that are not known in advance, so the
 // comprehension is still not pushed down, and the conjunct is still
 // dropped, as it is with a dynamic field, a pattern constraint or ... in the
-// body instead.
+// body instead. The check of late conjuncts reports the dropped conjunct.
 letEmbed: {
 	x: {
 		on: *false | bool
