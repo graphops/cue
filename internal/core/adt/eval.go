@@ -376,6 +376,7 @@ type nodeContextState struct {
 	hasTop               bool
 	hasAnyCyclicConjunct bool // has conjunct with structural cycle
 	hasAncestorCycle     bool // has conjunct with structural cycle to an ancestor
+	hasParentCycle       bool // the ancestor is a parent; see [nodeContext.detectCycle]
 	hasNonCycle          bool // has material conjuncts without structural cycle
 	hasNonCyclic         bool // has non-cyclic conjuncts at start of field processing
 

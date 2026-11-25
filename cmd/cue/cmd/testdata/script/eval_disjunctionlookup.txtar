@@ -1,0 +1,128 @@
+# A field with a disjunction that is looked up from within a value it
+# unifies, as out in out: x & #A when x refers to out, must still have its
+# disjunction evaluated. Structure sharing must not change that, so test
+# without it as well: TestEvalV3, which runs cue/testdata/cycle, only runs
+# with sharing (see https://cuelang.org/issue/4527).
+# https://cuelang.org/issue/XXXX
+
+exec cue export in.cue
+cmp stdout want
+! exec cue export conflict.cue
+cmp stderr conflict.stderr
+! exec cue export none.cue
+cmp stderr none.stderr
+
+env CUE_DEBUG=sharing=0
+exec cue export in.cue
+cmp stdout want
+! exec cue export conflict.cue
+cmp stderr conflict.stderr
+! exec cue export none.cue
+cmp stderr none.stderr
+
+-- in.cue --
+#A: {...} | int
+#L: [...{a: int}] | int
+
+// Structs and lists of structs, unified with a disjunction.
+structs: x: {a: 1, b: structs.out.a}
+structs: out: structs.x & #A
+lists: x: [{a: 1}, {a: lists.out[0].a}]
+lists: out: lists.x & #L
+
+scalars: x: [1, scalars.out[0]]
+scalars: out: scalars.x & ([...int] | string)
+
+// The default applies.
+defaults: x: {a: 1, b: defaults.out.a}
+defaults: out: defaults.x & (*{c: 1} | {d: 1})
+
+// The value read is a disjunction, of which #D2 allows the first disjunct.
+read: _V: (#D2 & {a: 1, c: read.n.a}) | {a: 2, b: 3}
+read: n: read._V & #D2
+#D2: {a: int, c?: int}
+-- conflict.cue --
+x: {a: 1, b: out.a}
+out: x & ({a: 2} | int)
+-- none.cue --
+#D: {a: int}
+V: (#D & {a: 1, c: n.a}) | {a: 2, b: 3}
+n: V & #D
+-- want --
+{
+    "structs": {
+        "x": {
+            "a": 1,
+            "b": 1
+        },
+        "out": {
+            "a": 1,
+            "b": 1
+        }
+    },
+    "lists": {
+        "x": [
+            {
+                "a": 1
+            },
+            {
+                "a": 1
+            }
+        ],
+        "out": [
+            {
+                "a": 1
+            },
+            {
+                "a": 1
+            }
+        ]
+    },
+    "scalars": {
+        "x": [
+            1,
+            1
+        ],
+        "out": [
+            1,
+            1
+        ]
+    },
+    "defaults": {
+        "x": {
+            "a": 1,
+            "b": 1
+        },
+        "out": {
+            "a": 1,
+            "b": 1,
+            "c": 1
+        }
+    },
+    "read": {
+        "n": {
+            "a": 1,
+            "c": 1
+        }
+    }
+}
+-- conflict.stderr --
+out: conflicting values {a:1,b:out.a} and int (mismatched types struct and int):
+    ./conflict.cue:1:4
+    ./conflict.cue:2:6
+    ./conflict.cue:2:20
+out.a: conflicting values 2 and 1:
+    ./conflict.cue:1:8
+    ./conflict.cue:2:6
+    ./conflict.cue:2:15
+out: 2 errors in empty disjunction::
+    ./conflict.cue:1:14
+-- none.stderr --
+n: 2 errors in empty disjunction::
+    ./none.cue:2:20
+n.b: field not allowed:
+    ./none.cue:2:20
+    ./none.cue:2:35
+n.c: field not allowed:
+    ./none.cue:2:20
+    ./none.cue:2:17

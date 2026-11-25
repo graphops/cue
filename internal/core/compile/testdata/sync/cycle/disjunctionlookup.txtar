@@ -1,0 +1,281 @@
+# Tests a field with a disjunction that is looked up from within a value it
+# unifies, as out in out: x & (A | B) when x refers to out. The lookup
+# finds x still being evaluated, which marks the conjunct x of out as a
+# cycle to an ancestor. That is no structural cycle, as out has other
+# conjuncts, so the disjunction of out must still be evaluated, rather than
+# be skipped as for a field that is part of a structural cycle.
+#
+# cmd/cue/cmd/testdata/script/eval_disjunctionlookup.txtar tests the same
+# with structure sharing disabled.
+# https://cuelang.org/issue/XXXX
+-- in.cue --
+// The disjunct that matches allows the fields of x.
+structs: {
+	open: {
+		#A: {...} | int
+		x: {a: 1, b: out.a}
+		out: x & #A
+	}
+	closed: {
+		#A: {a: int, b: int} | int
+		x: {a: 1, b: out.a}
+		out: x & #A
+	}
+	// A field that no disjunct allows.
+	notAllowed: {
+		#A: {a: int, b: int} | int
+		x: {a: 1, b: out.a, c: 3}
+		out: x & #A
+	}
+}
+
+lists: {
+	open: {
+		#A: [...] | int
+		x: [1, out[0]]
+		out: x & #A
+	}
+	closed: {
+		#A: [int, int] | int
+		x: [1, out[0]]
+		out: x & #A
+	}
+	// The elements are structs.
+	structElems: {
+		#A: [...{a: int}] | int
+		x: [{a: 1}, {a: out[0].a}]
+		out: x & #A
+	}
+}
+
+// The disjuncts must still be checked against x.
+conflicts: {
+	scalarElems: {
+		x: [1, out[0]]
+		out: x & ([...string] | int)
+	}
+	structField: {
+		x: {a: 1, b: out.a}
+		out: x & ({a: 2} | int)
+	}
+}
+
+// The disjunction keeps its default.
+defaults: {
+	x: {a: 1, b: out.a}
+	out: x & (*{c: 1} | {d: 1})
+}
+
+// The value read is itself a disjunction, of which only the first disjunct
+// is allowed by #D.
+disjunctionRead: {
+	// The reference to n is in a conjunct of V.
+	conjunct: {
+		#D: {a: int, c?: _}
+		V: (#D & {a: 1}) | {a: 2, b: 3}
+		V: c: n.a
+		n: V & #D
+	}
+	// The reference to n is in the first disjunct.
+	disjunct: {
+		#D: {a: int, c?: int}
+		V: (#D & {a: 1, c: n.a}) | {a: 2, b: 3}
+		n: V & #D
+	}
+	// #D allows neither disjunct of V: the one referring to n adds c, so
+	// only {a: 2, b: 3} is left of V, and #D does not allow b.
+	none: {
+		#D: {a: int}
+		V: (#D & {a: 1, c: n.a}) | {a: 2, b: 3}
+		n: V & #D
+	}
+	// The same, with the disjuncts swapped.
+	noneSwapped: {
+		#D: {a: int}
+		V: {a: 2, b: 3} | (#D & {a: 1} & {x: n.a})
+		n: V & #D
+	}
+}
+
+// A field that x embeds whole is still a structural cycle.
+structuralCycle: {
+	x: {a: 1, b: out}
+	out: x & ({...} | int)
+}
+-- out/compile --
+--- in.cue
+{
+  structs: {
+    open: {
+      #A: ({
+        ...
+      }|int)
+      x: {
+        a: 1
+        b: 〈1;out〉.a
+      }
+      out: (〈0;x〉 & 〈0;#A〉)
+    }
+    closed: {
+      #A: ({
+        a: int
+        b: int
+      }|int)
+      x: {
+        a: 1
+        b: 〈1;out〉.a
+      }
+      out: (〈0;x〉 & 〈0;#A〉)
+    }
+    notAllowed: {
+      #A: ({
+        a: int
+        b: int
+      }|int)
+      x: {
+        a: 1
+        b: 〈1;out〉.a
+        c: 3
+      }
+      out: (〈0;x〉 & 〈0;#A〉)
+    }
+  }
+  lists: {
+    open: {
+      #A: ([
+        ...,
+      ]|int)
+      x: [
+        1,
+        〈1;out〉[0],
+      ]
+      out: (〈0;x〉 & 〈0;#A〉)
+    }
+    closed: {
+      #A: ([
+        int,
+        int,
+      ]|int)
+      x: [
+        1,
+        〈1;out〉[0],
+      ]
+      out: (〈0;x〉 & 〈0;#A〉)
+    }
+    structElems: {
+      #A: ([
+        ...{
+          a: int
+        },
+      ]|int)
+      x: [
+        {
+          a: 1
+        },
+        {
+          a: 〈2;out〉[0].a
+        },
+      ]
+      out: (〈0;x〉 & 〈0;#A〉)
+    }
+  }
+  conflicts: {
+    scalarElems: {
+      x: [
+        1,
+        〈1;out〉[0],
+      ]
+      out: (〈0;x〉 & ([
+        ...string,
+      ]|int))
+    }
+    structField: {
+      x: {
+        a: 1
+        b: 〈1;out〉.a
+      }
+      out: (〈0;x〉 & ({
+        a: 2
+      }|int))
+    }
+  }
+  defaults: {
+    x: {
+      a: 1
+      b: 〈1;out〉.a
+    }
+    out: (〈0;x〉 & (*{
+      c: 1
+    }|{
+      d: 1
+    }))
+  }
+  disjunctionRead: {
+    conjunct: {
+      #D: {
+        a: int
+        c?: _
+      }
+      V: ((〈0;#D〉 & {
+        a: 1
+      })|{
+        a: 2
+        b: 3
+      })
+      V: {
+        c: 〈1;n〉.a
+      }
+      n: (〈0;V〉 & 〈0;#D〉)
+    }
+    disjunct: {
+      #D: {
+        a: int
+        c?: int
+      }
+      V: ((〈0;#D〉 & {
+        a: 1
+        c: 〈1;n〉.a
+      })|{
+        a: 2
+        b: 3
+      })
+      n: (〈0;V〉 & 〈0;#D〉)
+    }
+    none: {
+      #D: {
+        a: int
+      }
+      V: ((〈0;#D〉 & {
+        a: 1
+        c: 〈1;n〉.a
+      })|{
+        a: 2
+        b: 3
+      })
+      n: (〈0;V〉 & 〈0;#D〉)
+    }
+    noneSwapped: {
+      #D: {
+        a: int
+      }
+      V: ({
+        a: 2
+        b: 3
+      }|((〈0;#D〉 & {
+        a: 1
+      }) & {
+        x: 〈1;n〉.a
+      }))
+      n: (〈0;V〉 & 〈0;#D〉)
+    }
+  }
+  structuralCycle: {
+    x: {
+      a: 1
+      b: 〈1;out〉
+    }
+    out: (〈0;x〉 & ({
+      ...
+    }|int))
+  }
+}
