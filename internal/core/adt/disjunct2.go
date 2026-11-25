@@ -458,6 +458,7 @@ func (n *nodeContext) processDisjunctions() *Bottom {
 		n.signal(completed)
 	}
 
+	n.disjunctionsDone = true
 	return nil
 }
 

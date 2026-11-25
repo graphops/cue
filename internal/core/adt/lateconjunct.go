@@ -45,26 +45,45 @@ import "slices"
 // conjunct together with those of the arc gives, which is a conflict, a field
 // that is not allowed in a closed struct, or that the value changed.
 //
+// A conjunct that reaches an arc after its disjunctions were processed is lost
+// in the same way, although the arc is not finalized: the arc takes the
+// conjunct, but its value is that of its disjuncts, which were computed
+// without it. With
+//
+//	n: a: *{x: 1} | {x: 2}
+//	r: z: 1
+//	for _, _ in r {if n.a == 99 {r: x: 2}}
+//	for _, _ in r {n: a: {x: 2}}
+//
+// the guard resolves the disjunction of n.a while the second comprehension
+// still holds n.a, and n.a kept {x: 1}. Such a conjunct is checked as one that
+// was dropped.
+//
 // The dropped conjuncts are collected by the node that inserted them, for the
 // check once all its tasks are done. This takes the check out of the middle of
 // the evaluation of the task, where evaluating the conjunct could finalize
 // values that are not ready, and lets conjuncts of an arc be checked together.
 
 // lateConjuncts holds the conjuncts dropped for an arc that was already
-// finalized.
+// finalized, or added to one whose disjunctions were already processed.
 type lateConjuncts struct {
 	arc *Vertex
 	cs  []Conjunct
 }
 
 // addLateConjunct records conjunct c, which was dropped because arc, an arc of
-// n, was already finalized.
-func (n *nodeContext) addLateConjunct(arc *Vertex, c Conjunct) {
-	if arc.IsErr() {
-		return // the arc reports an error already.
-	}
-	if p, _ := findConjunct(n.ctx, arc.Conjuncts, c); p >= 0 {
-		return // c was inserted before.
+// n, was already finalized, or, if added, was added to arc after its
+// disjunctions were processed.
+func (n *nodeContext) addLateConjunct(arc *Vertex, c Conjunct, added bool) {
+	// An arc that is still evaluated may hold a cycle error for the time
+	// being; checkLateConjunct skips an arc that ends with an error.
+	if !added {
+		if arc.IsErr() {
+			return // the arc reports an error already.
+		}
+		if p, _ := findConjunct(n.ctx, arc.Conjuncts, c); p >= 0 {
+			return // c was inserted before.
+		}
 	}
 	i, ok := n.lateIndex[arc]
 	if !ok {
@@ -100,10 +119,13 @@ func (n *nodeContext) checkLateConjuncts() {
 func (n *nodeContext) checkLateConjunct(l lateConjuncts) {
 	ctx := n.ctx
 	arc := l.arc
+	if arc.IsErr() {
+		return // the arc reports an error already.
+	}
 
 	// A conjunct that the arc is an instance of adds nothing to it, and does
 	// not change the result of unifying it with others.
-	cs := slices.DeleteFunc(l.cs, func(c Conjunct) bool {
+	cs := slices.DeleteFunc(slices.Clone(l.cs), func(c Conjunct) bool {
 		if x, ok := c.Elem().(Value); ok && arc.isInstanceOfValue(ctx, x) {
 			return true
 		}
@@ -136,8 +158,9 @@ func (n *nodeContext) checkLateConjunct(l lateConjuncts) {
 	}
 
 	// Compare with the result without the dropped conjuncts, so as not to
-	// report a difference that has another cause.
-	w0 := arc.reevaluate(ctx, nil)
+	// report a difference that has another cause. Those the arc took after
+	// its disjunctions were processed are among its conjuncts.
+	w0 := arc.reevaluateWithout(ctx, l.cs)
 	if w0.Bottom() != nil || b == nil && Equal(ctx, w0, w, evaluated) {
 		return
 	}
@@ -197,6 +220,21 @@ func (v *Vertex) reevaluate(ctx *OpContext, cs []Conjunct) *Vertex {
 	}
 	for _, c := range cs {
 		w.AddConjunct(c)
+	}
+	w.Finalize(ctx)
+	return w
+}
+
+// reevaluateWithout returns the vertex that is the arc v evaluated again
+// without the conjuncts of v that are in late, positioned as v is.
+func (v *Vertex) reevaluateWithout(ctx *OpContext, late []Conjunct) *Vertex {
+	w := &Vertex{Parent: v.Parent, Label: v.Label}
+	for _, c := range v.Conjuncts {
+		if !slices.ContainsFunc(late, func(d Conjunct) bool {
+			return d.x == c.x && d.Env == c.Env
+		}) {
+			w.AddConjunct(c)
+		}
 	}
 	w.Finalize(ctx)
 	return w

@@ -819,6 +819,47 @@ functionTypeResult: {
 		n: a: {f: func(x: int) -> 1}
 	}
 } @test(err, code=eval, path=n.a, contains="changed after evaluation")
+
+// A conjunct reaches a struct disjunction after the guard resolved it, while
+// the comprehension holds the field: the field takes it, but its value is that
+// of the disjuncts, computed without it. On a base where the guard finalizes
+// the field, the conjunct is dropped instead; either way it is checked.
+lateDisjunctField: {
+	n: a: *{x: 1} | {x: 2}
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {y: 2}
+	}
+} @test(err, code=eval, path=n.a, contains="changed after evaluation")
+
+// A conjunct that agrees with the default of the resolved disjunction, and one
+// that admits it.
+lateDisjunctAgree: {
+	n: a: *{x: 1} | {x: 2}
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {x: 1}
+	}
+	@test(eq, {n: a: *{x: 1} | {x: 2}, r: z: 1})
+}
+
+lateDisjunctType: {
+	n: a: *{x: 1} | {x: 2}
+	r: z: 1
+	for _, _ in r {
+		if n.a == 99 {r: x: 2}
+	}
+	for _, _ in r {
+		n: a: {x: int}
+	}
+	@test(eq, {n: a: *{x: 1} | {x: 2}, r: z: 1})
+}
 -- dep/dep.cue --
 package dep
 
@@ -893,15 +934,17 @@ two: 2
     ./in.cue:794:9
 [eval] functionTypeResult.n.a: circular dependency in evaluation: the value changed after evaluation by a later conjunct:
     ./in.cue:805:9
+[eval] lateDisjunctField.n.a: circular dependency in evaluation: the value changed after evaluation by a later conjunct:
+    ./in.cue:820:9
 -- out/eval/stats --
-Leaks:  96
-Freed:  925
-Reused: 850
-Allocs: 171
+Leaks:  117
+Freed:  995
+Reused: 912
+Allocs: 200
 Retain: 0
 
-Unifications: 913
-Conjuncts:    1255
-Disjuncts:    48
+Unifications: 978
+Conjuncts:    1356
+Disjuncts:    62
 
 NumCloseIDs: 25
