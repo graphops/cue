@@ -1,0 +1,99 @@
+# A call result is scheduled again wherever it is used, as it is not
+# structure shared, and each use shares the call's activation. The parameter
+# constraints are added to the activation only once: a finalized argument
+# would otherwise get another copy of them for every use, which every later
+# copy of the argument replays. The number of conjuncts below grows with the
+# number of uses without that.
+#inlinetest:exclude skip — performance regression guarded by out/eval/stats
+-- in.cue --
+@experiment(functions)
+
+Inner: func(n: int) -> {...}: {a: n, b: n + 1, c: [n, n]}
+L0: func(n: int) -> {...}: {x: Inner(n), y: Inner(n + 1)}
+L1: func(n: int) -> {...}: {m: L0(n), c1: m, c2: m}
+L2: func(n: int) -> {...}: {m: L1(n), c1: m, c2: m}
+L3: func(n: int) -> {...}: {m: L2(n), c1: m, c2: m}
+
+r: L3(1)
+-- out/eval/stats --
+Leaks:  27
+Freed:  2598
+Reused: 2563
+Allocs: 62
+Retain: 0
+
+Unifications: 2625
+Conjuncts:    10869
+Disjuncts:    0
+
+NumCloseIDs: 3831
+-- out/evalalpha --
+(struct){
+  Inner: (func){ func(n: int) -> {
+      ...
+    }: {
+      a: 〈1;n〉
+      b: (〈1;n〉 + 1)
+      c: [
+        〈2;n〉,
+        〈2;n〉,
+      ]
+    } }
+  L0: (func){ func(n: int) -> {
+      ...
+    }: {
+      x: 〈2;Inner〉(〈1;n〉)
+      y: 〈2;Inner〉((〈1;n〉 + 1))
+    } }
+  L1: (func){ func(n: int) -> {
+      ...
+    }: {
+      m: 〈2;L0〉(〈1;n〉)
+      c1: 〈0;m〉
+      c2: 〈0;m〉
+    } }
+  L2: (func){ func(n: int) -> {
+      ...
+    }: {
+      m: 〈2;L1〉(〈1;n〉)
+      c1: 〈0;m〉
+      c2: 〈0;m〉
+    } }
+  L3: (func){ func(n: int) -> {
+      ...
+    }: {
+      m: 〈2;L2〉(〈1;n〉)
+      c1: 〈0;m〉
+      c2: 〈0;m〉
+    } }
+  r: (struct){
+    m: (struct){
+      m: (struct){
+        m: (struct){
+          x: (struct){
+            a: (int){ 1 }
+            b: (int){ 2 }
+            c: (#list){
+              0: (int){ 1 }
+              1: (int){ 1 }
+            }
+          }
+          y: (struct){
+            a: (int){ 2 }
+            b: (int){ 3 }
+            c: (#list){
+              0: (int){ 2 }
+              1: (int){ 2 }
+            }
+          }
+        }
+        c1: ~(r.m.m.m)
+        c2: ~(r.m.m.m)
+      }
+      c1: ~(r.m.m)
+      c2: ~(r.m.m)
+    }
+    c1: ~(r.m)
+    c2: ~(r.m)
+  }
+}

@@ -1970,6 +1970,13 @@ func (x *FuncValue) Kind() Kind { return FuncKind }
 // created with the caller's CloseInfo and never inherit the anchor's cycle
 // references: an argument that calls the same function (twice(twice(2))) is
 // nesting, not recursion.
+//
+// A call result is not structure shared, so it is scheduled again wherever
+// it is used, and every use shares the call's activation. The constraints
+// and defaults are added to an activation arc only while it is not
+// finalized: a finalized arc holds those of the first scheduling and its
+// value no longer changes, so another copy of them would only be replayed by
+// every later copy of the arc.
 func (n *nodeContext) scheduleFuncCall(ref *FuncCallRef, env *Environment, ci CloseInfo) {
 	fn := ref.fn
 	if act := env.Vertex; act != nil {
@@ -1990,7 +1997,9 @@ func (n *nodeContext) scheduleFuncCall(ref *FuncCallRef, env *Environment, ci Cl
 			for k < len(act.Arcs) && act.Arcs[k].Label != local {
 				k++
 			}
-			if k < len(act.Arcs) {
+			if k < len(act.Arcs) && act.Arcs[k].status != finalized {
+				// A finalized arc already holds the constraints of an
+				// earlier use of the call; see above.
 				a := act.Arcs[k]
 				// A parameter the call left unbound takes its declared
 				// default as the argument. Like the constraint, the default
@@ -2044,7 +2053,7 @@ func (n *nodeContext) scheduleFuncCall(ref *FuncCallRef, env *Environment, ci Cl
 					// synthetic activation arc; see [anonParamLabel].
 					local = anonParamLabel(n.ctx, vi)
 				}
-				if a := argArcs[local]; a != nil {
+				if a := argArcs[local]; a != nil && a.status != finalized {
 					// A default declared by the type carries over to an
 					// unbound parameter; when the value declares one too,
 					// the two unify in the arc.
