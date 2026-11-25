@@ -301,6 +301,11 @@ type Vertex struct {
 	// ChildErrors is the collection of all errors of children.
 	ChildErrors *Bottom
 
+	// appliedDefs lists the definitions whose conjuncts were scheduled
+	// directly into this vertex, and whether each closed it. See
+	// [nodeContext.keepSharing].
+	appliedDefs *appliedDef
+
 	// The parent of nodes can be followed to determine the path within the
 	// configuration of this node.
 	// Value  Value
@@ -635,7 +640,7 @@ const (
 func (c *OpContext) Wrap(v *Vertex, id CloseInfo) *Vertex {
 	w := c.newInlineVertex(nil, nil, v.Conjuncts...)
 	n := w.getState(c)
-	n.share(makeAnonymousConjunct(nil, v, nil), v, id)
+	n.share(makeAnonymousConjunct(nil, v, nil), v, id, nil)
 	return w
 }
 

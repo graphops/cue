@@ -1,0 +1,1278 @@
+# A field that structure shares a vertex keeps sharing it when it is also
+# unified with a definition that the vertex already applied, in either
+# order: unifying the definition again adds nothing. Sharing must not change
+# any value, closedness or error: each result here is the one given with
+# CUE_DEBUG=sharing=0, except for the positions of some errors, as the
+# comments say. The shareID assertions check that the field keeps sharing.
+# https://cuelang.org/issue/XXXX
+-- in.cue --
+// The definition arrives after the value, or before it.
+order: {
+	#D: {a: int}
+	s: #D & {a: 1}
+	after:  s & #D
+	before: #D & s
+}
+
+// Closedness still rejects fields that #D does not allow, in either order.
+closed: {
+	#D: {a: int}
+	#O: {a: int, ...}
+	s: #D & {a: 1}
+	o: #O & {a: 1}
+	after:  s & #D & {b: 2}
+	before: #D & s & {b: 2}
+	open:   o & #O & {b: 2}
+}
+
+// The value is embedded in an open struct.
+openStruct: {
+	#D: {a: int}
+	s: #D & {a: 1}
+	n: {s...} & #D
+}
+
+// A definition that the shared value did not apply is unified as usual.
+otherDef: {
+	#D: {a: int}
+	#E: {a: <10}
+	s:  #D & {a: 1}
+	ok: s & #E
+	err: (#D & {a: 20}) & #E
+}
+
+// A value that applied no definition is closed by it.
+plain: {
+	#D: {a: int}
+	v:   {a: 1}
+	err: v & #D & {b: 2}
+}
+
+// Defaults are kept.
+defaults: {
+	#F: {a: *1 | int}
+	f: #F
+	n: f & #F
+}
+
+// The defaults of a value that overrides some of them.
+overridden: {
+	#F: {a: *1 | int, b: *"x" | string}
+	s: #F & {b: "y"}
+	n: s & #F
+	m: #F & s
+}
+
+// A schema brings the definition in through a spread, so that a field
+// checked in one value is passed to another that declares it again.
+schemaSpread: {
+	#D: {a: int}
+	#K: {ctx!: #D}
+	B: {#K..., x?: _}
+	parent: B & {ctx: {a: 1}}
+	child:  B & {ctx: parent.ctx}
+	err:    B & {ctx: parent.ctx} & {ctx: b: 2}
+}
+
+// The same, with the schema embedded, which closes B, so that x is not
+// allowed.
+schemaEmbed: {
+	#D: {a: int}
+	#K: {ctx!: #D}
+	B: {#K, x?: _}
+	parent: B & {ctx: {a: 1}}
+	child:  B & {ctx: parent.ctx}
+	err:    B & {ctx: parent.ctx} & {ctx: b: 2}
+}
+
+// A chain of such values, each checked against the schema again.
+schemaChain: {
+	#D: {a: int}
+	#K: {ctx!: #D}
+	B: {#K..., x?: _}
+	l0: B & {ctx: {a: 1}}
+	l1: B & {ctx: l0.ctx}
+	l2: B & {ctx: l1.ctx}
+	l3: B & {ctx: l2.ctx}
+}
+
+// A chain of values, each unified with the definition first.
+definitionChain: {
+	#D: {a: int}
+	l0: #D & {a: 1}
+	l1: #D & l0
+	l2: #D & l1
+	l3: #D & l2
+}
+
+// The shared value applied #D through a field that holds it.
+viaField: {
+	#D: {a: int}
+	x: #D
+	s: x & {a: 1}
+	n: s & #D
+	err: n & {b: 1}
+}
+
+// The shared value is itself a field that shares the value applying #D.
+viaShare: {
+	#D: {a: int}
+	t: #D & {a: 1}
+	s: t
+	n: s & #D
+	err: n & {b: 1}
+}
+
+// The shared value is a field of a definition.
+inDefinition: {
+	#D: {a: int}
+	#P: {v: #D & {a: 1}}
+	n:   #P.v & #D
+	nb:  n & {b: 1}
+	o:   #D & #P.v
+	ob:  o & {b: 1}
+}
+
+// A pattern constraint applies #D to a value that applied it already.
+pattern: {
+	#D: {a: int}
+	s: #D & {a: 1}
+	m: [string]: #D
+	m: k: s
+	err: m.k & {b: 1}
+}
+
+// Two definitions. When both arrive before the value, the field stops
+// sharing at the second, which the first does not hold.
+twoDefs: {
+	#D: {a: int, b?: int}
+	#E: {a: int, c?: int}
+	s: #D & #E & {a: 1}
+	n1: #D & #E & s
+	n2: s & #D & #E
+	n3: #E & s & #D
+	e1: n1 & {b: 1}
+	e2: n2 & {c: 1}
+	e3: n3 & {b: 1}
+}
+
+// The definition is a disjunction.
+disjunctiveDef: {
+	#D: *{a: 1} | {a: int}
+	s1: #D & {a: 2}
+	s2: #D & {}
+	n1: s1 & #D
+	n2: s2 & #D
+	n3: #D & s2
+	d2: n2 & {}
+	e1: n1 & {b: 1}
+	#U: {a: int} | {b: int}
+	u:  #U & {a: 1}
+	nu: u & #U
+	eu: nu & {b: 1}
+}
+
+// The shared value is a disjunction with a default.
+disjunctionDefault: {
+	#D: {a: int}
+	V: *(#D & {a: 1}) | {a: 2}
+	n:  V & #D
+	nb: n & {a: 2, b: 1}
+	nd: n & {}
+}
+
+// The same, with the disjunction declared after the field.
+disjunctionForward: {
+	#D: {a: int}
+	n:  V & #D
+	nb: n & {a: 2, b: 1}
+	V: *(#D & {a: 1}) | {a: 2}
+}
+
+// The shared value is a disjunction that is evaluated while the field is:
+// the disjunct in progress is not its value, so the field does not share it.
+// n must not accept b, which #D does not allow.
+//
+// In these four cases, the disjunction of n is skipped, as V refers to n:
+// only the kinds of its disjuncts apply. The results are wrong, and are
+// recorded as incorrect, until #YYYY (disjunct-cycle-skip) is fixed. #D
+// allows only the first disjunct of V, so n is {a: 1, c: 1} in the first
+// two cases, and an empty disjunction in the last two, where #D does not
+// allow that disjunct either.
+disjunctInProgress: {
+	#D: {a: int, c?: _}
+	V: (#D & {a: 1}) | {a: 2, b: 3}
+	V: c: n.a
+	n: V & #D
+}
+
+// The same, with the reference to n in the first disjunct.
+disjunctInProgress2: {
+	#D: {a: int, c?: int}
+	V: (#D & {a: 1, c: n.a}) | {a: 2, b: 3}
+	n: V & #D
+}
+
+// The same, with the reference to n in a disjunct that #D does not allow.
+disjunctInProgress3: {
+	#D: {a: int}
+	V: (#D & {a: 1, c: n.a}) | {a: 2, b: 3}
+	n: V & #D
+}
+
+// The same, with the disjuncts swapped.
+disjunctInProgress4: {
+	#D: {a: int}
+	V: {a: 2, b: 3} | (#D & {a: 1} & {x: n.a})
+	n: V & #D
+}
+
+// The definition refers back to the field.
+cycle: {
+	#D: {a: int, x?: n}
+	V: #D & {a: 1, x: {}}
+	n: V & #D
+}
+
+// A definition that computes a field from another.
+computed: {
+	#D: {a: int, b: a + 1}
+	s: #D & {a: 1}
+	n: s & #D
+	m: #D & n
+	r: #D & {a: r2.a}
+	r2: r & #D
+}
+
+// A recursive definition.
+recursive: {
+	#T: {v: int, next?: #T}
+	s: #T & {v: 1, next: {v: 2, next: v: 3}}
+	n: s & #T
+	m: #T & s.next
+	err: m & {next: w: 1}
+}
+
+// Each instance of a pattern constraint has its own #D, which matches only
+// within that instance.
+instances: {
+	x: [string]~(Name, _): {#D: {name: Name}, s: #D & {}, n: s & #D}
+	x: a: {}
+	x: b: {n: name: "b"}
+	y: x.a.s & x.b.#D
+	z: x.b.n
+}
+
+// The same, with N bound to the value of the instance, which is cyclic.
+instancesValue: {
+	x: [string]~N: {#D: {name: N}, s: #D & {}, n: s & #D}
+	x: a: {}
+	x: b: {n: name: "b"}
+	y: x.a.s & x.b.#D
+}
+
+// A comprehension adds the definition after the field started sharing: the
+// field stops sharing, and closedness is kept.
+late: {
+	#D: {a: int}
+	s: #D & {a: 1}
+	n: s
+	if n.a == 1 {n: #D}
+	m: n & {b: 1}
+}
+
+// A comprehension adds a conjunct to a field that keeps sharing past #D.
+// m1 must have w, which only C adds. This relies on the fix for #YYYY
+// (share-late-conjunct).
+lateAfterDef: {
+	#D: {x: int, w?: int}
+	s: #D & {x: 2}
+	C: {x: 2, w: 1}
+	m1: c1 & {}
+	m2: c1.w
+	c1: #D & s
+	if c1.x == 2 {c1: C}
+}
+
+// The field reached through a disjunction is evaluated in part, for the
+// guard of a comprehension of the value it shares. That value must not be
+// finalized before the comprehension adds its fields. This relies on the
+// fix for #YYYY (share-disjunction-safe).
+partialEval: {
+	#D: {a: int, b?: int}
+	#A: #D | int
+	x: #D & {
+		a: 1
+		if out.a == 1 {b: 2}
+	}
+	out: #D & x & #A
+}
+
+// Error positions. An error found through a field that shares a value cites
+// the positions of that value, not the reference through which the field
+// shares it.
+positions: {
+	#A: {x: 1}
+	#B: {x: 2}
+	D: #A | #B
+	switched: {
+		v: #B
+		v: D
+		c: #B
+		c: v
+		m: c & {x: 1}
+	}
+	held: {
+		v: #B
+		v: D
+		c: v
+		c: #B
+		m: c & {x: 1}
+	}
+}
+
+// Without sharing, each of these errors also cites s in n.
+positionsField: {
+	#D: {a: int}
+	viaField: {
+		x: #D
+		s: x & {a: 1}
+		n: s & #D
+		m: n & {a: 2}
+	}
+	definitionFirst: {
+		x: #D
+		s: x & {a: 1}
+		n: #D & s
+		m: n & {a: 2}
+	}
+	direct: {
+		s: #D & {a: 1}
+		n: s & #D
+		m: n & {a: 2}
+	}
+}
+-- explicitopen.cue --
+@experiment(explicitopen)
+
+// A definition closes a field that shares an opened reference to a value
+// that applied it, so it is not redundant there, in either order.
+reclose: {
+	#R: {a: int}
+	r: #R & {a: 1}
+	y:    r... & #R
+	yErr: y & {b: 2}
+	z:    #R & r...
+	zErr: z & {b: 2}
+}
+
+// The same, with the value and the definition each opened.
+opened: {
+	#D: {a: int}
+	s: #D & {a: 1}
+	n:  #D & s...
+	nb: n & {b: 1}
+	m:  s... & #D
+	mb: m & {b: 1}
+	o:  s & #D...
+	ob: o & {b: 1}
+}
+
+// A field shares an opened value, which is open. The definition closes it
+// again, but only by #D, not by every definition the value applied.
+openLink: {
+	#D: {a?: int, b?: int}
+	#E: {a?: int}
+	w: #D & #E & {a: 1}
+	v: w...
+	n: v & #D
+	nb: n & {b: 2}
+}
+
+// Error positions through an opened definition.
+openedPositions: {
+	#A: {x: 1}
+	#B: {x: 2}
+	D: #A | #B
+	readDisjunct: {
+		v: #B...
+		v: D
+		c: #B...
+		c: v
+		m: c & {y: 3}
+	}
+	plain: {
+		v: #B...
+		v: D
+		c: v
+		m: c & {y: 3}
+	}
+	// Without sharing, this cites both conjuncts of c instead of the #B...
+	// of v.
+	held: {
+		v: #B...
+		v: D
+		c: v
+		c: #B...
+		m: c & {y: 3}
+	}
+}
+-- functions.cue --
+@experiment(try,functions)
+
+// A parameter declared with #D, called with a value that applied #D.
+param: {
+	#D: {a: int}
+	s: #D & {a: 1}
+	F: func(p: #D) -> _: {q: p, r: p.a}
+	G: func(args: {x: #D, y: int}) -> _: args.x
+	out1: F(s)
+	out2: G({x: s, y: 1})
+	err1: F(s) & {q: b: 1}
+}
+
+// A parameter declared with a definition its argument applied is read in
+// the body, and what it reaches calls a function. That call is not recursion.
+funcArg: {
+	#L: {k: _}
+	X: #L
+	K: func(a: {l: #L}) -> _: a.l.k
+	N: func(a: _) -> _: {c: a.n, o: K({l: a.l})}
+	e: l: X & {k: N({n: 1}).c}
+	probe: N({n: 2, l: e.l})
+}
+
+// The same, through a pattern constraint that calls the function whose
+// argument shares the constrained field. A vertex of an argument keeps
+// sharing past a definition only as before this change.
+funcArgPattern: {
+	#M: [string]: string
+	Kept: func(args: {m: #M, name: string}) -> string: [try L = args.m[args.name]? {L}, args.name][0]
+	LiveName: func(args: {key: string, names: [...string]}) -> string: [
+		for C in args.names if C == args.key {string & !=""},
+	][0]
+	Names: func(args: {name: string, m: #M}) -> {...}: {
+		names:  [args.name]
+		object: Kept({m: args.m, name: args.name})
+	}
+	#Entry: m: *{} | #M
+	entries: [string]~(N, _): #Entry & {
+		m: [string]~(Key, _): LiveName({key: Key, names: Names({name: N}).names})
+	}
+	entries: db: m: db: "db-v1"
+	database: *{x: 1} | {[string]: _}
+	database: entries
+	for N, E in database {
+		probe: (N): Names({name: N, m: E.m})
+	}
+}
+-- out/compile --
+--- explicitopen.cue
+{
+  reclose: {
+    #R: {
+      a: int
+    }
+    r: (〈0;#R〉 & {
+      a: 1
+    })
+    y: (〈0;r〉... & 〈0;#R〉)
+    yErr: (〈0;y〉 & {
+      b: 2
+    })
+    z: (〈0;#R〉 & 〈0;r〉...)
+    zErr: (〈0;z〉 & {
+      b: 2
+    })
+  }
+  opened: {
+    #D: {
+      a: int
+    }
+    s: (〈0;#D〉 & {
+      a: 1
+    })
+    n: (〈0;#D〉 & 〈0;s〉...)
+    nb: (〈0;n〉 & {
+      b: 1
+    })
+    m: (〈0;s〉... & 〈0;#D〉)
+    mb: (〈0;m〉 & {
+      b: 1
+    })
+    o: (〈0;s〉 & 〈0;#D〉...)
+    ob: (〈0;o〉 & {
+      b: 1
+    })
+  }
+  openLink: {
+    #D: {
+      a?: int
+      b?: int
+    }
+    #E: {
+      a?: int
+    }
+    w: ((〈0;#D〉 & 〈0;#E〉) & {
+      a: 1
+    })
+    v: 〈0;w〉...
+    n: (〈0;v〉 & 〈0;#D〉)
+    nb: (〈0;n〉 & {
+      b: 2
+    })
+  }
+  openedPositions: {
+    #A: {
+      x: 1
+    }
+    #B: {
+      x: 2
+    }
+    D: (〈0;#A〉|〈0;#B〉)
+    readDisjunct: {
+      v: 〈1;#B〉...
+      v: 〈1;D〉
+      c: 〈1;#B〉...
+      c: 〈0;v〉
+      m: (〈0;c〉 & {
+        y: 3
+      })
+    }
+    plain: {
+      v: 〈1;#B〉...
+      v: 〈1;D〉
+      c: 〈0;v〉
+      m: (〈0;c〉 & {
+        y: 3
+      })
+    }
+    held: {
+      v: 〈1;#B〉...
+      v: 〈1;D〉
+      c: 〈0;v〉
+      c: 〈1;#B〉...
+      m: (〈0;c〉 & {
+        y: 3
+      })
+    }
+  }
+}
+--- functions.cue
+{
+  param: {
+    #D: {
+      a: int
+    }
+    s: (〈0;#D〉 & {
+      a: 1
+    })
+    F: func(p: 〈0;#D〉) -> _: {
+      q: 〈1;p〉
+      r: 〈1;p〉.a
+    }
+    G: func(args: {
+      x: 〈1;#D〉
+      y: int
+    }) -> _: 〈0;args〉.x
+    out1: 〈0;F〉(〈0;s〉)
+    out2: 〈0;G〉({
+      x: 〈1;s〉
+      y: 1
+    })
+    err1: (〈0;F〉(〈0;s〉) & {
+      q: {
+        b: 1
+      }
+    })
+  }
+  funcArg: {
+    #L: {
+      k: _
+    }
+    X: 〈0;#L〉
+    K: func(a: {
+      l: 〈1;#L〉
+    }) -> _: 〈0;a〉.l.k
+    N: func(a: _) -> _: {
+      c: 〈1;a〉.n
+      o: 〈2;K〉({
+        l: 〈2;a〉.l
+      })
+    }
+    e: {
+      l: (〈1;X〉 & {
+        k: 〈2;N〉({
+          n: 1
+        }).c
+      })
+    }
+    probe: 〈0;N〉({
+      n: 2
+      l: 〈1;e〉.l
+    })
+  }
+  funcArgPattern: {
+    #M: {
+      [string]: string
+    }
+    Kept: func(args: {
+      m: 〈1;#M〉
+      name: string
+    }) -> string: [
+      try L = 〈1;args〉.m[〈1;args〉.name]? {
+        〈1;L〉
+      },
+      〈1;args〉.name,
+    ][0]
+    LiveName: func(args: {
+      key: string
+      names: [
+        ...string,
+      ]
+    }) -> string: [
+      for _, C in 〈1;args〉.names if (〈0;C〉 == 〈2;args〉.key) {
+        (string & !="")
+      },
+    ][0]
+    Names: func(args: {
+      name: string
+      m: 〈1;#M〉
+    }) -> {
+      ...
+    }: {
+      names: [
+        〈2;args〉.name,
+      ]
+      object: 〈2;Kept〉({
+        m: 〈2;args〉.m
+        name: 〈2;args〉.name
+      })
+    }
+    #Entry: {
+      m: (*{}|〈1;#M〉)
+    }
+    entries: {
+      [string]: (〈1;#Entry〉 & {
+        m: {
+          [string]: 〈3;LiveName〉({
+            key: 〈1;-〉
+            names: 〈4;Names〉({
+              name: 〈4;-〉
+            }).names
+          })
+        }
+      })
+    }
+    entries: {
+      db: {
+        m: {
+          db: "db-v1"
+        }
+      }
+    }
+    database: (*{
+      x: 1
+    }|{
+      [string]: _
+    })
+    database: 〈0;entries〉
+    for N, E in 〈0;database〉 {
+      probe: {
+        〈2;N〉: 〈3;Names〉({
+          name: 〈3;N〉
+          m: 〈3;E〉.m
+        })
+      }
+    }
+  }
+}
+--- in.cue
+{
+  order: {
+    #D: {
+      a: int
+    }
+    s: (〈0;#D〉 & {
+      a: 1
+    })
+    after: (〈0;s〉 & 〈0;#D〉)
+    before: (〈0;#D〉 & 〈0;s〉)
+  }
+  closed: {
+    #D: {
+      a: int
+    }
+    #O: {
+      a: int
+      ...
+    }
+    s: (〈0;#D〉 & {
+      a: 1
+    })
+    o: (〈0;#O〉 & {
+      a: 1
+    })
+    after: ((〈0;s〉 & 〈0;#D〉) & {
+      b: 2
+    })
+    before: ((〈0;#D〉 & 〈0;s〉) & {
+      b: 2
+    })
+    open: ((〈0;o〉 & 〈0;#O〉) & {
+      b: 2
+    })
+  }
+  openStruct: {
+    #D: {
+      a: int
+    }
+    s: (〈0;#D〉 & {
+      a: 1
+    })
+    n: ({
+      〈1;s〉...
+    } & 〈0;#D〉)
+  }
+  otherDef: {
+    #D: {
+      a: int
+    }
+    #E: {
+      a: <10
+    }
+    s: (〈0;#D〉 & {
+      a: 1
+    })
+    ok: (〈0;s〉 & 〈0;#E〉)
+    err: ((〈0;#D〉 & {
+      a: 20
+    }) & 〈0;#E〉)
+  }
+  plain: {
+    #D: {
+      a: int
+    }
+    v: {
+      a: 1
+    }
+    err: ((〈0;v〉 & 〈0;#D〉) & {
+      b: 2
+    })
+  }
+  defaults: {
+    #F: {
+      a: (*1|int)
+    }
+    f: 〈0;#F〉
+    n: (〈0;f〉 & 〈0;#F〉)
+  }
+  overridden: {
+    #F: {
+      a: (*1|int)
+      b: (*"x"|string)
+    }
+    s: (〈0;#F〉 & {
+      b: "y"
+    })
+    n: (〈0;s〉 & 〈0;#F〉)
+    m: (〈0;#F〉 & 〈0;s〉)
+  }
+  schemaSpread: {
+    #D: {
+      a: int
+    }
+    #K: {
+      ctx!: 〈1;#D〉
+    }
+    B: {
+      〈1;#K〉...
+      x?: _
+    }
+    parent: (〈0;B〉 & {
+      ctx: {
+        a: 1
+      }
+    })
+    child: (〈0;B〉 & {
+      ctx: 〈1;parent〉.ctx
+    })
+    err: ((〈0;B〉 & {
+      ctx: 〈1;parent〉.ctx
+    }) & {
+      ctx: {
+        b: 2
+      }
+    })
+  }
+  schemaEmbed: {
+    #D: {
+      a: int
+    }
+    #K: {
+      ctx!: 〈1;#D〉
+    }
+    B: {
+      〈1;#K〉
+      x?: _
+    }
+    parent: (〈0;B〉 & {
+      ctx: {
+        a: 1
+      }
+    })
+    child: (〈0;B〉 & {
+      ctx: 〈1;parent〉.ctx
+    })
+    err: ((〈0;B〉 & {
+      ctx: 〈1;parent〉.ctx
+    }) & {
+      ctx: {
+        b: 2
+      }
+    })
+  }
+  schemaChain: {
+    #D: {
+      a: int
+    }
+    #K: {
+      ctx!: 〈1;#D〉
+    }
+    B: {
+      〈1;#K〉...
+      x?: _
+    }
+    l0: (〈0;B〉 & {
+      ctx: {
+        a: 1
+      }
+    })
+    l1: (〈0;B〉 & {
+      ctx: 〈1;l0〉.ctx
+    })
+    l2: (〈0;B〉 & {
+      ctx: 〈1;l1〉.ctx
+    })
+    l3: (〈0;B〉 & {
+      ctx: 〈1;l2〉.ctx
+    })
+  }
+  definitionChain: {
+    #D: {
+      a: int
+    }
+    l0: (〈0;#D〉 & {
+      a: 1
+    })
+    l1: (〈0;#D〉 & 〈0;l0〉)
+    l2: (〈0;#D〉 & 〈0;l1〉)
+    l3: (〈0;#D〉 & 〈0;l2〉)
+  }
+  viaField: {
+    #D: {
+      a: int
+    }
+    x: 〈0;#D〉
+    s: (〈0;x〉 & {
+      a: 1
+    })
+    n: (〈0;s〉 & 〈0;#D〉)
+    err: (〈0;n〉 & {
+      b: 1
+    })
+  }
+  viaShare: {
+    #D: {
+      a: int
+    }
+    t: (〈0;#D〉 & {
+      a: 1
+    })
+    s: 〈0;t〉
+    n: (〈0;s〉 & 〈0;#D〉)
+    err: (〈0;n〉 & {
+      b: 1
+    })
+  }
+  inDefinition: {
+    #D: {
+      a: int
+    }
+    #P: {
+      v: (〈1;#D〉 & {
+        a: 1
+      })
+    }
+    n: (〈0;#P〉.v & 〈0;#D〉)
+    nb: (〈0;n〉 & {
+      b: 1
+    })
+    o: (〈0;#D〉 & 〈0;#P〉.v)
+    ob: (〈0;o〉 & {
+      b: 1
+    })
+  }
+  pattern: {
+    #D: {
+      a: int
+    }
+    s: (〈0;#D〉 & {
+      a: 1
+    })
+    m: {
+      [string]: 〈1;#D〉
+    }
+    m: {
+      k: 〈1;s〉
+    }
+    err: (〈0;m〉.k & {
+      b: 1
+    })
+  }
+  twoDefs: {
+    #D: {
+      a: int
+      b?: int
+    }
+    #E: {
+      a: int
+      c?: int
+    }
+    s: ((〈0;#D〉 & 〈0;#E〉) & {
+      a: 1
+    })
+    n1: ((〈0;#D〉 & 〈0;#E〉) & 〈0;s〉)
+    n2: ((〈0;s〉 & 〈0;#D〉) & 〈0;#E〉)
+    n3: ((〈0;#E〉 & 〈0;s〉) & 〈0;#D〉)
+    e1: (〈0;n1〉 & {
+      b: 1
+    })
+    e2: (〈0;n2〉 & {
+      c: 1
+    })
+    e3: (〈0;n3〉 & {
+      b: 1
+    })
+  }
+  disjunctiveDef: {
+    #D: (*{
+      a: 1
+    }|{
+      a: int
+    })
+    s1: (〈0;#D〉 & {
+      a: 2
+    })
+    s2: (〈0;#D〉 & {})
+    n1: (〈0;s1〉 & 〈0;#D〉)
+    n2: (〈0;s2〉 & 〈0;#D〉)
+    n3: (〈0;#D〉 & 〈0;s2〉)
+    d2: (〈0;n2〉 & {})
+    e1: (〈0;n1〉 & {
+      b: 1
+    })
+    #U: ({
+      a: int
+    }|{
+      b: int
+    })
+    u: (〈0;#U〉 & {
+      a: 1
+    })
+    nu: (〈0;u〉 & 〈0;#U〉)
+    eu: (〈0;nu〉 & {
+      b: 1
+    })
+  }
+  disjunctionDefault: {
+    #D: {
+      a: int
+    }
+    V: (*(〈0;#D〉 & {
+      a: 1
+    })|{
+      a: 2
+    })
+    n: (〈0;V〉 & 〈0;#D〉)
+    nb: (〈0;n〉 & {
+      a: 2
+      b: 1
+    })
+    nd: (〈0;n〉 & {})
+  }
+  disjunctionForward: {
+    #D: {
+      a: int
+    }
+    n: (〈0;V〉 & 〈0;#D〉)
+    nb: (〈0;n〉 & {
+      a: 2
+      b: 1
+    })
+    V: (*(〈0;#D〉 & {
+      a: 1
+    })|{
+      a: 2
+    })
+  }
+  disjunctInProgress: {
+    #D: {
+      a: int
+      c?: _
+    }
+    V: ((〈0;#D〉 & {
+      a: 1
+    })|{
+      a: 2
+      b: 3
+    })
+    V: {
+      c: 〈1;n〉.a
+    }
+    n: (〈0;V〉 & 〈0;#D〉)
+  }
+  disjunctInProgress2: {
+    #D: {
+      a: int
+      c?: int
+    }
+    V: ((〈0;#D〉 & {
+      a: 1
+      c: 〈1;n〉.a
+    })|{
+      a: 2
+      b: 3
+    })
+    n: (〈0;V〉 & 〈0;#D〉)
+  }
+  disjunctInProgress3: {
+    #D: {
+      a: int
+    }
+    V: ((〈0;#D〉 & {
+      a: 1
+      c: 〈1;n〉.a
+    })|{
+      a: 2
+      b: 3
+    })
+    n: (〈0;V〉 & 〈0;#D〉)
+  }
+  disjunctInProgress4: {
+    #D: {
+      a: int
+    }
+    V: ({
+      a: 2
+      b: 3
+    }|((〈0;#D〉 & {
+      a: 1
+    }) & {
+      x: 〈1;n〉.a
+    }))
+    n: (〈0;V〉 & 〈0;#D〉)
+  }
+  cycle: {
+    #D: {
+      a: int
+      x?: 〈1;n〉
+    }
+    V: (〈0;#D〉 & {
+      a: 1
+      x: {}
+    })
+    n: (〈0;V〉 & 〈0;#D〉)
+  }
+  computed: {
+    #D: {
+      a: int
+      b: (〈0;a〉 + 1)
+    }
+    s: (〈0;#D〉 & {
+      a: 1
+    })
+    n: (〈0;s〉 & 〈0;#D〉)
+    m: (〈0;#D〉 & 〈0;n〉)
+    r: (〈0;#D〉 & {
+      a: 〈1;r2〉.a
+    })
+    r2: (〈0;r〉 & 〈0;#D〉)
+  }
+  recursive: {
+    #T: {
+      v: int
+      next?: 〈1;#T〉
+    }
+    s: (〈0;#T〉 & {
+      v: 1
+      next: {
+        v: 2
+        next: {
+          v: 3
+        }
+      }
+    })
+    n: (〈0;s〉 & 〈0;#T〉)
+    m: (〈0;#T〉 & 〈0;s〉.next)
+    err: (〈0;m〉 & {
+      next: {
+        w: 1
+      }
+    })
+  }
+  instances: {
+    x: {
+      [string]: {
+        #D: {
+          name: 〈2;-〉
+        }
+        s: (〈0;#D〉 & {})
+        n: (〈0;s〉 & 〈0;#D〉)
+      }
+    }
+    x: {
+      a: {}
+    }
+    x: {
+      b: {
+        n: {
+          name: "b"
+        }
+      }
+    }
+    y: (〈0;x〉.a.s & 〈0;x〉.b.#D)
+    z: 〈0;x〉.b.n
+  }
+  instancesValue: {
+    x: {
+      [string]: {
+        #D: {
+          name: 〈2;(〈0;-〉)〉
+        }
+        s: (〈0;#D〉 & {})
+        n: (〈0;s〉 & 〈0;#D〉)
+      }
+    }
+    x: {
+      a: {}
+    }
+    x: {
+      b: {
+        n: {
+          name: "b"
+        }
+      }
+    }
+    y: (〈0;x〉.a.s & 〈0;x〉.b.#D)
+  }
+  late: {
+    #D: {
+      a: int
+    }
+    s: (〈0;#D〉 & {
+      a: 1
+    })
+    n: 〈0;s〉
+    if (〈0;n〉.a == 1) {
+      n: 〈1;#D〉
+    }
+    m: (〈0;n〉 & {
+      b: 1
+    })
+  }
+  lateAfterDef: {
+    #D: {
+      x: int
+      w?: int
+    }
+    s: (〈0;#D〉 & {
+      x: 2
+    })
+    C: {
+      x: 2
+      w: 1
+    }
+    m1: (〈0;c1〉 & {})
+    m2: 〈0;c1〉.w
+    c1: (〈0;#D〉 & 〈0;s〉)
+    if (〈0;c1〉.x == 2) {
+      c1: 〈1;C〉
+    }
+  }
+  partialEval: {
+    #D: {
+      a: int
+      b?: int
+    }
+    #A: (〈0;#D〉|int)
+    x: (〈0;#D〉 & {
+      a: 1
+      if (〈1;out〉.a == 1) {
+        b: 2
+      }
+    })
+    out: ((〈0;#D〉 & 〈0;x〉) & 〈0;#A〉)
+  }
+  positions: {
+    #A: {
+      x: 1
+    }
+    #B: {
+      x: 2
+    }
+    D: (〈0;#A〉|〈0;#B〉)
+    switched: {
+      v: 〈1;#B〉
+      v: 〈1;D〉
+      c: 〈1;#B〉
+      c: 〈0;v〉
+      m: (〈0;c〉 & {
+        x: 1
+      })
+    }
+    held: {
+      v: 〈1;#B〉
+      v: 〈1;D〉
+      c: 〈0;v〉
+      c: 〈1;#B〉
+      m: (〈0;c〉 & {
+        x: 1
+      })
+    }
+  }
+  positionsField: {
+    #D: {
+      a: int
+    }
+    viaField: {
+      x: 〈1;#D〉
+      s: (〈0;x〉 & {
+        a: 1
+      })
+      n: (〈0;s〉 & 〈1;#D〉)
+      m: (〈0;n〉 & {
+        a: 2
+      })
+    }
+    definitionFirst: {
+      x: 〈1;#D〉
+      s: (〈0;x〉 & {
+        a: 1
+      })
+      n: (〈1;#D〉 & 〈0;s〉)
+      m: (〈0;n〉 & {
+        a: 2
+      })
+    }
+    direct: {
+      s: (〈1;#D〉 & {
+        a: 1
+      })
+      n: (〈0;s〉 & 〈1;#D〉)
+      m: (〈0;n〉 & {
+        a: 2
+      })
+    }
+  }
+}

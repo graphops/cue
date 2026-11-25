@@ -170,6 +170,7 @@ func processResolver(ctx *OpContext, t *task, mode runMode) {
 		argRefs, isArg = selection.refs, true
 	}
 
+	from := arc.heldFirstSharer()
 	arc = arc.DerefNonDisjunct()
 
 	if ctx.LogEval > 0 {
@@ -207,7 +208,7 @@ func processResolver(ctx *OpContext, t *task, mode runMode) {
 	}
 
 	c := MakeConjunct(t.env, t.x, ci)
-	t.node.scheduleVertexConjuncts(c, arc, ci)
+	t.node.scheduleVertexConjuncts(c, arc, ci, from)
 }
 
 func processDynamic(ctx *OpContext, t *task, mode runMode) {

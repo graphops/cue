@@ -371,6 +371,11 @@ type nodeContextState struct {
 	// progress.
 	isCompleting int
 
+	// heldFirst is the number of conjuncts the node held before the one
+	// whose vertex it shares, which follow it in shared. See
+	// [Vertex.heldFirstSharer].
+	heldFirst int
+
 	// isFinalizing indicates whether the innermost call to unify for this
 	// node in progress finalizes it. See sharesSingleValue.
 	isFinalizing bool

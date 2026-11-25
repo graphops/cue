@@ -95,7 +95,7 @@ func (n *nodeContext) scheduleConjunct(c Conjunct, id CloseInfo) {
 				}
 				id = n.addResolver(x, x, id, false)
 			}
-			n.scheduleVertexConjuncts(c, x, id)
+			n.scheduleVertexConjuncts(c, x, id, nil)
 		}
 
 	case Value:
@@ -602,7 +602,11 @@ func (n *nodeContext) markStructLit(s *StructLit, ci CloseInfo) {
 
 // scheduleVertexConjuncts injects the conjuncst of src n. If src was not fully
 // evaluated, it subscribes dst for future updates.
-func (n *nodeContext) scheduleVertexConjuncts(c Conjunct, arc *Vertex, closeInfo CloseInfo) {
+//
+// If from is not nil, c reached arc through from, a vertex that shares arc
+// after it held definitions that arrived before arc. See
+// [Vertex.heldFirstSharer].
+func (n *nodeContext) scheduleVertexConjuncts(c Conjunct, arc *Vertex, closeInfo CloseInfo, from *Vertex) {
 	// A function call reference carries its payload on the reference itself:
 	// the anchor arc it resolves to exists only to give the structural cycle
 	// detector a stable identity per function and deliberately has no
@@ -644,25 +648,24 @@ func (n *nodeContext) scheduleVertexConjuncts(c Conjunct, arc *Vertex, closeInfo
 	if deref(n.node) == deref(arc) {
 		n.linkCyclicResolver(arc, closeInfo)
 		if n.isShared {
-			n.addShared(c, arc, closeInfo)
+			n.addShared(c, arc, closeInfo, from)
 		}
 		return
 	}
 
-	if n.shareIfPossible(c, arc, closeInfo) {
+	if n.shareIfPossible(c, arc, closeInfo, from) {
 		arc.getState(n.ctx)
 		return
 	}
 
-	// A definition the shared vertex was already directly unified with adds
-	// nothing: unification is idempotent, so keep sharing rather than replay
-	// the vertex for it. Not so through an opened reference, which the
-	// definition re-closes.
-	if n.isShared && !n.node.OpenedShared &&
-		!closeInfo.Opened && !closeInfo.ConjunctOpened &&
-		n.sharedClosedBy(arc) {
-		n.addShared(c, arc, closeInfo)
+	// A definition that adds nothing to the vertex the node shares, or a
+	// vertex to which every conjunct the node holds adds nothing, keeps the
+	// node sharing. See keepSharing.
+	if n.isShared && n.keepSharing(c, arc, closeInfo, from) {
 		return
+	}
+	if arc.Label.IsDef() && !embedded(closeInfo) {
+		n.node.recordDef(arc, !opensConjunct(c, closeInfo))
 	}
 
 	// Also check arc.Label: definitions themselves do not have the FromDef to
@@ -740,6 +743,17 @@ func (n *nodeContext) scheduleVertexConjuncts(c Conjunct, arc *Vertex, closeInfo
 	n.arcMap = append(n.arcMap, arc)
 
 	closeInfo = n.splitPackage(arc, closeInfo)
+
+	// arc was reached through a node that held definitions before it shared
+	// arc: schedule them first, as this node would schedule them if that node
+	// did not share. See [Vertex.heldFirstSharer].
+	if from != nil {
+		if s := from.state; s != nil && s.isShared {
+			for _, h := range s.shared[1 : 1+s.heldFirst] {
+				n.scheduleVertexConjuncts(MakeConjunct(h.c.Env, h.c.x, closeInfo), h.arc, closeInfo, nil)
+			}
+		}
+	}
 
 	if arc.Parent != nil && (!n.node.nonRooted || n.node.IsDynamic) {
 		// If the arc has a parent that for which the field conjuncts are not
@@ -839,7 +853,7 @@ func (n *nodeContext) insertValueConjunct(env *Environment, v Value, id CloseInf
 			n.updateCyclicStatus(id)
 
 			c := MakeConjunct(env, x, id)
-			n.scheduleVertexConjuncts(c, x, id)
+			n.scheduleVertexConjuncts(c, x, id, nil)
 			return
 		}
 
