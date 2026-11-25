@@ -923,18 +923,18 @@ invalid default for parameter a: invalid value 9 (out of bound <5):
     ./in.cue:771:13
     ./in.cue:768:8
 -- out/eval/stats --
-Leaks:  133
-Freed:  1625
-Reused: 1589
-Allocs: 169
+Leaks:  132
+Freed:  1564
+Reused: 1528
+Allocs: 168
 Retain: 0
 
 Unifications: 1412
-Conjuncts:    4039
-Disjuncts:    232
+Conjuncts:    3831
+Disjuncts:    170
 Notifications: 8
 
-NumCloseIDs: 693
+NumCloseIDs: 691
 
-ConjunctInfos:       1622
+ConjunctInfos:       1616
 MaxConjunctInfos:    8

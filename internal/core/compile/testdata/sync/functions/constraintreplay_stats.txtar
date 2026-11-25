@@ -1,0 +1,59 @@
+# A call result is scheduled again wherever it is used, as it is not
+# structure shared, and each use shares the call's activation. The parameter
+# constraints are added to the activation only once: a finalized argument
+# would otherwise get another copy of them for every use, which every later
+# copy of the argument replays. The number of conjuncts below grows with the
+# number of uses without that.
+#inlinetest:exclude skip — performance regression guarded by out/eval/stats
+-- in.cue --
+@experiment(functions)
+
+Inner: func(n: int) -> {...}: {a: n, b: n + 1, c: [n, n]}
+L0: func(n: int) -> {...}: {x: Inner(n), y: Inner(n + 1)}
+L1: func(n: int) -> {...}: {m: L0(n), c1: m, c2: m}
+L2: func(n: int) -> {...}: {m: L1(n), c1: m, c2: m}
+L3: func(n: int) -> {...}: {m: L2(n), c1: m, c2: m}
+
+r: L3(1)
+-- out/compile --
+--- in.cue
+{
+  Inner: func(n: int) -> {
+    ...
+  }: {
+    a: 〈1;n〉
+    b: (〈1;n〉 + 1)
+    c: [
+      〈2;n〉,
+      〈2;n〉,
+    ]
+  }
+  L0: func(n: int) -> {
+    ...
+  }: {
+    x: 〈2;Inner〉(〈1;n〉)
+    y: 〈2;Inner〉((〈1;n〉 + 1))
+  }
+  L1: func(n: int) -> {
+    ...
+  }: {
+    m: 〈2;L0〉(〈1;n〉)
+    c1: 〈0;m〉
+    c2: 〈0;m〉
+  }
+  L2: func(n: int) -> {
+    ...
+  }: {
+    m: 〈2;L1〉(〈1;n〉)
+    c1: 〈0;m〉
+    c2: 〈0;m〉
+  }
+  L3: func(n: int) -> {
+    ...
+  }: {
+    m: 〈2;L2〉(〈1;n〉)
+    c1: 〈0;m〉
+    c2: 〈0;m〉
+  }
+  r: 〈0;L3〉(1)
+}
