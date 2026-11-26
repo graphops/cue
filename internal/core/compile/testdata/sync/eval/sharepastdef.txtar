@@ -193,12 +193,10 @@ disjunctionForward: {
 // the disjunct in progress is not its value, so the field does not share it.
 // n must not accept b, which #D does not allow.
 //
-// In these four cases, the disjunction of n is skipped, as V refers to n:
-// only the kinds of its disjuncts apply. The results are wrong, and are
-// recorded as incorrect, until #YYYY (disjunct-cycle-skip) is fixed. #D
-// allows only the first disjunct of V, so n is {a: 1, c: 1} in the first
-// two cases, and an empty disjunction in the last two, where #D does not
-// allow that disjunct either.
+// #D allows only the first disjunct of V, so n is {a: 1, c: 1} in the
+// first two cases, and an empty disjunction in the last two, where #D does
+// not allow that disjunct either. #YYYY (disjunct-cycle-skip) evaluates
+// the disjunction of n, which is otherwise skipped as V refers to n.
 disjunctInProgress: {
 	#D: {a: int, c?: _}
 	V: (#D & {a: 1}) | {a: 2, b: 3}

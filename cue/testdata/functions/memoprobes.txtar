@@ -394,7 +394,6 @@ p02_def_ci_closed.d.x.b: field not allowed:
     ./in.cue:32:14
 p02_def_ci_closed_b.d.x.b: field not allowed:
     ./in.cue:22:14
-p27_stale_c.V.r: structural cycle
 p03_cycle_self.V.r.v.r: structural cycle:
     ./in.cue:36:15
 p12b_field_alias.S.r: structural cycle:
@@ -1348,8 +1347,7 @@ Result:
       //     ./in.cue:221:9
     }
   }
-  p27_stale_c: (_|_){
-    // [structural_cycle]
+  p27_stale_c: (struct){
     F: (func){ func(x: _) -> _: {
         n: len([
           for k, _ in 〈2;x〉 {
@@ -1362,15 +1360,14 @@ Result:
         n: (int){ 3 }
       }
     }
-    V: (_|_){
-      // [structural_cycle]
+    V: (struct){
       s: (struct){
         z: (int){ 0 }
         p: (int){ 1 }
         q: (int){ 1 }
       }
-      r: (_|_){
-        // [structural_cycle] p27_stale_c.V.r: structural cycle
+      r: (struct){
+        n: (int){ 3 }
       }
     }
     src: (struct){

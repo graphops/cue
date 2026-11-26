@@ -74,10 +74,9 @@ guardOwn: {
 }
 
 // A similar shape with the guard reading the field the comprehension adds
-// to, and that field opened with ... before. m1 should reject y, but it
-// resolves c1 through the vertex c1 structure shares, #B opened, before c1
-// has processed the #B that the comprehension adds. This change does not
-// affect that. See https://cuelang.org/issue/4524.
+// to, and that field opened with ... before. m1 must reject y: the #B that
+// the comprehension adds closes c1. The fix that stops sharing when a
+// conjunct arrives late makes it so. See https://cuelang.org/issue/4524.
 issue4524: {
 	#B: {x: 2}
 	m1: c1 & {y: 3}

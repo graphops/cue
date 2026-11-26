@@ -81,10 +81,9 @@ guardOwn: {
 }
 
 // A similar shape with the guard reading the field the comprehension adds
-// to, and that field opened with ... before. m1 should reject y, but it
-// resolves c1 through the vertex c1 structure shares, #B opened, before c1
-// has processed the #B that the comprehension adds. This change does not
-// affect that. See https://cuelang.org/issue/4524.
+// to, and that field opened with ... before. m1 must reject y: the #B that
+// the comprehension adds closes c1. The fix that stops sharing when a
+// conjunct arrives late makes it so. See https://cuelang.org/issue/4524.
 issue4524: {
 	#B: {x: 2}
 	m1: c1 & {y: 3}
@@ -92,8 +91,7 @@ issue4524: {
 	if c1.x == 2 {
 		c1: #B
 	}
-	@test(eq, {#B: {x: 2}, m1: {x: 2, y: 3}, c1: {x: 2}}, incorrect)
-	@test(err:todo, code=eval, at=m1.y, contains="field not allowed")
+	@test(err, code=eval, at=m1.y, contains="field not allowed")
 }
 -- issue4550.cue --
 // Issue 4550. The guard reads X, which refers to the field that the
@@ -116,6 +114,8 @@ issue4550Reordered: {
     ./in.cue:44:12
 [eval] closednessGuardOwn.m1.y: field not allowed:
     ./in.cue:56:12
+[eval] issue4524.m1.y: field not allowed:
+    ./in.cue:81:12
 [cycle] issue4550.aux: circular dependency in evaluation of conditionals: X changed after evaluation:
     ./issue4550.cue:5:11
 [eval] issue4550.X: conflicting values "xyz" and "abc":

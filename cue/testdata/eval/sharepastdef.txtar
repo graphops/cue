@@ -216,23 +216,16 @@ disjunctionForward: {
 // the disjunct in progress is not its value, so the field does not share it.
 // n must not accept b, which #D does not allow.
 //
-// In these four cases, the disjunction of n is skipped, as V refers to n:
-// only the kinds of its disjuncts apply. The results are wrong, and are
-// recorded as incorrect, until #YYYY (disjunct-cycle-skip) is fixed. #D
-// allows only the first disjunct of V, so n is {a: 1, c: 1} in the first
-// two cases, and an empty disjunction in the last two, where #D does not
-// allow that disjunct either.
+// #D allows only the first disjunct of V, so n is {a: 1, c: 1} in the
+// first two cases, and an empty disjunction in the last two, where #D does
+// not allow that disjunct either. #YYYY (disjunct-cycle-skip) evaluates
+// the disjunction of n, which is otherwise skipped as V refers to n.
 disjunctInProgress: {
 	#D: {a: int, c?: _}
 	V: (#D & {a: 1}) | {a: 2, b: 3}
 	V: c: n.a
 	n: V & #D
 	@test(eq, {
-		#D: {a: int, c?: _}
-		V: {c: int, a: 1} | {c: int, a: 2, b: 3}
-		n: {c: int, a: int}
-	}, incorrect)
-	@test(eq:todo, {
 		#D: {a: int, c?: _}
 		V: {c: 1, a: 1} | {c: 1, a: 2, b: 3}
 		n: {c: 1, a: 1}
@@ -246,11 +239,6 @@ disjunctInProgress2: {
 	n: V & #D
 	@test(eq, {
 		#D: {a: int, c?: int}
-		V: {a: 1, c: int} | {a: 2, b: 3}
-		n: {a: int, c?: int}
-	}, incorrect)
-	@test(eq:todo, {
-		#D: {a: int, c?: int}
 		V: {a: 1, c: 1} | {a: 2, b: 3}
 		n: {a: 1, c: 1}
 	})
@@ -259,25 +247,15 @@ disjunctInProgress2: {
 // The same, with the reference to n in a disjunct that #D does not allow.
 disjunctInProgress3: {
 	#D: {a: int}
-	V: (#D & {a: 1, c: n.a}) | {a: 2, b: 3}
-	n: V & #D @test(err:todo, code=eval, contains="empty disjunction")
-	@test(eq, {
-		#D: {a: int}
-		V: {a: 2, b: 3}
-		n: {a: int}
-	}, incorrect)
+	V: (#D & {a: 1, c: n.a}) | {a: 2, b: 3} @test(eq, {a: 2, b: 3})
+	n: V & #D @test(err, code=eval, contains="empty disjunction")
 }
 
 // The same, with the disjuncts swapped.
 disjunctInProgress4: {
 	#D: {a: int}
-	V: {a: 2, b: 3} | (#D & {a: 1} & {x: n.a})
-	n: V & #D @test(err:todo, code=eval, contains="empty disjunction")
-	@test(eq, {
-		#D: {a: int}
-		V: {a: 2, b: 3}
-		n: {a: int}
-	}, incorrect)
+	V: {a: 2, b: 3} | (#D & {a: 1} & {x: n.a}) @test(eq, {a: 2, b: 3})
+	n: V & #D @test(err, code=eval, contains="empty disjunction")
 }
 
 // The definition refers back to the field.
@@ -691,72 +669,72 @@ disjunctionForward.nb.a: conflicting values 1 and 2:
 disjunctionForward.nb.b: field not allowed:
     ./in.cue:201:17
 [eval] disjunctInProgress3.n: 2 errors in empty disjunction::
-    ./in.cue:254:21
+    ./in.cue:242:21
 disjunctInProgress3.n.b: field not allowed:
-    ./in.cue:254:21
-    ./in.cue:254:36
+    ./in.cue:242:21
+    ./in.cue:242:36
 disjunctInProgress3.n.c: field not allowed:
-    ./in.cue:254:21
-    ./in.cue:254:18
+    ./in.cue:242:21
+    ./in.cue:242:18
 [eval] disjunctInProgress4.n: 2 errors in empty disjunction::
-    ./in.cue:266:39
+    ./in.cue:249:39
 disjunctInProgress4.n.b: field not allowed:
-    ./in.cue:266:39
-    ./in.cue:266:12
+    ./in.cue:249:39
+    ./in.cue:249:12
 disjunctInProgress4.n.x: field not allowed:
-    ./in.cue:266:39
-    ./in.cue:266:36
+    ./in.cue:249:39
+    ./in.cue:249:36
 [structural_cycle] cycle.#D.x: structural cycle
 [structural_cycle] cycle.V.x.x: structural cycle
 [incomplete] computed.#D.b: non-concrete value int in operand to +:
-    ./in.cue:285:18
-    ./in.cue:285:10
+    ./in.cue:263:18
+    ./in.cue:263:10
 [incomplete] computed.r.b: non-concrete value int in operand to +:
-    ./in.cue:285:18
-    ./in.cue:285:10
-    ./in.cue:289:14
+    ./in.cue:263:18
+    ./in.cue:263:10
+    ./in.cue:267:14
 [structural_cycle] recursive.#T.next: structural cycle
 [eval] recursive.err.next.w: field not allowed:
-    ./in.cue:326:18
+    ./in.cue:304:18
 [eval] instances.y.name: conflicting values "a" and "b":
-    ./in.cue:332:37
-    ./in.cue:332:47
-    ./in.cue:335:5
-    ./in.cue:335:13
+    ./in.cue:310:37
+    ./in.cue:310:47
+    ./in.cue:313:5
+    ./in.cue:313:13
 [structural_cycle] instancesValue.x.a.#D.name: structural cycle
 [structural_cycle] instancesValue.x.a.#D.name: structural cycle
 [eval] instancesValue.x.b.n.name: conflicting values "b" and {n:{name:"b"}} (mismatched types string and struct):
-    ./in.cue:341:29
-    ./in.cue:341:48
-    ./in.cue:341:52
-    ./in.cue:343:8
-    ./in.cue:343:18
+    ./in.cue:319:29
+    ./in.cue:319:48
+    ./in.cue:319:52
+    ./in.cue:321:8
+    ./in.cue:321:18
 [structural_cycle] instancesValue.x.b.#D.name: structural cycle
 [eval] instancesValue.x.a.#D.name: structural cycle
 [eval] late.m.b: field not allowed:
-    ./in.cue:355:10
+    ./in.cue:333:10
 [eval] positions.switched.m.x: conflicting values 2 and 1:
-    ./in.cue:396:10
-    ./in.cue:401:6
-    ./in.cue:403:6
-    ./in.cue:403:14
+    ./in.cue:374:10
+    ./in.cue:379:6
+    ./in.cue:381:6
+    ./in.cue:381:14
 [eval] positions.held.m.x: conflicting values 2 and 1:
-    ./in.cue:396:10
-    ./in.cue:406:6
+    ./in.cue:374:10
+    ./in.cue:384:6
+    ./in.cue:388:6
+    ./in.cue:388:14
+[eval] positionsField.viaField.m.a: conflicting values 1 and 2:
+    ./in.cue:397:14
+    ./in.cue:399:6
+    ./in.cue:399:14
+[eval] positionsField.definitionFirst.m.a: conflicting values 1 and 2:
+    ./in.cue:403:14
+    ./in.cue:405:6
+    ./in.cue:405:14
+[eval] positionsField.direct.m.a: conflicting values 1 and 2:
+    ./in.cue:408:15
     ./in.cue:410:6
     ./in.cue:410:14
-[eval] positionsField.viaField.m.a: conflicting values 1 and 2:
-    ./in.cue:419:14
-    ./in.cue:421:6
-    ./in.cue:421:14
-[eval] positionsField.definitionFirst.m.a: conflicting values 1 and 2:
-    ./in.cue:425:14
-    ./in.cue:427:6
-    ./in.cue:427:14
-[eval] positionsField.direct.m.a: conflicting values 1 and 2:
-    ./in.cue:430:15
-    ./in.cue:432:6
-    ./in.cue:432:14
 -- out/eval/stats --
 Leaks:  63
 Freed:  1018

@@ -199,17 +199,17 @@ lookupCycles: {
 [structural_cycle] lookupCycles.comprehension: structural cycle:
     ./in.cue:171:17
 -- out/eval/stats --
-Leaks:  147
-Freed:  2217
-Reused: 2164
-Allocs: 200
+Leaks:  122
+Freed:  1485
+Reused: 1443
+Allocs: 164
 Retain: 0
 
-Unifications: 2233
-Conjuncts:    5464
-Disjuncts:    28
+Unifications: 1504
+Conjuncts:    3677
+Disjuncts:    20
 
-NumCloseIDs: 1152
+NumCloseIDs: 853
 
-ConjunctInfos:       2734
+ConjunctInfos:       1962
 MaxConjunctInfos:    11
